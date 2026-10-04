@@ -10,6 +10,7 @@ on:
 
 permissions:
   contents: read
+  packages: write
 
 env:
   APP_NAME: new-api
@@ -24,6 +25,7 @@ jobs:
       version: ${{ steps.vars.outputs.version }}
       commit: ${{ steps.vars.outputs.commit }}
       build_date: ${{ steps.vars.outputs.build_date }}
+      image_name: ${{ steps.vars.outputs.image_name }}
     steps:
       - name: Check out
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -41,11 +43,14 @@ jobs:
             VERSION="latest"
           fi
           BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          REPO_LOWER=$(echo "${GITHUB_REPOSITORY}" | tr '[:upper:]' '[:lower:]')
+          IMAGE_NAME="ghcr.io/${REPO_LOWER}"
           echo "short_sha=${SHORT_SHA}" >> "$GITHUB_OUTPUT"
           echo "sha_tag=${SHA_TAG}" >> "$GITHUB_OUTPUT"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "commit=${SHORT_SHA}" >> "$GITHUB_OUTPUT"
           echo "build_date=${BUILD_DATE}" >> "$GITHUB_OUTPUT"
+          echo "image_name=${IMAGE_NAME}" >> "$GITHUB_OUTPUT"
 
   build_single_arch:
     name: Build & push (${{ matrix.arch }})
@@ -63,6 +68,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     permissions:
       contents: read
+      packages: write
     steps:
       - name: Check out
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -72,17 +78,12 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
 
-      - name: Log in to Docker Hub
+      - name: Log in to GHCR
         uses: docker/login-action@c99871dec2022cc055c062a10cc1a1310835ceb4 # v4.3.0
         with:
-          registry: docker.io
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      - name: Lowercase image name
-        run: |
-          IMAGE_NAME="calciumion/new-api"
-          echo "IMAGE_NAME=${IMAGE_NAME}" >> $GITHUB_ENV
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build & push single-arch image
         id: build
@@ -96,15 +97,15 @@ jobs:
             COMMIT=${{ needs.prepare.outputs.commit }}
             BUILD_DATE=${{ needs.prepare.outputs.build_date }}
           tags: |
-            ${{ env.IMAGE_NAME }}:latest-${{ matrix.arch }}
-            ${{ env.IMAGE_NAME }}:${{ needs.prepare.outputs.sha_tag }}-${{ matrix.arch }}
+            ${{ needs.prepare.outputs.image_name }}:latest-${{ matrix.arch }}
+            ${{ needs.prepare.outputs.image_name }}:${{ needs.prepare.outputs.sha_tag }}-${{ matrix.arch }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
       - name: Build summary
         run: |
           echo "### Single-arch image (${{ matrix.arch }})" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Image: ${IMAGE_NAME}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Image: ${{ needs.prepare.outputs.image_name }}" >> "$GITHUB_STEP_SUMMARY"
           echo "- Commit: ${{ needs.prepare.outputs.short_sha }}" >> "$GITHUB_STEP_SUMMARY"
           echo "- Tags:" >> "$GITHUB_STEP_SUMMARY"
           echo "  - latest-${{ matrix.arch }}" >> "$GITHUB_STEP_SUMMARY"
@@ -115,55 +116,52 @@ jobs:
     name: Create multi-arch manifests
     needs: [prepare, build_single_arch]
     runs-on: ubuntu-latest
-    permissions: {}
+    permissions:
+      contents: read
+      packages: write
     steps:
-      - name: Log in to Docker Hub
+      - name: Log in to GHCR
         uses: docker/login-action@c99871dec2022cc055c062a10cc1a1310835ceb4 # v4.3.0
         with:
-          registry: docker.io
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      - name: Lowercase image name
-        run: |
-          IMAGE_NAME="calciumion/new-api"
-          echo "IMAGE_NAME=${IMAGE_NAME}" >> $GITHUB_ENV
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Create & push latest manifest
         run: |
           docker buildx imagetools create \
-            --tag "${IMAGE_NAME}:latest" \
-            "${IMAGE_NAME}:latest-amd64" \
-            "${IMAGE_NAME}:latest-arm64"
+            --tag "${{ needs.prepare.outputs.image_name }}:latest" \
+            "${{ needs.prepare.outputs.image_name }}:latest-amd64" \
+            "${{ needs.prepare.outputs.image_name }}:latest-arm64"
 
       - name: Create & push sha manifest
         run: |
           docker buildx imagetools create \
-            --tag "${IMAGE_NAME}:${{ needs.prepare.outputs.sha_tag }}" \
-            "${IMAGE_NAME}:${{ needs.prepare.outputs.sha_tag }}-amd64" \
-            "${IMAGE_NAME}:${{ needs.prepare.outputs.sha_tag }}-arm64"
+            --tag "${{ needs.prepare.outputs.image_name }}:${{ needs.prepare.outputs.sha_tag }}" \
+            "${{ needs.prepare.outputs.image_name }}:${{ needs.prepare.outputs.sha_tag }}-amd64" \
+            "${{ needs.prepare.outputs.image_name }}:${{ needs.prepare.outputs.sha_tag }}-arm64"
 
       - name: Create & push version manifest
         if: startsWith(github.ref, 'refs/tags/')
         run: |
           docker buildx imagetools create \
-            --tag "${IMAGE_NAME}:${{ needs.prepare.outputs.version }}" \
-            "${IMAGE_NAME}:${{ needs.prepare.outputs.sha_tag }}-amd64" \
-            "${IMAGE_NAME}:${{ needs.prepare.outputs.sha_tag }}-arm64"
+            --tag "${{ needs.prepare.outputs.image_name }}:${{ needs.prepare.outputs.version }}" \
+            "${{ needs.prepare.outputs.image_name }}:${{ needs.prepare.outputs.sha_tag }}-amd64" \
+            "${{ needs.prepare.outputs.image_name }}:${{ needs.prepare.outputs.sha_tag }}-arm64"
 
       - name: Manifest summary
         run: |
           echo "### Multi-arch publish result" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Image: ${IMAGE_NAME}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Image: ${{ needs.prepare.outputs.image_name }}" >> "$GITHUB_STEP_SUMMARY"
           echo "- Commit: ${{ needs.prepare.outputs.short_sha }}" >> "$GITHUB_STEP_SUMMARY"
           echo "- Tags:" >> "$GITHUB_STEP_SUMMARY"
           echo "  - latest" >> "$GITHUB_STEP_SUMMARY"
           echo "  - ${{ needs.prepare.outputs.sha_tag }}" >> "$GITHUB_STEP_SUMMARY"
           echo "- latest manifest:" >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
-          docker buildx imagetools inspect "${IMAGE_NAME}:latest" >> "$GITHUB_STEP_SUMMARY"
+          docker buildx imagetools inspect "${{ needs.prepare.outputs.image_name }}:latest" >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
           echo "- ${{ needs.prepare.outputs.sha_tag }} manifest:" >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
-          docker buildx imagetools inspect "${IMAGE_NAME}:${{ needs.prepare.outputs.sha_tag }}" >> "$GITHUB_STEP_SUMMARY"
+          docker buildx imagetools inspect "${{ needs.prepare.outputs.image_name }}:${{ needs.prepare.outputs.sha_tag }}" >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
