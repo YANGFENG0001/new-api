@@ -2210,7 +2210,7 @@
     "Enable request header passthrough?": "Activer la transmission des en-têtes de la requête ?",
     "Enable Request Passthrough": "Activer le Passthrough de requêtes",
     "Sanitize Unverifiable Encrypted Content": "Nettoyer le contenu chiffré non vérifiable",
-    "Remove reasoning encrypted_content values that the target GPT upstream cannot verify. Disable only for troubleshooting; the RESPONSES_SANITIZE_ENCRYPTED_CONTENT environment variable overrides this setting.": "Supprime les valeurs encrypted_content de raisonnement que le fournisseur GPT cible ne peut pas vérifier. À désactiver uniquement pour le dépannage ; la variable d'environnement RESPONSES_SANITIZE_ENCRYPTED_CONTENT remplace ce réglage.",
+    "Remove reasoning encrypted_content values that the target GPT upstream cannot verify and normalize replayed reasoning content that the Responses API rejects. Disable only for troubleshooting; the RESPONSES_SANITIZE_ENCRYPTED_CONTENT environment variable overrides this setting.": "Supprime les valeurs encrypted_content de raisonnement que le fournisseur GPT cible ne peut pas vérifier et normalise le contenu de raisonnement rejoué que l'API Responses rejette. À désactiver uniquement pour le dépannage ; la variable d'environnement RESPONSES_SANITIZE_ENCRYPTED_CONTENT remplace ce réglage.",
     "Enable Responses WebSocket": "Activer Responses WebSocket",
     "Enable selected channels": "Activer les canaux sélectionnés",
     "Enable selected models": "Activer les modèles sélectionnés",

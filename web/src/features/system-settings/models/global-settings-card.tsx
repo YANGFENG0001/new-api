@@ -224,7 +224,7 @@ export function GlobalSettingsCard({ defaultValues }: GlobalSettingsCardProps) {
                   </FormLabel>
                   <FormDescription>
                     {t(
-                      'Remove reasoning encrypted_content values that the target GPT upstream cannot verify. Disable only for troubleshooting; the RESPONSES_SANITIZE_ENCRYPTED_CONTENT environment variable overrides this setting.'
+                      'Remove reasoning encrypted_content values that the target GPT upstream cannot verify and normalize replayed reasoning content that the Responses API rejects. Disable only for troubleshooting; the RESPONSES_SANITIZE_ENCRYPTED_CONTENT environment variable overrides this setting.'
                     )}
                   </FormDescription>
                 </SettingsSwitchContent>
