@@ -37,6 +37,16 @@ func PrepareResponsesRequest(c *gin.Context, info *relaycommon.RelayInfo, req *d
 	if err != nil {
 		return nil, nil, nil, types.NewError(fmt.Errorf("failed to copy responses request: %w", err), types.ErrorCodeInvalidRequest, types.ErrOptionWithSkipRetry())
 	}
+	// Codex with disable_response_storage replays reasoning items produced by other
+	// providers; drop encrypted_content the OpenAI backend cannot decrypt.
+	// The behaviour is switchable: env RESPONSES_SANITIZE_ENCRYPTED_CONTENT wins
+	// over the stored global.responses_sanitize_encrypted_content option.
+	sanitizeEncryptedContent := model_setting.ShouldSanitizeResponsesEncryptedContent()
+	strictEncryptedContent := sanitizeEncryptedContent && channelNeedsRealOpenAIBlob(info.ChannelType)
+	if sanitizeEncryptedContent {
+		request.Input = sanitizeResponsesInput(request.Input, strictEncryptedContent)
+	}
+
 	if err := helper.ModelMappedHelper(c, info, request); err != nil {
 		return nil, nil, nil, types.NewError(err, types.ErrorCodeChannelModelMappedError, types.ErrOptionWithSkipRetry())
 	}
@@ -53,6 +63,12 @@ func PrepareResponsesRequest(c *gin.Context, info *relaycommon.RelayInfo, req *d
 		storage, err := common.GetBodyStorage(c)
 		if err != nil {
 			return nil, nil, nil, types.NewError(err, types.ErrorCodeReadRequestBodyFailed, types.ErrOptionWithSkipRetry())
+		}
+		if sanitizeEncryptedContent {
+			storage, err = sanitizePassthroughBody(c, storage, strictEncryptedContent)
+			if err != nil {
+				return nil, nil, nil, types.NewError(err, types.ErrorCodeReadRequestBodyFailed, types.ErrOptionWithSkipRetry())
+			}
 		}
 		body := common.NewReplayableBodyReader(storage)
 		return adaptor, body, io.NopCloser(body), nil

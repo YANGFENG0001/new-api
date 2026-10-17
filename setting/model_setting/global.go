@@ -1,6 +1,7 @@
 package model_setting
 
 import (
+	"os"
 	"regexp"
 	"slices"
 	"strings"
@@ -42,6 +43,12 @@ type GlobalSettings struct {
 	// family whitelist but whose names already end in an effort word.
 	EffortTailModelIDs               []string                         `json:"effort_tail_model_ids"`
 	ChatCompletionsToResponsesPolicy ChatCompletionsToResponsesPolicy `json:"chat_completions_to_responses_policy"`
+	// ResponsesSanitizeEncryptedContent controls whether the relay strips
+	// reasoning.encrypted_content values that the target upstream cannot
+	// decrypt before forwarding a /v1/responses request. Toggle it at runtime
+	// with the global.responses_sanitize_encrypted_content option, or force it
+	// with the RESPONSES_SANITIZE_ENCRYPTED_CONTENT environment variable.
+	ResponsesSanitizeEncryptedContent bool `json:"responses_sanitize_encrypted_content"`
 }
 
 // 默认配置
@@ -62,6 +69,7 @@ var defaultOpenaiSettings = GlobalSettings{
 		Enabled:     false,
 		AllChannels: true,
 	},
+	ResponsesSanitizeEncryptedContent: true,
 }
 
 // 全局实例
@@ -74,6 +82,25 @@ func init() {
 
 func GetGlobalSettings() *GlobalSettings {
 	return &globalSettings
+}
+
+// responsesSanitizeEnvVar forces the encrypted_content sanitiser on or off
+// without touching the stored option. Accepted values are 1/true/on/yes and
+// 0/false/off/no; anything else falls back to the stored option.
+const responsesSanitizeEnvVar = "RESPONSES_SANITIZE_ENCRYPTED_CONTENT"
+
+// ShouldSanitizeResponsesEncryptedContent reports whether the relay should
+// drop reasoning.encrypted_content values the target upstream cannot decrypt.
+func ShouldSanitizeResponsesEncryptedContent() bool {
+	if raw, ok := os.LookupEnv(responsesSanitizeEnvVar); ok {
+		switch strings.ToLower(strings.TrimSpace(raw)) {
+		case "1", "true", "on", "yes":
+			return true
+		case "0", "false", "off", "no":
+			return false
+		}
+	}
+	return globalSettings.ResponsesSanitizeEncryptedContent
 }
 
 const thinkingBlacklistRegexPrefix = "re:"
