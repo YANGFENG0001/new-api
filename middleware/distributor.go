@@ -20,6 +20,7 @@ import (
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/service/usercontrol"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 
 	"github.com/gin-gonic/gin"
@@ -49,6 +50,25 @@ func Distribute() func(c *gin.Context) {
 		if err != nil {
 			abortWithOpenAiMessage(c, invalidRequestStatus(err), i18n.T(c, i18n.MsgDistributorInvalidRequest, map[string]any{"Error": err.Error()}))
 			return
+		}
+		if effective, ok := usercontrol.FromContext(c); ok {
+			if modelRequest.Model != "" && !effective.Limits.AllowsModel(modelRequest.Model) {
+				abortWithOpenAiMessage(c, http.StatusForbidden, "Model is not allowed by the user control policy: "+modelRequest.Model)
+				return
+			}
+			if channels := effective.Limits.Channels; channels != nil &&
+				(len(channels.AllowIDs) > 0 || len(channels.BlockIDs) > 0 ||
+					len(channels.AllowTypes) > 0 || len(channels.BlockTypes) > 0 ||
+					len(channels.AllowGroups) > 0) {
+				constraints.AddFilter(taskdto.ChannelFilter{
+					Kind:                   taskdto.FilterUserControl,
+					UserControlAllowIDs:    channels.AllowIDs,
+					UserControlBlockIDs:    channels.BlockIDs,
+					UserControlAllowTypes:  channels.AllowTypes,
+					UserControlBlockTypes:  channels.BlockTypes,
+					UserControlAllowGroups: channels.AllowGroups,
+				})
+			}
 		}
 		_, pinned, _ := constraints.ResolvedPin()
 		if !pinned {

@@ -25,6 +25,8 @@ import type { ReactNode } from 'react'
 export type SectionDefinition<TSettings, TExtraArgs extends unknown[] = []> = {
   id: string
   titleKey: string
+  /** Optional visibility guard evaluated while building navigation. */
+  visible?: () => boolean
   build: (settings: TSettings, ...extraArgs: TExtraArgs) => ReactNode
 }
 
@@ -64,30 +66,43 @@ export function createSectionRegistry<
    * Get navigation items for sidebar
    */
   function getSectionNavItems(t: TFunction) {
-    return sections.map((section) => ({
-      title: t(section.titleKey),
-      url:
-        urlStyle === 'path'
-          ? `${basePath}/${section.id}`
-          : `${basePath}?section=${section.id}`,
-    }))
+    return sections
+      .filter((section) => section.visible?.() !== false)
+      .map((section) => ({
+        title: t(section.titleKey),
+        url:
+          urlStyle === 'path'
+            ? `${basePath}/${section.id}`
+            : `${basePath}?section=${section.id}`,
+      }))
   }
-
   /**
    * Get section content by section ID
    */
+  /**
+   * Resolve a section, falling back to the first visible section when the
+   * requested one is hidden for the current administrator. This keeps direct
+   * URLs (for example a bookmarked user-control section) from rendering UI the
+   * operator is not allowed to use; the API enforces the same rule.
+   */
+  function resolveVisibleSection(sectionId: SectionId) {
+    const requested = sections.find((item) => item.id === sectionId)
+    if (requested && requested.visible?.() !== false) {
+      return requested
+    }
+    return sections.find((item) => item.visible?.() !== false) ?? sections[0]
+  }
+
   function getSectionContent(
     sectionId: SectionId,
     settings: TSettings,
     ...extraArgs: TExtraArgs
   ) {
-    return getSectionMeta(sectionId).build(settings, ...extraArgs)
+    return resolveVisibleSection(sectionId).build(settings, ...extraArgs)
   }
 
   function getSectionMeta(sectionId: SectionId) {
-    const section =
-      sections.find((item) => item.id === sectionId) ?? sections[0]
-    return section
+    return resolveVisibleSection(sectionId)
   }
 
   return {

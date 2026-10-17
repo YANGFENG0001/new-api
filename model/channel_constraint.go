@@ -2,6 +2,7 @@ package model
 
 import (
 	"slices"
+	"strings"
 
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
@@ -11,6 +12,7 @@ var filterEvalOrder = []dto.ChannelFilterKind{
 	dto.FilterRequestPath,
 	dto.FilterTaskPluginIdentity,
 	dto.FilterResponsesWebSocket,
+	dto.FilterUserControl,
 }
 
 // ChannelSatisfiesFilters reports whether ch passes every filter.
@@ -109,6 +111,8 @@ func channelMatchesFilter(ch *Channel, modelName string, filter dto.ChannelFilte
 			return setting.BindsTaskPlugin(filter.TaskPluginKey) || slices.ContainsFunc(filter.TaskPluginKeys, setting.BindsTaskPlugin)
 		}
 		return slices.Contains(filter.TaskPluginChannelTypes, ch.Type)
+	case dto.FilterUserControl:
+		return channelMatchesUserControl(ch, filter)
 	case dto.FilterResponsesWebSocket:
 		if !ch.GetSetting().ResponsesWebSocketEnabled {
 			return false
@@ -127,4 +131,29 @@ func channelMatchesFilter(ch *Channel, modelName string, filter dto.ChannelFilte
 	default:
 		return true
 	}
+}
+
+func channelMatchesUserControl(ch *Channel, filter dto.ChannelFilter) bool {
+	if ch == nil {
+		return false
+	}
+	if slices.Contains(filter.UserControlBlockIDs, ch.Id) {
+		return false
+	}
+	if len(filter.UserControlAllowIDs) > 0 && !slices.Contains(filter.UserControlAllowIDs, ch.Id) {
+		return false
+	}
+	if slices.Contains(filter.UserControlBlockTypes, ch.Type) {
+		return false
+	}
+	if len(filter.UserControlAllowTypes) > 0 && !slices.Contains(filter.UserControlAllowTypes, ch.Type) {
+		return false
+	}
+	if len(filter.UserControlAllowGroups) > 0 {
+		group := strings.TrimSpace(ch.Group)
+		if group == "" || !slices.Contains(filter.UserControlAllowGroups, group) {
+			return false
+		}
+	}
+	return true
 }

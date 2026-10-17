@@ -23,6 +23,17 @@ type UserQuotaAdjustment struct {
 }
 
 func AdjustUserQuota(userID, operatorRole int, mode string, value int) (*UserQuotaAdjustment, error) {
+	return adjustUserQuota(userID, operatorRole, mode, value, nil)
+}
+
+// AdjustUserQuotaWithLedger commits the balance change and its audit ledger
+// row in the same transaction. The ledger row is filled with the committed
+// before/after values and the operator supplied by the caller.
+func AdjustUserQuotaWithLedger(userID, operatorRole int, mode string, value int, ledger *UserQuotaLedger) (*UserQuotaAdjustment, error) {
+	return adjustUserQuota(userID, operatorRole, mode, value, ledger)
+}
+
+func adjustUserQuota(userID, operatorRole int, mode string, value int, ledger *UserQuotaLedger) (*UserQuotaAdjustment, error) {
 	if userID <= 0 || (mode != "add" && mode != "subtract" && mode != "override") {
 		return nil, ErrInvalidUserQuotaAdjustment
 	}
@@ -68,6 +79,18 @@ func AdjustUserQuota(userID, operatorRole int, mode string, value int) (*UserQuo
 			}
 		}
 		adjustment = UserQuotaAdjustment{UserID: user.Id, Username: user.Username, Before: user.Quota, After: after}
+		if ledger != nil {
+			ledger.UserId = user.Id
+			ledger.Username = user.Username
+			ledger.Before = user.Quota
+			ledger.After = after
+			if ledger.CreatedAt == 0 {
+				ledger.CreatedAt = common.GetTimestamp()
+			}
+			if err := tx.Create(ledger).Error; err != nil {
+				return err
+			}
+		}
 		return nil
 	})
 	if err != nil {

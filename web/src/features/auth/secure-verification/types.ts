@@ -46,6 +46,7 @@ export type SecurityProofScope =
   | 'admin.user.passkey.reset'
   | 'admin.user.2fa.disable'
   | 'admin.user.binding.clear'
+  | 'admin.user.batch'
 
 /** ManageUser actions that change a user's status or role and need step-up. */
 export type AdminUserManageAction = 'disable' | 'enable' | 'promote' | 'demote'
@@ -69,6 +70,14 @@ export type VerificationOperation =
   | {
       scope: 'admin.user.manage'
       context: { user_id: number; action: AdminUserManageAction }
+    }
+  | {
+      scope: 'admin.user.batch'
+      context: {
+        action: string
+        user_ids: number[]
+        batch_hash: string
+      }
     }
   | {
       scope: 'admin.user.binding.clear'

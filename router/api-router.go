@@ -153,6 +153,16 @@ func SetApiRouter(router *gin.Engine) {
 			adminRoute := userRoute.Group("/")
 			adminRoute.Use(middleware.AdminAuth())
 			{
+				// Bulk user operations. Registered before /:id so the literal
+				// "batch" segment wins over the parameterized user route.
+				adminRoute.GET("/batch/actions", controller.GetUserBatchActions)
+				adminRoute.POST("/batch/preview", controller.PreviewUserBatch)
+				adminRoute.POST("/batch/execute", controller.ExecuteUserBatch)
+				adminRoute.GET("/batch/jobs", controller.ListUserBatchJobs)
+				adminRoute.GET("/batch/jobs/:id", controller.GetUserBatchJob)
+				adminRoute.GET("/batch/jobs/:id/items", controller.ListUserBatchJobItems)
+				adminRoute.POST("/batch/jobs/:id/retry", controller.RetryUserBatchJob)
+				adminRoute.POST("/batch/jobs/:id/cancel", controller.CancelUserBatchJob)
 				adminRoute.GET("/", controller.GetAllUsers)
 				adminRoute.GET("/topup", controller.GetAllTopUps)
 				adminRoute.POST("/topup/complete", controller.AdminCompleteTopUp)
@@ -204,6 +214,37 @@ func SetApiRouter(router *gin.Engine) {
 			subscriptionAdminRoute.DELETE("/user_subscriptions/:id", controller.AdminDeleteUserSubscription)
 		}
 
+		// User control: rate, quota, model, channel and schedule limits.
+		// Every handler enforces user_control.* authorization; AdminAuth is a
+		// coarse gate only.
+		userControlRoute := apiRouter.Group("/user-control")
+		userControlRoute.Use(middleware.AdminAuth())
+		{
+			userControlRoute.GET("/capabilities", controller.GetUserControlCapabilities)
+			userControlRoute.GET("/policies", controller.ListUserControlPolicies)
+			userControlRoute.GET("/policies/:id", controller.GetUserControlPolicy)
+			userControlRoute.POST("/policies", controller.CreateUserControlPolicy)
+			userControlRoute.PUT("/policies/:id", controller.UpdateUserControlPolicy)
+			userControlRoute.DELETE("/policies/:id", controller.DeleteUserControlPolicy)
+			userControlRoute.GET("/lists", controller.ListUserControlLists)
+			userControlRoute.POST("/lists", controller.CreateUserControlList)
+			userControlRoute.PUT("/lists/:id", controller.UpdateUserControlList)
+			userControlRoute.DELETE("/lists/:id", controller.DeleteUserControlList)
+			userControlRoute.GET("/lists/:id/members", controller.ListUserControlListMembers)
+			userControlRoute.POST("/lists/:id/members", controller.AddUserControlListMembers)
+			userControlRoute.DELETE("/lists/:id/members", controller.RemoveUserControlListMembers)
+			userControlRoute.GET("/overrides", controller.ListUserControlOverrides)
+			userControlRoute.GET("/users/:user_id/override", controller.GetUserControlOverride)
+			userControlRoute.PUT("/users/:user_id/override", controller.PutUserControlOverride)
+			userControlRoute.DELETE("/users/:user_id/override", controller.DeleteUserControlOverride)
+			userControlRoute.GET("/users/:user_id/effective", controller.GetUserControlEffective)
+			userControlRoute.GET("/simulate", controller.SimulateUserControl)
+			userControlRoute.GET("/plan-bindings", controller.ListUserControlPlanBindings)
+			userControlRoute.PUT("/plans/:plan_id/binding", controller.PutUserControlPlanBinding)
+			userControlRoute.DELETE("/plans/:plan_id/binding", controller.DeleteUserControlPlanBinding)
+			userControlRoute.POST("/apply", controller.ApplyUserControlToUsers)
+			userControlRoute.GET("/audit", controller.ListUserControlAudit)
+		}
 		// Subscription payment callbacks (no auth)
 		apiRouter.POST("/subscription/epay/notify", anonymousRequestBodyLimit, controller.SubscriptionEpayNotify)
 		apiRouter.GET("/subscription/epay/notify", controller.SubscriptionEpayNotify)

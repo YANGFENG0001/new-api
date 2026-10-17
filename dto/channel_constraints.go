@@ -39,6 +39,7 @@ const (
 	FilterRequestPath        ChannelFilterKind = "request_path"
 	FilterTaskPluginIdentity ChannelFilterKind = "task_plugin_identity"
 	FilterResponsesWebSocket ChannelFilterKind = "responses_websocket"
+	FilterUserControl        ChannelFilterKind = "user_control"
 )
 
 type ChannelFilter struct {
@@ -47,6 +48,11 @@ type ChannelFilter struct {
 	TaskPluginKey          string
 	TaskPluginKeys         []string
 	TaskPluginChannelTypes []int
+	UserControlAllowIDs    []int
+	UserControlBlockIDs    []int
+	UserControlAllowTypes  []int
+	UserControlBlockTypes  []int
+	UserControlAllowGroups []string
 }
 
 type ChannelConstraints struct {

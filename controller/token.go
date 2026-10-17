@@ -11,6 +11,7 @@ import (
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/service/usercontrol"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 
@@ -323,8 +324,16 @@ func AddToken(c *gin.Context) {
 		}
 	}
 	// 检查用户令牌数量是否已达上限
+	userID := c.GetInt("id")
 	maxTokens := operation_setting.GetMaxUserTokens()
-	count, err := model.CountUserTokens(c.GetInt("id"))
+	var apiKeyLimits usercontrol.APIKeyLimits
+	if effective, resolveErr := usercontrol.Resolve(userID, c.GetInt("role")); resolveErr == nil && effective != nil && effective.HasPolicy {
+		apiKeyLimits = effective.APIKeys()
+		if apiKeyLimits.MaxTotal > 0 && (maxTokens <= 0 || apiKeyLimits.MaxTotal < maxTokens) {
+			maxTokens = apiKeyLimits.MaxTotal
+		}
+	}
+	count, err := model.CountUserTokens(userID)
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -332,6 +341,17 @@ func AddToken(c *gin.Context) {
 	if int(count) >= maxTokens {
 		common.ApiErrorT(c, "Maximum number of tokens reached ({{max}})", map[string]any{"max": maxTokens})
 		return
+	}
+	if apiKeyLimits.MaxActive > 0 {
+		activeCount, countErr := model.CountActiveUserTokens(userID)
+		if countErr != nil {
+			common.ApiError(c, countErr)
+			return
+		}
+		if int(activeCount) >= apiKeyLimits.MaxActive {
+			common.ApiErrorT(c, "Maximum number of active tokens reached ({{max}})", map[string]any{"max": apiKeyLimits.MaxActive})
+			return
+		}
 	}
 	if token.Group == "auto" {
 		if !setTokenAutoGroups(c, &token, request.AutoGroups.Groups) {

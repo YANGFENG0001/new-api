@@ -376,9 +376,20 @@ func migrateDB() error {
 		&CasbinRule{},
 		&AuthzRole{},
 		&UserAccessToken{},
+		&UserControlPolicy{},
+		&UserControlList{},
+		&UserControlListMember{},
+		&UserControlUserOverride{},
+		&UserControlPlanBinding{},
+		&UserBatchJob{},
+		&UserBatchJobItem{},
+		&UserQuotaLedger{},
 	)
 	if err != nil {
 		return err
+	}
+	if _, err := RecoverStaleUserBatchJobs(common.GetTimestamp() - 2*3600); err != nil {
+		return fmt.Errorf("recover interrupted user batch jobs: %w", err)
 	}
 	if err := InitializeUserAuthVersions(); err != nil {
 		return err

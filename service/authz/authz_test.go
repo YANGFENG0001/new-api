@@ -158,6 +158,24 @@ func TestSetUserPermissionsStoresOnlyOverrides(t *testing.T) {
 			ActionBind: false,
 		},
 		ResourceAudit: {ActionRead: false},
+		ResourceUserBatch: {
+			ActionRead:         false,
+			ActionExecute:      false,
+			ActionQuota:        false,
+			ActionDelete:       false,
+			ActionRole:         false,
+			ActionSecurity:     false,
+			ActionSubscription: false,
+		},
+		ResourceUserControl: {
+			ActionRead:          false,
+			ActionListWrite:     false,
+			ActionPolicyWrite:   false,
+			ActionOverrideWrite: false,
+			ActionOverrideRelax: false,
+			ActionApply:         false,
+			ActionAuditRead:     false,
+		},
 	}, ExplicitUserPermissions(42))
 	assert.Equal(t, PermissionsMap{
 		ResourceChannel: {
@@ -190,6 +208,24 @@ func TestSetUserPermissionsStoresOnlyOverrides(t *testing.T) {
 			ActionBind: false,
 		},
 		ResourceAudit: {ActionRead: false},
+		ResourceUserBatch: {
+			ActionRead:         false,
+			ActionExecute:      false,
+			ActionQuota:        false,
+			ActionDelete:       false,
+			ActionRole:         false,
+			ActionSecurity:     false,
+			ActionSubscription: false,
+		},
+		ResourceUserControl: {
+			ActionRead:          false,
+			ActionListWrite:     false,
+			ActionPolicyWrite:   false,
+			ActionOverrideWrite: false,
+			ActionOverrideRelax: false,
+			ActionApply:         false,
+			ActionAuditRead:     false,
+		},
 	}, ExplicitUserPermissions(42))
 	assert.Empty(t, ExplicitUserOverrides(42))
 }
@@ -319,4 +355,57 @@ func TestTaskPluginBindIsRootOnlyUntilGranted(t *testing.T) {
 	_, err = enforcer.RemovePolicy(RoleSubject(BuiltInRoleAdmin), ResourceTaskPlugin, ActionBind, EffectAllow)
 	require.NoError(t, err)
 	assert.False(t, Can(2, common.RoleAdminUser, TaskPluginBind))
+}
+
+func TestUserBatchAndControlPermissionsAreRootOnlyByDefault(t *testing.T) {
+	db := newAuthzTestDB(t)
+	require.NoError(t, Init(db))
+
+	permissions := []Permission{
+		UserBatchRead, UserBatchExecute, UserBatchQuota, UserBatchDelete,
+		UserBatchRole, UserBatchSecurity, UserBatchSubscription,
+		UserControlRead, UserControlListWrite, UserControlPolicyWrite,
+		UserControlOverrideWrite, UserControlOverrideRelax, UserControlApply,
+		UserControlAuditRead,
+	}
+	for _, permission := range permissions {
+		assert.False(t, Can(2, common.RoleAdminUser, permission),
+			"admin must not hold %s.%s by default", permission.Resource, permission.Action)
+		assert.True(t, Can(1, common.RoleRootUser, permission),
+			"root must hold %s.%s", permission.Resource, permission.Action)
+	}
+}
+
+func TestUserBatchPermissionCanBeDelegatedOneActionAtATime(t *testing.T) {
+	db := newAuthzTestDB(t)
+	require.NoError(t, Init(db))
+
+	require.NoError(t, SetUserPermissions(42, PermissionsMap{
+		ResourceUserBatch: {
+			ActionRead:  true,
+			ActionQuota: true,
+		},
+	}))
+
+	assert.True(t, Can(42, common.RoleAdminUser, UserBatchRead))
+	assert.True(t, Can(42, common.RoleAdminUser, UserBatchQuota))
+	assert.False(t, Can(42, common.RoleAdminUser, UserBatchExecute))
+	assert.False(t, Can(42, common.RoleAdminUser, UserBatchDelete))
+	assert.False(t, Can(42, common.RoleAdminUser, UserBatchRole))
+	assert.False(t, Can(42, common.RoleAdminUser, UserBatchSecurity))
+	assert.False(t, Can(42, common.RoleAdminUser, UserBatchSubscription))
+	// Delegating a batch permission must not delegate user control management.
+	assert.False(t, Can(42, common.RoleAdminUser, UserControlRead))
+}
+
+func TestUserControlRelaxRequiresExplicitGrant(t *testing.T) {
+	db := newAuthzTestDB(t)
+	require.NoError(t, Init(db))
+
+	require.NoError(t, SetUserPermissions(43, PermissionsMap{
+		ResourceUserControl: {ActionRead: true, ActionOverrideWrite: true},
+	}))
+	assert.True(t, Can(43, common.RoleAdminUser, UserControlRead))
+	assert.True(t, Can(43, common.RoleAdminUser, UserControlOverrideWrite))
+	assert.False(t, Can(43, common.RoleAdminUser, UserControlOverrideRelax))
 }

@@ -45,12 +45,43 @@ const (
 	VerificationScopeAdminUserPasskeyReset = "admin.user.passkey.reset"
 	VerificationScopeAdminUserTwoFADisable = "admin.user.2fa.disable"
 	VerificationScopeAdminUserBindingClear = "admin.user.binding.clear"
+	VerificationScopeAdminUserBatch        = "admin.user.batch"
 	verificationScopeAdminUserPrefix       = "admin.user."
 )
 
 // adminUserManageActions are the ManageUser actions that change a user's
 // status or role. Quota adjustments are not gated and deletion has its own scope.
 var adminUserManageActions = []string{"disable", "enable", "promote", "demote"}
+
+func normalizeAdminUserBatchIDs(ids []int) ([]int, bool) {
+	if len(ids) == 0 || len(ids) > 5000 {
+		return nil, false
+	}
+	seen := make(map[int]struct{}, len(ids))
+	out := make([]int, 0, len(ids))
+	for _, id := range ids {
+		if id <= 0 {
+			return nil, false
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+	}
+	sort.Ints(out)
+	return out, true
+}
+
+// adminUserBatchActions mirrors the batch executor action matrix.
+var adminUserBatchActions = []string{
+	"enable", "disable", "group",
+	"add_quota", "subtract_quota", "override_quota",
+	"delete", "promote", "demote",
+	"reset_2fa", "reset_passkey", "clear_bindings",
+	"invalidate_subscriptions", "delete_subscriptions",
+	"block", "unblock",
+}
 
 var (
 	ErrVerificationFailed         = errors.New("Verification failed. Please try again.")
@@ -101,6 +132,13 @@ type AdminUserBindingContext struct {
 
 type AdminUserCreateContext struct {
 	Role int `json:"role"`
+}
+
+// AdminUserBatchContext binds one step-up proof to a normalized user batch.
+type AdminUserBatchContext struct {
+	Action    string `json:"action"`
+	UserIDs   []int  `json:"user_ids"`
+	BatchHash string `json:"batch_hash"`
 }
 
 // AccessTokenGenerateContext binds a creation proof to the exact grant. Scopes
@@ -203,6 +241,22 @@ func BindVerificationOperation(operation VerificationOperation) (VerificationBin
 		if len(fields) != 1 || common.Unmarshal(fields["user_id"], &context.UserID) != nil || context.UserID <= 0 {
 			return VerificationBinding{}, ErrVerificationContextInvalid
 		}
+		normalized = context
+	case VerificationScopeAdminUserBatch:
+		var context AdminUserBatchContext
+		if len(fields) != 3 || common.Unmarshal(operation.Context, &context) != nil {
+			return VerificationBinding{}, ErrVerificationContextInvalid
+		}
+		context.Action = strings.TrimSpace(context.Action)
+		context.BatchHash = strings.TrimSpace(context.BatchHash)
+		if !slices.Contains(adminUserBatchActions, context.Action) || len(context.BatchHash) < 16 || len(context.BatchHash) > 128 {
+			return VerificationBinding{}, ErrVerificationContextInvalid
+		}
+		ids, ok := normalizeAdminUserBatchIDs(context.UserIDs)
+		if !ok {
+			return VerificationBinding{}, ErrVerificationContextInvalid
+		}
+		context.UserIDs = ids
 		normalized = context
 	case VerificationScopeAdminUserManage:
 		var context AdminUserManageContext
@@ -330,7 +384,7 @@ func securityVerificationPolicy(scope string, state model.UserVerificationState)
 		VerificationScopePasswordSet, VerificationScopePasswordChange, VerificationScopeAccountDelete,
 		VerificationScopeAdminUserCreate, VerificationScopeAdminUserUpdate, VerificationScopeAdminUserDelete,
 		VerificationScopeAdminUserManage, VerificationScopeAdminUserPasskeyReset,
-		VerificationScopeAdminUserTwoFADisable, VerificationScopeAdminUserBindingClear:
+		VerificationScopeAdminUserTwoFADisable, VerificationScopeAdminUserBindingClear, VerificationScopeAdminUserBatch:
 		if scope == VerificationScopeAccountDelete && state.Role == common.RoleRootUser {
 			return nil, ErrVerificationForbidden
 		}
@@ -395,7 +449,7 @@ func GetVerificationRequirements(identity AuthIdentity, scope string) (*Verifica
 			case VerificationScopeAccountBind, VerificationScopeAccountUnbind, VerificationScopePasswordSet, VerificationScopePasswordChange, VerificationScopeAccountDelete,
 				VerificationScopeAdminUserCreate, VerificationScopeAdminUserUpdate, VerificationScopeAdminUserDelete,
 				VerificationScopeAdminUserManage, VerificationScopeAdminUserPasskeyReset,
-				VerificationScopeAdminUserTwoFADisable, VerificationScopeAdminUserBindingClear:
+				VerificationScopeAdminUserTwoFADisable, VerificationScopeAdminUserBindingClear, VerificationScopeAdminUserBatch:
 				methods[i].Available, methods[i].Reason = false, "Password authentication is disabled."
 			}
 		}

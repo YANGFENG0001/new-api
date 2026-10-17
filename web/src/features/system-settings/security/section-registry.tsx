@@ -16,11 +16,15 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { hasPermission } from '@/lib/admin-permissions'
+import { useAuthStore } from '@/stores/auth-store'
+
 import { RateLimitSection } from '../request-limits/rate-limit-section'
 import { SSRFSection } from '../request-limits/ssrf-section'
 import { TokenLimitSection } from '../request-limits/token-limit-section'
 import type { SecuritySettings } from '../types'
 import { createSectionRegistry } from '../utils/section-registry'
+import { UserControlSection } from './user-control-section'
 
 const SECURITY_SECTIONS = [
   {
@@ -64,6 +68,13 @@ const SECURITY_SECTIONS = [
         }}
       />
     ),
+  },
+  {
+    id: 'user-control',
+    titleKey: 'User Control',
+    visible: () =>
+      hasPermission(useAuthStore.getState().auth.user, 'user_control', 'read'),
+    build: () => <UserControlSection />,
   },
   {
     id: 'token-limits',

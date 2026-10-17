@@ -17,19 +17,151 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { type Table } from '@tanstack/react-table'
+import { ChevronDown, History } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 
 import { DataTableBulkActions as BulkActionsToolbar } from '@/components/data-table'
+import { Button } from '@/components/ui/button'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 
+import { getBatchActions } from '../batch/api'
+import type { BatchActionInfo } from '../batch/types'
 import { type User } from '../types'
+import { BatchActionDialog } from './batch-action-dialog'
+import { BatchJobsSheet } from './batch-jobs-sheet'
+import { useUsers } from './users-provider'
 
 interface DataTableBulkActionsProps {
   table: Table<User>
 }
 
+const GROUPS: { key: string; actions: string[] }[] = [
+  {
+    key: 'Account state',
+    actions: ['enable', 'disable', 'block', 'unblock', 'group'],
+  },
+  { key: 'Quota', actions: ['add_quota', 'subtract_quota', 'override_quota'] },
+  { key: 'Role', actions: ['promote', 'demote'] },
+  {
+    key: 'Security',
+    actions: ['reset_2fa', 'reset_passkey', 'clear_bindings'],
+  },
+  {
+    key: 'Subscriptions',
+    actions: ['invalidate_subscriptions', 'delete_subscriptions'],
+  },
+  { key: 'Danger zone', actions: ['delete'] },
+]
+
 export function DataTableBulkActions({ table }: DataTableBulkActionsProps) {
+  const { t } = useTranslation()
+  const { triggerRefresh } = useUsers()
+  const [actions, setActions] = useState<BatchActionInfo[]>([])
+  const [canRead, setCanRead] = useState(false)
+  const [selectedAction, setSelectedAction] = useState<BatchActionInfo | null>(
+    null
+  )
+  const [jobsOpen, setJobsOpen] = useState(false)
+
+  const selectedRows = table.getFilteredSelectedRowModel().rows
+  const selectedIds = useMemo(
+    () => selectedRows.map((row) => row.original.id),
+    [selectedRows]
+  )
+
+  const loadActions = useCallback(async () => {
+    try {
+      const result = await getBatchActions()
+      if (result.success && result.data) {
+        setActions(result.data.actions)
+        setCanRead(result.data.can_read)
+      }
+    } catch {
+      // A user without user_batch.read simply sees no bulk controls.
+      setActions([])
+      setCanRead(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (selectedIds.length > 0) void loadActions()
+  }, [loadActions, selectedIds.length])
+
+  const anyAllowed = actions.some((item) => item.allowed)
+  if (selectedIds.length === 0) return null
+
   return (
-    <BulkActionsToolbar table={table} entityName='user'>
-      <></>
-    </BulkActionsToolbar>
+    <>
+      <BulkActionsToolbar table={table} entityName='user'>
+        <Button
+          variant='outline'
+          size='sm'
+          onClick={() => setJobsOpen(true)}
+          disabled={!canRead}
+        >
+          <History className='size-4' />
+          {t('Batch jobs')}
+        </Button>
+
+        {anyAllowed && (
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              render={
+                <Button size='sm' variant='default'>
+                  {t('Bulk actions')}
+                  <ChevronDown className='size-4' />
+                </Button>
+              }
+            />
+            <DropdownMenuContent align='end' className='w-60'>
+              {GROUPS.map((group, index) => {
+                const items = group.actions
+                  .map((action) =>
+                    actions.find((item) => item.action === action)
+                  )
+                  .filter((item): item is BatchActionInfo =>
+                    Boolean(item?.allowed)
+                  )
+                if (items.length === 0) return null
+                return (
+                  <div key={group.key}>
+                    {index > 0 && <DropdownMenuSeparator />}
+                    <DropdownMenuLabel>{t(group.key)}</DropdownMenuLabel>
+                    {items.map((item) => (
+                      <DropdownMenuItem
+                        key={item.action}
+                        variant={item.destructive ? 'destructive' : 'default'}
+                        onClick={() => setSelectedAction(item)}
+                      >
+                        {t(item.action)}
+                      </DropdownMenuItem>
+                    ))}
+                  </div>
+                )
+              })}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
+      </BulkActionsToolbar>
+
+      <BatchActionDialog
+        action={selectedAction}
+        userIds={selectedIds}
+        onClose={() => setSelectedAction(null)}
+        onCompleted={() => {
+          table.resetRowSelection()
+          triggerRefresh()
+        }}
+      />
+      <BatchJobsSheet open={jobsOpen} onOpenChange={setJobsOpen} />
+    </>
   )
 }

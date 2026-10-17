@@ -48,6 +48,7 @@ type AuditLog struct {
 type AuditLogFilter struct {
 	SelfView        bool // Server-selected metadata projection, independent of the viewer's actual role.
 	UserId          int
+	ActionPrefix    string
 	Username        string
 	Category        string
 	TokenRef        string
@@ -157,6 +158,9 @@ func GetAuditLogs(filter AuditLogFilter, start, limit, viewerRole int) ([]*Audit
 	}
 	if filter.Category != "" {
 		query = query.Where("category = ?", filter.Category)
+	}
+	if filter.ActionPrefix != "" {
+		query = query.Where("action LIKE ?", filter.ActionPrefix+"%")
 	}
 	if filter.TokenRef != "" {
 		query = query.Where("token_ref = ?", filter.TokenRef)

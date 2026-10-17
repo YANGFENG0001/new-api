@@ -122,6 +122,45 @@ var accessTokenRouteRules = map[string]accessTokenRouteRule{
 	"GET /api/user/2fa/stats":                          accessTokenScopeRule("user:read"),
 	"DELETE /api/user/:id/2fa":                         accessTokenScopeRule("user:write"),
 
+	// router/api-router.go: /api/user/batch (admin bulk operations). These
+	// routes act on behalf of many users and require a browser session; scoped
+	// personal access tokens cannot obtain the step-up proof for them.
+	"GET /api/user/batch/actions":          accessTokenSessionRule,
+	"POST /api/user/batch/preview":         accessTokenSessionRule,
+	"POST /api/user/batch/execute":         accessTokenSessionRule,
+	"GET /api/user/batch/jobs":             accessTokenSessionRule,
+	"GET /api/user/batch/jobs/:id":         accessTokenSessionRule,
+	"GET /api/user/batch/jobs/:id/items":   accessTokenSessionRule,
+	"POST /api/user/batch/jobs/:id/retry":  accessTokenSessionRule,
+	"POST /api/user/batch/jobs/:id/cancel": accessTokenSessionRule,
+
+	// router/api-router.go: /api/user-control. Session-only for the same
+	// reason; the handlers additionally enforce user_control.* permissions.
+	"GET /api/user-control/capabilities":               accessTokenSessionRule,
+	"GET /api/user-control/policies":                   accessTokenSessionRule,
+	"GET /api/user-control/policies/:id":               accessTokenSessionRule,
+	"POST /api/user-control/policies":                  accessTokenSessionRule,
+	"PUT /api/user-control/policies/:id":               accessTokenSessionRule,
+	"DELETE /api/user-control/policies/:id":            accessTokenSessionRule,
+	"GET /api/user-control/lists":                      accessTokenSessionRule,
+	"POST /api/user-control/lists":                     accessTokenSessionRule,
+	"PUT /api/user-control/lists/:id":                  accessTokenSessionRule,
+	"DELETE /api/user-control/lists/:id":               accessTokenSessionRule,
+	"GET /api/user-control/lists/:id/members":          accessTokenSessionRule,
+	"POST /api/user-control/lists/:id/members":         accessTokenSessionRule,
+	"DELETE /api/user-control/lists/:id/members":       accessTokenSessionRule,
+	"GET /api/user-control/overrides":                  accessTokenSessionRule,
+	"GET /api/user-control/users/:user_id/override":    accessTokenSessionRule,
+	"PUT /api/user-control/users/:user_id/override":    accessTokenSessionRule,
+	"DELETE /api/user-control/users/:user_id/override": accessTokenSessionRule,
+	"GET /api/user-control/users/:user_id/effective":   accessTokenSessionRule,
+	"GET /api/user-control/simulate":                   accessTokenSessionRule,
+	"GET /api/user-control/plan-bindings":              accessTokenSessionRule,
+	"PUT /api/user-control/plans/:plan_id/binding":     accessTokenSessionRule,
+	"DELETE /api/user-control/plans/:plan_id/binding":  accessTokenSessionRule,
+	"POST /api/user-control/apply":                     accessTokenSessionRule,
+	"GET /api/user-control/audit":                      accessTokenSessionRule,
+
 	// router/api-router.go: /api/subscription
 	"GET /api/subscription/plans":                                    accessTokenScopeRule("wallet:read"),
 	"GET /api/subscription/self":                                     accessTokenScopeRule("wallet:read"),
