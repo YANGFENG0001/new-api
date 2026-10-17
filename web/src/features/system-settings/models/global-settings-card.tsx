@@ -90,6 +90,7 @@ const jsonString = z.string().refine((value) => {
 const schema = z.object({
   global: z.object({
     pass_through_request_enabled: z.boolean(),
+    responses_sanitize_encrypted_content: z.boolean(),
     thinking_model_blacklist: jsonString,
     chat_completions_to_responses_policy: jsonString,
   }),
@@ -104,6 +105,7 @@ type GlobalModelSettingsFormInput = z.input<typeof schema>
 
 type FlatGlobalModelSettings = {
   'global.pass_through_request_enabled': boolean
+  'global.responses_sanitize_encrypted_content': boolean
   'global.thinking_model_blacklist': string
   'global.chat_completions_to_responses_policy': string
   'general_setting.ping_interval_enabled': boolean
@@ -115,6 +117,8 @@ const flattenGlobalValues = (
 ): FlatGlobalModelSettings => ({
   'global.pass_through_request_enabled':
     values.global.pass_through_request_enabled,
+  'global.responses_sanitize_encrypted_content':
+    values.global.responses_sanitize_encrypted_content,
   'global.thinking_model_blacklist': normalizeJsonText(
     values.global.thinking_model_blacklist,
     '[]'
@@ -196,6 +200,31 @@ export function GlobalSettingsCard({ defaultValues }: GlobalSettingsCardProps) {
                   <FormDescription>
                     {t(
                       'Forward requests directly to upstream providers without any post-processing.'
+                    )}
+                  </FormDescription>
+                </SettingsSwitchContent>
+                <FormControl>
+                  <Switch
+                    checked={field.value}
+                    onCheckedChange={field.onChange}
+                  />
+                </FormControl>
+              </SettingsSwitchItem>
+            )}
+          />
+
+          <FormField
+            control={form.control}
+            name='global.responses_sanitize_encrypted_content'
+            render={({ field }) => (
+              <SettingsSwitchItem>
+                <SettingsSwitchContent>
+                  <FormLabel>
+                    {t('Sanitize Unverifiable Encrypted Content')}
+                  </FormLabel>
+                  <FormDescription>
+                    {t(
+                      'Remove reasoning encrypted_content values that the target GPT upstream cannot verify. Disable only for troubleshooting; the RESPONSES_SANITIZE_ENCRYPTED_CONTENT environment variable overrides this setting.'
                     )}
                   </FormDescription>
                 </SettingsSwitchContent>

@@ -2209,6 +2209,8 @@
     "Enable request body passthrough?": "リクエストボディのパススルーを有効にしますか？",
     "Enable request header passthrough?": "リクエストヘッダーのパススルーを有効にしますか？",
     "Enable Request Passthrough": "リクエストパススルーを有効にする",
+    "Sanitize Unverifiable Encrypted Content": "検証できない暗号化コンテンツを消去",
+    "Remove reasoning encrypted_content values that the target GPT upstream cannot verify. Disable only for troubleshooting; the RESPONSES_SANITIZE_ENCRYPTED_CONTENT environment variable overrides this setting.": "対象の GPT 上流が検証できない reasoning の encrypted_content を削除します。トラブルシューティング時のみ無効にしてください。環境変数 RESPONSES_SANITIZE_ENCRYPTED_CONTENT がこの設定より優先されます。",
     "Enable Responses WebSocket": "Responses WebSocket を有効化",
     "Enable selected channels": "選択したチャネルを有効にする",
     "Enable selected models": "選択したモデルを有効にする",

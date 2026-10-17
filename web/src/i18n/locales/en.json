@@ -2209,6 +2209,8 @@
     "Enable request body passthrough?": "Enable request body passthrough?",
     "Enable request header passthrough?": "Enable request header passthrough?",
     "Enable Request Passthrough": "Enable Request Passthrough",
+    "Sanitize Unverifiable Encrypted Content": "Sanitize Unverifiable Encrypted Content",
+    "Remove reasoning encrypted_content values that the target GPT upstream cannot verify. Disable only for troubleshooting; the RESPONSES_SANITIZE_ENCRYPTED_CONTENT environment variable overrides this setting.": "Remove reasoning encrypted_content values that the target GPT upstream cannot verify. Disable only for troubleshooting; the RESPONSES_SANITIZE_ENCRYPTED_CONTENT environment variable overrides this setting.",
     "Enable Responses WebSocket": "Enable Responses WebSocket",
     "Enable selected channels": "Enable selected channels",
     "Enable selected models": "Enable selected models",

@@ -2209,6 +2209,8 @@
     "Enable request body passthrough?": "Включить проброс тела запроса?",
     "Enable request header passthrough?": "Включить проброс заголовков запроса?",
     "Enable Request Passthrough": "Включить сквозную передачу запросов",
+    "Sanitize Unverifiable Encrypted Content": "Очищать непроверяемое зашифрованное содержимое",
+    "Remove reasoning encrypted_content values that the target GPT upstream cannot verify. Disable only for troubleshooting; the RESPONSES_SANITIZE_ENCRYPTED_CONTENT environment variable overrides this setting.": "Удаляет значения reasoning encrypted_content, которые целевой GPT-провайдер не может проверить. Отключайте только для диагностики; переменная окружения RESPONSES_SANITIZE_ENCRYPTED_CONTENT имеет приоритет над этой настройкой.",
     "Enable Responses WebSocket": "Включить Responses WebSocket",
     "Enable selected channels": "Включить выбранные каналы",
     "Enable selected models": "Включить выбранные модели",

@@ -2209,6 +2209,8 @@
     "Enable request body passthrough?": "确认开启透传请求体？",
     "Enable request header passthrough?": "确认开启透传请求头？",
     "Enable Request Passthrough": "启用请求透传",
+    "Sanitize Unverifiable Encrypted Content": "清理不可验证的加密内容",
+    "Remove reasoning encrypted_content values that the target GPT upstream cannot verify. Disable only for troubleshooting; the RESPONSES_SANITIZE_ENCRYPTED_CONTENT environment variable overrides this setting.": "在向 GPT 上游转发前，移除目标上游无法验证的 reasoning encrypted_content。仅在排障时关闭；RESPONSES_SANITIZE_ENCRYPTED_CONTENT 环境变量会覆盖此设置。",
     "Enable Responses WebSocket": "启用 Responses WebSocket",
     "Enable selected channels": "启用选定的渠道",
     "Enable selected models": "启用选定的模型",
