@@ -29,6 +29,19 @@ import (
 // Dropping the field (not blanking it) is accepted by OpenAI, verified against
 // the live upstream. Genuine OpenAI ciphertext always starts with "gAAAA".
 //
+// The same replay also carries the provider's raw reasoning text:
+//
+//	{"type":"reasoning","content":[{"type":"reasoning_text","text":"..."}]}
+//
+// content is output-only on reasoning items. OpenAI rejects it as input with
+//
+//	Invalid 'input[N].content': array too long.
+//	Expected an array with maximum length 0, but got an array with length 1
+//
+// so content is normalised to [] and the replayable summary is kept. This
+// happens for every reasoning item regardless of channel type because a
+// gateway can route the same request to different upstreams between turns.
+//
 // The sanitiser is switchable; see
 // model_setting.ShouldSanitizeResponsesEncryptedContent.
 
@@ -61,11 +74,18 @@ func shouldDropEncryptedContent(value string, strict bool) bool {
 	return strict
 }
 
-// sanitizeResponsesInput removes encrypted_content from reasoning items that
-// the target upstream could not decrypt. When nothing is dropped the original
-// bytes are returned untouched.
+// sanitizeResponsesInput normalises reasoning items before they are replayed:
+// encrypted_content the target upstream could not decrypt is removed, and
+// reasoning content, which the Responses API refuses on input, is emptied.
+// When nothing changes the original bytes are returned untouched.
 func sanitizeResponsesInput(input json.RawMessage, strict bool) json.RawMessage {
-	if len(input) == 0 || !bytes.Contains(input, []byte(`"encrypted_content"`)) {
+	if len(input) == 0 {
+		return input
+	}
+	// Reasoning items are the only items that can need a rewrite. Checking for
+	// the item type first keeps the common message/tool payload on the cheap
+	// byte-scan path.
+	if !bytes.Contains(input, []byte(`"reasoning"`)) {
 		return input
 	}
 
@@ -80,16 +100,25 @@ func sanitizeResponsesInput(input json.RawMessage, strict bool) json.RawMessage 
 		if raw, ok := item["type"]; !ok || json.Unmarshal(raw, &itemType) != nil || itemType != "reasoning" {
 			continue
 		}
-		raw, ok := item["encrypted_content"]
-		if !ok {
-			continue
+		itemChanged := false
+		if raw, ok := item["encrypted_content"]; ok {
+			var value string
+			if json.Unmarshal(raw, &value) == nil && shouldDropEncryptedContent(value, strict) {
+				delete(item, "encrypted_content")
+				itemChanged = true
+			}
 		}
-		var value string
-		if json.Unmarshal(raw, &value) != nil || !shouldDropEncryptedContent(value, strict) {
-			continue
+		// content is output-only on reasoning items; summary is the replayable
+		// representation. Foreign providers put the raw trace in content, and
+		// OpenAI rejects any non-empty array there even when the ciphertext is
+		// already gone.
+		if raw, ok := item["content"]; ok && needsReasoningContentReset(raw) {
+			item["content"] = json.RawMessage(`[]`)
+			itemChanged = true
 		}
-		delete(item, "encrypted_content")
-		changed = true
+		if itemChanged {
+			changed = true
+		}
 	}
 	if !changed {
 		return input
@@ -105,7 +134,7 @@ func sanitizeResponsesInput(input json.RawMessage, strict bool) json.RawMessage 
 // sanitizeResponsesBody is the pass-through equivalent: it rewrites the whole
 // {"model":...,"input":[...]} payload.
 func sanitizeResponsesBody(body []byte, strict bool) ([]byte, bool) {
-	if !bytes.Contains(body, []byte(`"encrypted_content"`)) {
+	if !bytes.Contains(body, []byte(`"reasoning"`)) {
 		return body, false
 	}
 	var root map[string]json.RawMessage
@@ -146,4 +175,23 @@ func sanitizePassthroughBody(c *gin.Context, storage common.BodyStorage, strict 
 	c.Set(common.KeyBodyStorage, next)
 	_ = storage.Close()
 	return next, nil
+}
+
+// needsReasoningContentReset reports whether content must be emptied before the
+// item is replayed. Absent and already-empty arrays are left alone; anything
+// else (text parts, null, a non-array value) is invalid on a reasoning input
+// item and is normalised to [].
+func needsReasoningContentReset(raw json.RawMessage) bool {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 {
+		return false
+	}
+	var parts []json.RawMessage
+	if err := json.Unmarshal(trimmed, &parts); err != nil {
+		return true
+	}
+	if len(parts) > 0 {
+		return true
+	}
+	return bytes.Equal(trimmed, []byte("null"))
 }
