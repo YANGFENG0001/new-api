@@ -26,12 +26,13 @@ var (
 
 // PolicyPayload is the create/update payload for a policy template.
 type PolicyPayload struct {
-	Name        string          `json:"name"`
-	Description string          `json:"description"`
-	Enabled     *bool           `json:"enabled"`
-	Priority    int             `json:"priority"`
-	Limits      json.RawMessage `json:"limits"`
-	Schedule    json.RawMessage `json:"schedule"`
+	SchemaVersion int             `json:"schema_version"`
+	Name          string          `json:"name"`
+	Description   string          `json:"description"`
+	Enabled       *bool           `json:"enabled"`
+	Priority      int             `json:"priority"`
+	Limits        json.RawMessage `json:"limits"`
+	Schedule      json.RawMessage `json:"schedule"`
 }
 
 // PolicyView adds parsed values so the UI can edit a policy without
@@ -62,6 +63,7 @@ type OverridePayload struct {
 
 // SourceDetail explains one policy that contributed to an effective result.
 type SourceDetail struct {
+	PoolID       int      `json:"pool_id,omitempty"`
 	Source       string   `json:"source"`
 	SourceID     int      `json:"source_id"`
 	PolicyID     int      `json:"policy_id"`
@@ -127,6 +129,9 @@ func BuildPolicy(payload PolicyPayload, actorID int) (*model.UserControlPolicy, 
 	if err != nil {
 		return nil, err
 	}
+	if payload.SchemaVersion == 2 && (limits.RandomPool != nil || schedule != nil) {
+		return nil, fmt.Errorf("%w: behavior policies cannot contain scheduling", ErrInvalidInput)
+	}
 	if err := ValidatePoolReferences(limits, schedule, 0); err != nil {
 		return nil, err
 	}
@@ -136,17 +141,18 @@ func BuildPolicy(payload PolicyPayload, actorID int) (*model.UserControlPolicy, 
 	}
 	now := common.GetTimestamp()
 	return &model.UserControlPolicy{
-		Name:        name,
-		Description: trimDescription(payload.Description),
-		Enabled:     enabled,
-		Priority:    payload.Priority,
-		Limits:      limitsJSON,
-		Schedule:    scheduleJSON,
-		Version:     1,
-		CreatedBy:   actorID,
-		UpdatedBy:   actorID,
-		CreatedAt:   now,
-		UpdatedAt:   now,
+		SchemaVersion: payload.SchemaVersion,
+		Name:          name,
+		Description:   trimDescription(payload.Description),
+		Enabled:       enabled,
+		Priority:      payload.Priority,
+		Limits:        limitsJSON,
+		Schedule:      scheduleJSON,
+		Version:       1,
+		CreatedBy:     actorID,
+		UpdatedBy:     actorID,
+		CreatedAt:     now,
+		UpdatedAt:     now,
 	}, nil
 }
 
@@ -164,12 +170,23 @@ func ApplyPolicyPayload(policy *model.UserControlPolicy, payload PolicyPayload, 
 	if err != nil {
 		return err
 	}
+	if policy.SchemaVersion == 2 || payload.SchemaVersion == 2 {
+		if limits.RandomPool != nil || schedule != nil {
+			return fmt.Errorf("%w: behavior policies cannot contain scheduling", ErrInvalidInput)
+		}
+		policy.SchemaVersion = 2
+	}
 	if err := ValidatePoolReferences(limits, schedule, policy.Id); err != nil {
 		return err
 	}
 	enabled := policy.Enabled
 	if payload.Enabled != nil {
 		enabled = *payload.Enabled
+	}
+	if used, err := ApplicationReferences("policy", policy.Id); err != nil {
+		return err
+	} else if used && (schedule != nil || limits.RandomPool != nil) {
+		return fmt.Errorf("%w: referenced behavior policy cannot become scheduled", ErrInvalidInput)
 	}
 	policy.Name = name
 	policy.Description = trimDescription(payload.Description)
@@ -336,33 +353,27 @@ func ExplainAt(userID, role int, at time.Time) (*EffectiveView, error) {
 		return nil, err
 	}
 	for _, source := range sources {
-		base, err := ParseLimits(source.Policy.Limits)
+		active, hits, _, _, policy, err := resolveSource(source, userID, at)
 		if err != nil {
 			return nil, err
 		}
-		schedule, err := ParseSchedule(source.Policy.Schedule)
-		if err != nil {
-			return nil, err
-		}
-		active, hits, timezone, err := schedule.ActiveLimitsForUser(at, base, userID)
-		if err != nil {
-			return nil, err
-		}
-		loc, _ := time.LoadLocation(timezone)
-		active, poolHits, _, err := resolvePool(active, at, loc, userID, source.Policy.Id)
-		if err != nil {
-			return nil, err
-		}
-		hits = append(hits, poolHits...)
+
 		detail := SourceDetail{
 			Source:       source.Source,
 			SourceID:     source.SourceId,
-			PolicyID:     source.Policy.Id,
-			PolicyName:   source.Policy.Name,
+			PolicyID:     policy.Id,
+			PolicyName:   policy.Name,
 			Priority:     source.Policy.Priority,
-			Active:       !active.Empty() || (schedule == nil && !base.Empty()),
+			Active:       !active.Empty(),
 			ScheduleHits: hits,
 			Limits:       active,
+		}
+		if source.Pool != nil {
+			detail.PoolID = source.Pool.Id
+			detail.Priority = source.Pool.Priority
+			if detail.PolicyName == "" {
+				detail.PolicyName = source.Pool.Name
+			}
 		}
 		view.Details = append(view.Details, detail)
 	}
@@ -394,6 +405,12 @@ func ApplyToUsers(actorID, actorRole, policyID int, userIDs []int, mode string, 
 	}
 	if !policy.Enabled {
 		return nil, ErrPolicyDisabled
+	}
+	if !BehaviorOnly(*policy) {
+		return nil, fmt.Errorf("%w: select a behavior-only policy", ErrInvalidInput)
+	}
+	if strings.EqualFold(strings.TrimSpace(mode), "replace") && strings.TrimSpace(reason) == "" {
+		return nil, fmt.Errorf("%w: replacement requires a reason", ErrInvalidInput)
 	}
 	mode = strings.ToLower(strings.TrimSpace(mode))
 	if mode == "" {
@@ -427,27 +444,67 @@ func ApplyToUsers(actorID, actorRole, policyID int, userIDs []int, mode string, 
 			results = append(results, result)
 			continue
 		}
-		override, err := model.GetUserControlOverride(userID)
-		if err != nil {
-			override = nil
+		var application model.UserControlApplication
+		query := model.DB.Where("owner_kind = ? AND owner_id = ?", "user", userID).Find(&application)
+		if query.Error != nil {
+			result.Status, result.Message = "failed", query.Error.Error()
+			results = append(results, result)
+			continue
 		}
-		now := common.GetTimestamp()
-		if override == nil {
-			override = &model.UserControlUserOverride{
-				UserId: userID, CreatedBy: actorID, CreatedAt: now,
+		if application.Id == 0 || application.UseLegacy {
+			var legacy int64
+			if err := model.DB.Model(&model.UserControlUserOverride{}).Where("user_id = ?", userID).Count(&legacy).Error; err != nil {
+				result.Status, result.Message = "failed", err.Error()
+				results = append(results, result)
+				continue
+			}
+			if legacy > 0 {
+				result.Status, result.Message = "failed", "Migrate legacy settings before appending or removing bindings"
+				results = append(results, result)
+				continue
 			}
 		}
-		override.PolicyId = policyID
-		override.Limits = ""
-		override.Schedule = ""
-		override.Mode = mode
-		override.ExpiresAt = expiresAt
-		override.Reason = trimDescription(reason)
-		override.UpdatedBy = actorID
-		override.UpdatedAt = now
-		if err := model.UpsertUserControlOverride(override); err != nil {
+		var targets []model.UserControlTarget
+		if application.Targets != "" {
+			if err := common.UnmarshalJsonStr(application.Targets, &targets); err != nil {
+				result.Status, result.Message = "failed", err.Error()
+				results = append(results, result)
+				continue
+			}
+		}
+		found := false
+		for _, target := range targets {
+			if target.Kind == "policy" && target.Id == policyID {
+				found = true
+			}
+		}
+		if !found {
+			targets = append(targets, model.UserControlTarget{Kind: "policy", Id: policyID})
+		}
+		raw, err := common.Marshal(targets)
+		if err != nil {
+			return nil, err
+		}
+		expected := application.Version
+		// The legacy compatibility endpoint only appends. It cannot silently
+		// clear inline overrides or downgrade an existing replacement mode.
+		if application.Id > 0 && (application.Mode != mode || application.ExpiresAt != expiresAt) {
+			result.Status, result.Message = "failed", "Use the personal settings editor to change mode or expiry"
+			results = append(results, result)
+			continue
+		}
+		application.OwnerKind = "user"
+		application.OwnerId = userID
+		application.Targets = string(raw)
+		application.Mode = mode
+		application.ExpiresAt = expiresAt
+		application.Reason = trimDescription(reason)
+		application.UpdatedBy = actorID
+		application.CreatedBy = actorID
+		if err := model.SaveUserControlApplicationVersion(&application, expected); err != nil {
 			result.Status, result.Message = "failed", err.Error()
 		}
+
 		results = append(results, result)
 	}
 	model.BumpUserControlEpoch()

@@ -314,6 +314,9 @@ test('the override entry searches and selects a user then saves the override for
       })
     }
     if (url === '/api/subscription/admin/plans') return envelope([])
+    if (url.endsWith('/resource-catalog')) {
+      return envelope({ channels: [], plans: [] })
+    }
     if (url.startsWith('/api/user/search')) {
       return envelope({ items: [bob], total: 1 })
     }
@@ -323,11 +326,9 @@ test('the override entry searches and selects a user then saves the override for
   const put = vi.spyOn(api, 'put').mockResolvedValue(envelope({}))
   mount(<UserControlSection />)
   await userEvent.click(
-    await screen.findByRole('tab', { name: 'User overrides' })
+    await screen.findByRole('tab', { name: 'Personal settings' })
   )
-  await userEvent.click(
-    screen.getByRole('button', { name: 'Override for user' })
-  )
+  await userEvent.click(screen.getByRole('button', { name: 'Select users' }))
   expect(screen.getByRole('button', { name: 'Continue' })).toBeDisabled()
   await userEvent.type(
     screen.getByRole('textbox', { name: 'Search users' }),
@@ -338,13 +339,13 @@ test('the override entry searches and selects a user then saves the override for
   )
   await userEvent.click(screen.getByRole('button', { name: 'Continue' }))
   expect(
-    await screen.findByRole('dialog', { name: 'User override #8' })
+    await screen.findByRole('dialog', { name: 'Applications for User #8' })
   ).toBeVisible()
   await userEvent.click(screen.getByRole('button', { name: 'Save' }))
   await waitFor(() =>
     expect(put).toHaveBeenCalledWith(
-      '/api/user-control/users/8/override',
-      expect.objectContaining({ mode: 'merge', limits: {} })
+      '/api/user-control/applications/user/8',
+      expect.objectContaining({ mode: 'merge', targets: [] })
     )
   )
 })
@@ -361,6 +362,9 @@ test('saving a new list keeps the Lists tab active after the settings reload and
       return envelope({ read: true, list_write: true, default_timezone: 'UTC' })
     }
     if (url === '/api/subscription/admin/plans') return envelope([])
+    if (url.endsWith('/resource-catalog')) {
+      return envelope({ channels: [], plans: [] })
+    }
     if (url.endsWith('/lists')) {
       return envelope({ items: capabilityLoads > 1 ? [list] : [] })
     }
@@ -372,8 +376,9 @@ test('saving a new list keeps the Lists tab active after the settings reload and
   await userEvent.click(screen.getByRole('button', { name: 'New list' }))
   await userEvent.type(screen.getByRole('textbox', { name: 'Name' }), list.name)
   await userEvent.click(screen.getByRole('button', { name: 'Save' }))
-  await waitFor(() =>
-    expect(screen.queryByRole('tab', { name: 'Lists' })).not.toBeInTheDocument()
+  expect(screen.getByRole('tab', { name: 'Lists' })).toHaveAttribute(
+    'aria-selected',
+    'true'
   )
   await act(async () => finishReload())
   expect(await screen.findByRole('tab', { name: 'Lists' })).toHaveAttribute(
@@ -389,7 +394,7 @@ test('saving a new list keeps the Lists tab active after the settings reload and
   )
 })
 
-test.each(['Lists', 'User overrides', 'Subscription plans', 'Simulator'])(
+test.each(['Lists', 'Personal settings', 'Subscription plans', 'Simulator'])(
   'refreshing settings while on %s preserves the active tab after loading',
   async (tabName) => {
     let finishReload!: () => void
@@ -403,15 +408,17 @@ test.each(['Lists', 'User overrides', 'Subscription plans', 'Simulator'])(
         return envelope({ read: true, default_timezone: 'UTC' })
       }
       if (url === '/api/subscription/admin/plans') return envelope([])
+      if (url.endsWith('/resource-catalog')) {
+        return envelope({ channels: [], plans: [] })
+      }
       return envelope({ items: [] })
     })
     mount(<UserControlSection />)
     await userEvent.click(await screen.findByRole('tab', { name: tabName }))
     await userEvent.click(screen.getByRole('button', { name: 'Refresh' }))
-    await waitFor(() =>
-      expect(
-        screen.queryByRole('tab', { name: tabName })
-      ).not.toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: tabName })).toHaveAttribute(
+      'aria-selected',
+      'true'
     )
     await act(async () => finishReload())
     expect(await screen.findByRole('tab', { name: tabName })).toHaveAttribute(

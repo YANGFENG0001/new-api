@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { ArrowDown, ArrowUp, Clock, Copy, Plus, Trash2 } from 'lucide-react'
-import { useId } from 'react'
+import { useId, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Badge } from '@/components/ui/badge'
@@ -60,7 +60,11 @@ export function ScheduleEditor({
   value,
   onChange,
   defaultTimezone = 'Asia/Shanghai',
+  timingOnly = false,
+  renderWindowOptions,
 }: {
+  timingOnly?: boolean
+  renderWindowOptions?: (id: string) => ReactNode
   defaultTimezone?: string
   value?: Schedule | null
   onChange: (next: Schedule | null) => void
@@ -153,13 +157,19 @@ export function ScheduleEditor({
 
       <p className='text-muted-foreground text-xs'>
         {t(
-          'Rules are evaluated independently. When several rules share the highest priority that matches now, their limits are merged and the strictest value wins. Lower-priority matches are ignored. An empty weekday list means every day; an empty date list means every date.'
+          timingOnly
+            ? 'Overlapping windows use the highest priority, then the window identifier. Outside all windows the pool is inactive.'
+            : 'Rules are evaluated independently. When several rules share the highest priority that matches now, their limits are merged and the strictest value wins. Lower-priority matches are ignored. An empty weekday list means every day; an empty date list means every date.'
         )}
       </p>
 
       {rules.length === 0 && (
         <div className='text-muted-foreground rounded-md border border-dashed p-6 text-center text-sm'>
-          {t('No time windows. Limits apply all day.')}
+          {t(
+            timingOnly
+              ? 'No windows configured. This scheduled pool is inactive.'
+              : 'No time windows. Limits apply all day.'
+          )}
         </div>
       )}
 
@@ -264,10 +274,12 @@ export function ScheduleEditor({
               </div>
 
               <div className='space-y-4 p-3'>
-                <RandomWindowEditor
-                  value={rule.random}
-                  onChange={(random) => setRule(index, { random })}
-                />
+                {!timingOnly && (
+                  <RandomWindowEditor
+                    value={rule.random}
+                    onChange={(random) => setRule(index, { random })}
+                  />
+                )}
                 <div className='space-y-2'>
                   <Label className='text-muted-foreground text-xs'>
                     {t('Weekdays')}
@@ -374,15 +386,18 @@ export function ScheduleEditor({
                 </div>
 
                 <Separator />
-                <div className='space-y-2'>
-                  <Label className='text-sm font-medium'>
-                    {t('Limits for this window')}
-                  </Label>
-                  <LimitsEditor
-                    value={rule.limits}
-                    onChange={(limits) => setRule(index, { limits })}
-                  />
-                </div>
+                {!timingOnly && (
+                  <div className='space-y-2'>
+                    <Label className='text-sm font-medium'>
+                      {t('Limits for this window')}
+                    </Label>
+                    <LimitsEditor
+                      value={rule.limits}
+                      onChange={(limits) => setRule(index, { limits })}
+                    />
+                  </div>
+                )}
+                {renderWindowOptions?.(rule.id ?? '')}
               </div>
             </div>
           )

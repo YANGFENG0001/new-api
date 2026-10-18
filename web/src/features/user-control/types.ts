@@ -133,6 +133,7 @@ export interface Schedule {
 }
 
 export interface UserControlPolicy {
+  schema_version?: number
   id: number
   name: string
   description: string
@@ -154,6 +155,7 @@ export interface PolicyView {
 }
 
 export interface PolicyPayload {
+  schema_version?: number
   name: string
   description?: string
   enabled?: boolean
@@ -235,6 +237,7 @@ export interface EffectiveView {
   details: {
     source: string
     source_id: number
+    pool_id?: number
     policy_id: number
     policy_name: string
     priority: number
@@ -266,4 +269,46 @@ export interface AuditLogItem {
   created_at?: number
   success?: boolean
   other?: Record<string, unknown>
+}
+
+export interface PoolTiming {
+  probability: number
+  hold_min: number
+  hold_max: number
+}
+export interface PoolConfig extends PoolTiming {
+  members: { policy_id: number; probability: number }[]
+  schedule?: Schedule | null
+  window_options?: Record<string, PoolTiming>
+  seed?: string
+}
+export interface PoolView {
+  pool: {
+    id: number
+    name: string
+    description: string
+    enabled: boolean
+    priority: number
+    version: number
+  }
+  config: PoolConfig
+}
+export type OwnerKind = 'list' | 'plan' | 'user'
+export interface ApplicationTarget {
+  kind: 'policy' | 'pool'
+  id: number
+}
+export interface Application {
+  use_legacy?: boolean
+  version: number
+  id: number
+  owner_kind: OwnerKind
+  owner_id: number
+  targets: string
+  mode: 'merge' | 'replace'
+  expires_at: number
+  reason: string
+}
+export function isBehaviorPolicy(policy: PolicyView): boolean {
+  return !policy.limits.random_pool && !policy.schedule
 }

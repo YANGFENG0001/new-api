@@ -18,7 +18,7 @@ import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
 
 import { ActionsEditor } from './actions-editor'
-import { DelimitedInput } from './delimited-input'
+import { ResourceSelector } from './resource-selector'
 import type { Limits, ScopedRule } from './types'
 
 export function ScopedRulesEditor(props: {
@@ -40,7 +40,7 @@ export function ScopedRulesEditor(props: {
       <h4 className='text-sm font-medium'>{t('Model and channel rules')}</h4>
       <p className='text-muted-foreground text-xs'>
         {t(
-          'Each rule has its own per-user quota bucket. Filters match the original model and actual channel together. Add rules inside time windows for scheduled control. Multiple models in one rule share its quota.'
+          'Each rule has its own per-user quota bucket. Filters match the original model and actual channel together. Add the policy to a pool for scheduled control. Multiple models in one rule share its quota.'
         )}
       </p>
       <p className='text-muted-foreground text-xs'>
@@ -105,7 +105,8 @@ export function ScopedRulesEditor(props: {
                 <FieldLabel htmlFor={`${id}-${rule.id}-models`}>
                   {t('Match original models')}
                 </FieldLabel>
-                <DelimitedInput
+                <ResourceSelector
+                  kind='model'
                   id={`${id}-${rule.id}-models`}
                   value={rule.models ?? []}
                   placeholder={t('Empty = all models')}
@@ -116,18 +117,11 @@ export function ScopedRulesEditor(props: {
                 <FieldLabel htmlFor={`${id}-${rule.id}-channels`}>
                   {t('Match channel IDs')}
                 </FieldLabel>
-                <DelimitedInput
+                <ResourceSelector
+                  kind='channel'
                   id={`${id}-${rule.id}-channels`}
                   value={rule.channel_ids?.map(String) ?? []}
                   placeholder={t('Empty = all channels')}
-                  aria-invalid={
-                    rule.channel_ids?.some((n) => n <= 0) || undefined
-                  }
-                  aria-describedby={
-                    rule.channel_ids?.some((n) => n <= 0)
-                      ? `${id}-${rule.id}-channels-error`
-                      : undefined
-                  }
                   onChange={(values) =>
                     update(index, {
                       // Invalid input must be rejected, never dropped into an

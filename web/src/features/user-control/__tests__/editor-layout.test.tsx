@@ -1,9 +1,12 @@
 import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { useState } from 'react'
 import { expect, test, vi } from 'vitest'
 
 import { OverrideDialog } from '../override-dialog'
 import { PolicyEditorDialog } from '../policy-editor'
+import { ScheduleEditor } from '../schedule-editor'
+import type { Schedule } from '../types'
 
 test('opening a policy keeps the body scrollable and its actions outside the scroll area', () => {
   render(
@@ -71,25 +74,34 @@ test('choosing a policy displays its name and keeps replace disabled without rel
   ).toHaveAttribute('aria-disabled', 'true')
 })
 
-test('adding a window uses the configured timezone and exposes accessible weekday selection', async () => {
-  render(
-    <PolicyEditorDialog
-      open
-      policy={null}
+function TimingFixture() {
+  const [schedule, setSchedule] = useState<Schedule | null>(null)
+  return (
+    <ScheduleEditor
+      timingOnly
+      value={schedule}
+      onChange={setSchedule}
       defaultTimezone='UTC'
-      onOpenChange={vi.fn()}
-      onSaved={vi.fn()}
     />
   )
+}
+test('pool timing exposes timezone and weekdays but never duplicates behavior controls', async () => {
+  render(<TimingFixture />)
   await userEvent.click(screen.getByRole('button', { name: 'Add time window' }))
   expect(
     screen.getByRole('textbox', { name: 'Schedule timezone' })
   ).toHaveValue('UTC')
   const monday = screen.getByRole('button', { name: 'Mon' })
-  expect(monday).toHaveAttribute('aria-pressed', 'false')
   await userEvent.click(monday)
   expect(monday).toHaveAttribute('aria-pressed', 'true')
-  expect(screen.getByLabelText('Start date')).toHaveAttribute('type', 'date')
+  expect(
+    screen.queryByRole('spinbutton', { name: 'Requests per minute' })
+  ).not.toBeInTheDocument()
+  expect(
+    screen.queryByRole('switch', {
+      name: 'Random activation within this window',
+    })
+  ).not.toBeInTheDocument()
 })
 
 test('opening an override uses the shared responsive dialog and named project select controls', () => {

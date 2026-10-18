@@ -16,6 +16,7 @@ import {
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 
+import { ResourceSelector } from './resource-selector'
 import { TransportEditor } from './transport-editor'
 import type { ControlActions } from './types'
 
@@ -67,12 +68,13 @@ export function ActionsEditor(props: {
       <div className='grid min-w-0 gap-3 sm:grid-cols-2'>
         <Field>
           <FieldLabel htmlFor={`${id}-model`}>{t('Route to model')}</FieldLabel>
-          <Input
+          <ResourceSelector
+            kind='model'
+            single
             id={`${id}-model`}
-            value={value.route_model ?? ''}
-            maxLength={128}
+            value={value.route_model ? [value.route_model] : []}
             placeholder={t('Keep original')}
-            onChange={(e) => set({ route_model: e.target.value || undefined })}
+            onChange={(models) => set({ route_model: models[0] || undefined })}
           />
         </Field>
         <Field>

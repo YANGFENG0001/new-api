@@ -377,6 +377,8 @@ func migrateDB() error {
 		&AuthzRole{},
 		&UserAccessToken{},
 		&UserControlPolicy{},
+		&UserControlPool{},
+		&UserControlApplication{},
 		&UserControlList{},
 		&UserControlListMember{},
 		&UserControlUserOverride{},

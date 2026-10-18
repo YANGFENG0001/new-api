@@ -23,41 +23,17 @@ function RulesFixture() {
   return <LimitsEditor value={limits} onChange={setLimits} />
 }
 
-test('adding a scoped rule preserves comma-separated filters and offers limits without recursive rules', async () => {
+test('a scoped rule offers selectable model filters and no recursive rules', async () => {
   render(<RulesFixture />)
   await userEvent.click(screen.getByRole('button', { name: 'Add scoped rule' }))
   const rule = screen.getByRole('region', { name: 'Scoped rule 1' })
   await userEvent.type(
     within(rule).getByLabelText('Match original models'),
-    'gpt,deepseek'
+    'gpt{Enter}'
   )
-  await userEvent.type(within(rule).getByLabelText('Match channel IDs'), '7,9')
-  expect(within(rule).getByLabelText('Match original models')).toHaveValue(
-    'gpt, deepseek'
-  )
-  expect(within(rule).getByLabelText('Match channel IDs')).toHaveValue('7,9')
-  fireEvent.change(within(rule).getByLabelText('Match channel IDs'), {
-    target: { value: 'invalid-channel' },
-  })
-  expect(within(rule).getByLabelText('Match channel IDs')).toHaveAttribute(
-    'aria-invalid',
-    'true'
-  )
-  expect(
-    within(rule).getByText('scoped channel IDs must be positive')
-  ).toBeVisible()
-  fireEvent.change(within(rule).getByLabelText('Match channel IDs'), {
-    target: { value: '9' },
-  })
-  expect(within(rule).getByLabelText('Match channel IDs')).not.toHaveAttribute(
-    'aria-invalid'
-  )
-  expect(within(rule).getByLabelText('Requests per minute')).toBeVisible()
+  expect(within(rule).getByText('gpt')).toBeVisible()
   expect(
     within(rule).queryByRole('button', { name: 'Add scoped rule' })
-  ).not.toBeInTheDocument()
-  expect(
-    within(rule).queryByLabelText('Burst capacity')
   ).not.toBeInTheDocument()
   await userEvent.click(within(rule).getByRole('switch', { name: 'Enabled' }))
   expect(
@@ -71,7 +47,7 @@ test('adding a scoped rule preserves comma-separated filters and offers limits w
   ).not.toBeInTheDocument()
 })
 
-test('saving a scheduled scoped rule sends only that window actions and a JSON template', async () => {
+test('a behavior policy saves scoped actions without embedding scheduling', async () => {
   const post = vi
     .spyOn(api, 'post')
     .mockResolvedValue({ data: { success: true } })
@@ -84,56 +60,43 @@ test('saving a scheduled scoped rule sends only that window actions and a JSON t
       onSaved={vi.fn()}
     />
   )
-  await userEvent.type(screen.getByLabelText('Name'), 'Scoped schedule')
-  await userEvent.click(screen.getByRole('button', { name: 'Add time window' }))
-  const addButtons = screen.getAllByRole('button', { name: 'Add scoped rule' })
-  await userEvent.click(addButtons[1])
+  await userEvent.type(screen.getByLabelText('Name'), 'Scoped behavior')
+  await userEvent.click(screen.getByRole('button', { name: 'Add scoped rule' }))
   const rule = screen.getByRole('region', { name: 'Scoped rule 1' })
   await userEvent.type(
     within(rule).getByLabelText('Match original models'),
-    'gpt'
+    'gpt{Enter}'
   )
   await userEvent.type(within(rule).getByLabelText('Requests per minute'), '3')
-  const actions = within(rule).getByRole('button', {
-    name: 'Request and response actions',
-  })
-  await userEvent.click(actions)
-  expect(actions).toHaveAttribute('aria-expanded', 'true')
+  await userEvent.click(
+    within(rule).getByRole('button', { name: 'Request and response actions' })
+  )
   await userEvent.type(
     within(rule).getByLabelText('Route to model'),
-    'target-model'
+    'target-model{Enter}'
   )
   await userEvent.click(
     within(rule).getByRole('switch', { name: 'Request body rewrite' })
   )
-  const editor = within(rule).getByRole('textbox', {
-    name: 'Request JSON template',
-  })
-  expect(editor).toHaveValue('{\n  "temperature": 0.7\n}')
-  fireEvent.input(editor, { target: { value: '{"temperature":0}' } })
+  fireEvent.input(
+    within(rule).getByRole('textbox', { name: 'Request JSON template' }),
+    { target: { value: '{"temperature":0}' } }
+  )
   await userEvent.click(screen.getByRole('button', { name: 'Save' }))
   await waitFor(() =>
     expect(post).toHaveBeenCalledWith(
       '/api/user-control/policies',
       expect.objectContaining({
-        limits: {},
-        schedule: expect.objectContaining({
-          timezone: 'UTC',
-          rules: [
+        schedule: null,
+        limits: expect.objectContaining({
+          scoped_rules: [
             expect.objectContaining({
-              limits: {
-                scoped_rules: [
-                  expect.objectContaining({
-                    models: ['gpt'],
-                    limits: { rate: { rpm: 3 } },
-                    actions: expect.objectContaining({
-                      route_model: 'target-model',
-                      request_mode: 'merge',
-                      request_body: '{"temperature":0}',
-                    }),
-                  }),
-                ],
-              },
+              models: ['gpt'],
+              limits: { rate: { rpm: 3 } },
+              actions: expect.objectContaining({
+                route_model: 'target-model',
+                request_body: '{"temperature":0}',
+              }),
             }),
           ],
         }),

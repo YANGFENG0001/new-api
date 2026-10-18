@@ -31,16 +31,11 @@ import { handleServerError } from '@/lib/handle-server-error'
 
 import { createPolicy, updatePolicy } from './api'
 import { LimitsEditor } from './limits-editor'
-import { PoolEditor } from './pool-editor'
-import { ScheduleEditor } from './schedule-editor'
-import type { Limits, PolicyView, Schedule } from './types'
+import type { Limits, PolicyView } from './types'
 
 export function PolicyEditorDialog({
   open,
-  policies = [],
-  createPool = false,
   policy,
-  defaultTimezone,
   onOpenChange,
   onSaved,
 }: {
@@ -59,9 +54,6 @@ export function PolicyEditorDialog({
   const [enabled, setEnabled] = useState(true)
   const [priority, setPriority] = useState(0)
   const [limits, setLimits] = useState<Limits>({})
-  const [schedule, setSchedule] = useState<Schedule | null>(null)
-  const [useDefault, setUseDefault] = useState(false)
-  const [defaultLimits, setDefaultLimits] = useState<Limits>({})
   const [saving, setSaving] = useState(false)
 
   useEffect(() => {
@@ -72,57 +64,30 @@ export function PolicyEditorDialog({
       setEnabled(policy.policy.enabled)
       setPriority(policy.policy.priority)
       setLimits(policy.limits ?? {})
-      setSchedule(policy.schedule ?? null)
-      setUseDefault(Boolean(policy.schedule?.default))
-      setDefaultLimits(policy.schedule?.default ?? {})
     } else {
       setName('')
       setDescription('')
       setEnabled(true)
       setPriority(0)
-      setLimits(
-        createPool
-          ? { random_pool: { policy_ids: [], hold_min: 5, hold_max: 15 } }
-          : {}
-      )
-      setSchedule(null)
-      setUseDefault(false)
-      setDefaultLimits({})
+      setLimits({})
     }
-  }, [open, policy, createPool])
+  }, [open, policy])
 
   const handleSave = async () => {
     if (!name.trim()) {
       toast.error(t('Policy name is required'))
       return
     }
-    if (limits.random_pool && limits.random_pool.policy_ids.length === 0) {
-      toast.error(t('Select at least one policy for the pool'))
-      return
-    }
     setSaving(true)
     try {
-      let nextSchedule: Schedule | null = null
-      if (schedule) {
-        nextSchedule = {
-          ...schedule,
-          timezone: schedule.timezone || defaultTimezone,
-          default: useDefault ? defaultLimits : undefined,
-        }
-      } else if (useDefault) {
-        nextSchedule = {
-          timezone: defaultTimezone,
-          rules: [],
-          default: defaultLimits,
-        }
-      }
       const payload = {
         name: name.trim(),
         description,
         enabled,
         priority,
         limits,
-        schedule: nextSchedule,
+        schema_version: 2,
+        schedule: null,
       }
       const result = policy
         ? await updatePolicy(policy.policy.id, payload)
@@ -149,7 +114,7 @@ export function PolicyEditorDialog({
       }}
       title={policy ? t('Edit control policy') : t('New control policy')}
       description={t(
-        'Limits are enforced per user. Schedule windows can tighten them further; they never loosen the base limits.'
+        'Policies define behavior only. Apply directly for all-day control, or add to a pool for scheduling.'
       )}
       contentClassName='sm:max-w-4xl'
       titleClassName='break-words pr-6'
@@ -217,36 +182,9 @@ export function PolicyEditorDialog({
           </label>
         </div>
 
-        {limits.random_pool && (
-          <PoolEditor
-            value={limits.random_pool}
-            policies={policies}
-            selfID={policy?.policy.id}
-            onChange={(random_pool) => setLimits({ ...limits, random_pool })}
-          />
-        )}
         <section className='space-y-2 rounded-lg border p-3'>
           <h3 className='text-sm font-semibold'>{t('Base limits')}</h3>
           <LimitsEditor value={limits} onChange={setLimits} />
-        </section>
-
-        <section className='space-y-2 rounded-lg border p-3'>
-          <h3 className='text-sm font-semibold'>{t('Time windows')}</h3>
-          <ScheduleEditor
-            value={schedule}
-            onChange={setSchedule}
-            defaultTimezone={defaultTimezone}
-          />
-        </section>
-
-        <section className='space-y-2 rounded-lg border p-3'>
-          <label className='flex items-center gap-2 text-sm font-medium'>
-            <Switch checked={useDefault} onCheckedChange={setUseDefault} />
-            {t('Apply separate limits when no window matches')}
-          </label>
-          {useDefault && (
-            <LimitsEditor value={defaultLimits} onChange={setDefaultLimits} />
-          )}
         </section>
       </form>
     </Dialog>

@@ -9,7 +9,7 @@ import { PolicyEditorDialog } from '../policy-editor'
 import { ScheduleEditor } from '../schedule-editor'
 import type { Schedule } from '../types'
 
-test('typing comma separated model, group, channel and date values preserves separators and saves all entries with the footer action', async () => {
+test('a behavior-only policy saves model choices without any schedule fields', async () => {
   const post = vi
     .spyOn(api, 'post')
     .mockResolvedValue({ data: { success: true } })
@@ -22,49 +22,25 @@ test('typing comma separated model, group, channel and date values preserves sep
       onSaved={vi.fn()}
     />
   )
-  await userEvent.type(screen.getByRole('textbox', { name: 'Name' }), 'Test')
-  const allowed = screen.getByRole('textbox', {
-    name: 'Allowed models (comma separated)',
-  })
-  await userEvent.type(allowed, 'gpt-4,')
-  expect(allowed).toHaveValue('gpt-4,')
-  await userEvent.type(allowed, ' claude')
+  await userEvent.type(screen.getByLabelText('Name'), 'Test')
   await userEvent.type(
-    screen.getByRole('textbox', { name: 'Allowed groups' }),
-    'default, premium'
-  )
-  await userEvent.type(
-    screen.getByRole('textbox', { name: 'Allowed channel IDs' }),
-    '12, 34'
-  )
-  await userEvent.click(screen.getByRole('button', { name: 'Add time window' }))
-  await userEvent.type(
-    screen.getByRole('textbox', {
-      name: 'Specific dates (YYYY-MM-DD, comma separated)',
-    }),
-    '2026-10-18, 2026-10-19'
+    screen.getByLabelText('Allowed models (comma separated)'),
+    'gpt-4{Enter}'
   )
   await userEvent.click(screen.getByRole('button', { name: 'Save' }))
   await waitFor(() =>
     expect(post).toHaveBeenCalledWith(
       '/api/user-control/policies',
       expect.objectContaining({
-        limits: expect.objectContaining({
-          models: { allow: ['gpt-4', 'claude'] },
-          channels: {
-            allow_groups: ['default', 'premium'],
-            allow_ids: [12, 34],
-          },
-        }),
-        schedule: expect.objectContaining({
-          timezone: 'UTC',
-          rules: [
-            expect.objectContaining({ dates: ['2026-10-18', '2026-10-19'] }),
-          ],
-        }),
+        schema_version: 2,
+        schedule: null,
+        limits: expect.objectContaining({ models: { allow: ['gpt-4'] } }),
       })
     )
   )
+  expect(
+    screen.queryByRole('button', { name: 'Add time window' })
+  ).not.toBeInTheDocument()
 })
 
 function ScheduleFixture() {

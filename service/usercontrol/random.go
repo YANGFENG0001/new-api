@@ -117,6 +117,9 @@ func ValidatePoolReferences(l Limits, schedule *Schedule, selfID int) error {
 }
 
 func PoolReferences(id int) (bool, error) {
+	if used, err := ApplicationReferences("policy", id); err != nil || used {
+		return used, err
+	}
 	policies, err := model.ListUserControlPolicies()
 	if err != nil {
 		return false, err

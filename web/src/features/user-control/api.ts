@@ -233,3 +233,58 @@ export async function listAudit(params: {
 }
 
 export type { Limits, Schedule }
+
+export async function listPools() {
+  const res = await api.get(`${base}/pools`)
+  return res.data as Envelope<{ items: import('./types').PoolView[] }>
+}
+export async function savePool(pool: {
+  id?: number
+  name: string
+  description: string
+  enabled: boolean
+  priority: number
+  version?: number
+  config: import('./types').PoolConfig
+}) {
+  const { id, ...payload } = pool
+  const res = id
+    ? await api.put(`${base}/pools/${id}`, payload)
+    : await api.post(`${base}/pools`, payload)
+  return res.data as Envelope<import('./types').PoolView>
+}
+export async function deletePool(id: number) {
+  const res = await api.delete(`${base}/pools/${id}`)
+  return res.data as Envelope<{ id: number }>
+}
+export async function listApplications() {
+  const res = await api.get(`${base}/applications`)
+  return res.data as Envelope<{ items: import('./types').Application[] }>
+}
+export async function saveApplication(
+  kind: import('./types').OwnerKind,
+  id: number,
+  payload: {
+    version?: number
+    operation?: 'set' | 'append' | 'remove'
+    targets: import('./types').ApplicationTarget[]
+    mode: 'merge' | 'replace'
+    expires_at?: number
+    reason?: string
+    confirm_legacy?: boolean
+  }
+) {
+  const res = await api.put(`${base}/applications/${kind}/${id}`, payload)
+  return res.data as Envelope<import('./types').Application>
+}
+
+export async function restoreLegacyApplication(
+  kind: import('./types').OwnerKind,
+  id: number,
+  version: number
+) {
+  const res = await api.delete(`${base}/applications/${kind}/${id}`, {
+    data: { version },
+  })
+  return res.data as Envelope<{ restored: boolean }>
+}

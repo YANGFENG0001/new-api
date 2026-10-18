@@ -12,6 +12,8 @@ import (
 // limits, together with a human-readable source label.
 type UserControlSource struct {
 	Policy   UserControlPolicy
+	Pool     *UserControlPool
+	OwnerId  int
 	Source   string
 	SourceId int
 	Replace  bool
@@ -122,6 +124,9 @@ func UpdateUserControlList(list *UserControlList) error {
 func DeleteUserControlList(id int) error {
 	err := DB.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Where("list_id = ?", id).Delete(&UserControlListMember{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("owner_kind = ? AND owner_id = ?", "list", id).Delete(&UserControlApplication{}).Error; err != nil {
 			return err
 		}
 		return tx.Delete(&UserControlList{}, id).Error
@@ -285,9 +290,12 @@ func DeleteUserControlPlanBinding(planID int) error {
 func UserControlSourcesForUser(userID int, now int64) ([]UserControlSource, error) {
 	sources := make([]UserControlSource, 0, 4)
 
-	var listPolicies []UserControlPolicy
+	var listPolicies []struct {
+		UserControlPolicy
+		OwnerId int
+	}
 	err := DB.Table("user_control_policies AS p").
-		Select("p.*").
+		Select("p.*, l.id AS owner_id").
 		Joins("JOIN user_control_lists AS l ON l.policy_id = p.id").
 		Joins("JOIN user_control_list_members AS m ON m.list_id = l.id").
 		Where("m.user_id = ? AND l.enabled = ? AND p.enabled = ?", userID, true, true).
@@ -297,12 +305,15 @@ func UserControlSourcesForUser(userID int, now int64) ([]UserControlSource, erro
 		return nil, err
 	}
 	for _, policy := range listPolicies {
-		sources = append(sources, UserControlSource{Policy: policy, Source: "list", SourceId: policy.Id})
+		sources = append(sources, UserControlSource{Policy: policy.UserControlPolicy, Source: "list", SourceId: policy.Id, OwnerId: policy.OwnerId})
 	}
 
-	var planPolicies []UserControlPolicy
+	var planPolicies []struct {
+		UserControlPolicy
+		OwnerId int
+	}
 	err = DB.Table("user_control_policies AS p").
-		Select("p.*").
+		Select("p.*, b.plan_id AS owner_id").
 		Joins("JOIN user_control_plan_bindings AS b ON b.policy_id = p.id").
 		Joins("JOIN user_subscriptions AS s ON s.plan_id = b.plan_id").
 		Where("s.user_id = ? AND s.status = ? AND s.start_time <= ? AND s.end_time > ? AND p.enabled = ?",
@@ -313,7 +324,7 @@ func UserControlSourcesForUser(userID int, now int64) ([]UserControlSource, erro
 		return nil, err
 	}
 	for _, policy := range planPolicies {
-		sources = append(sources, UserControlSource{Policy: policy, Source: "subscription", SourceId: policy.Id})
+		sources = append(sources, UserControlSource{Policy: policy.UserControlPolicy, Source: "subscription", SourceId: policy.Id, OwnerId: policy.OwnerId})
 	}
 
 	override, err := GetUserControlOverride(userID)
@@ -355,7 +366,7 @@ func UserControlSourcesForUser(userID int, now int64) ([]UserControlSource, erro
 		}
 	}
 
-	return sources, nil
+	return ExpandUserControlApplications(userID, now, sources)
 }
 
 // ---------------------------------------------------------------------------

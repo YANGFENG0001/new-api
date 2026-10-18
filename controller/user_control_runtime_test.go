@@ -46,7 +46,7 @@ func TestUserControlPoolPersistenceSelectionAndReferenceGuards(t *testing.T) {
 	connection, err := model.LOG_DB.DB()
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = connection.Close(); usercontrol.Invalidate() })
-	require.NoError(t, model.DB.AutoMigrate(&model.UserControlPolicy{}, &model.UserControlList{}, &model.UserControlListMember{}, &model.UserControlUserOverride{}, &model.UserControlPlanBinding{}, &model.UserSubscription{}))
+	require.NoError(t, model.DB.AutoMigrate(&model.UserControlPolicy{}, &model.UserControlList{}, &model.UserControlListMember{}, &model.UserControlUserOverride{}, &model.UserControlPlanBinding{}, &model.UserControlPool{}, &model.UserControlApplication{}, &model.UserSubscription{}))
 	var ids []int
 	for _, rpm := range []int{3, 7} {
 		raw, err := common.Marshal(usercontrol.Limits{Rate: &usercontrol.RateLimits{RPM: rpm}})
@@ -255,7 +255,7 @@ func TestUserControlScopedPolicyStorageRuntimeAuditAndLogProjection(t *testing.T
 	logConnection, err := model.LOG_DB.DB()
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = logConnection.Close(); usercontrol.Invalidate() })
-	require.NoError(t, model.DB.AutoMigrate(&model.UserControlPolicy{}, &model.UserControlList{}, &model.UserControlListMember{}, &model.UserControlUserOverride{}, &model.UserControlPlanBinding{}, &model.UserSubscription{}))
+	require.NoError(t, model.DB.AutoMigrate(&model.UserControlPolicy{}, &model.UserControlList{}, &model.UserControlListMember{}, &model.UserControlUserOverride{}, &model.UserControlPlanBinding{}, &model.UserControlPool{}, &model.UserControlApplication{}, &model.UserSubscription{}))
 	require.NoError(t, model.LOG_DB.AutoMigrate(&model.Log{}))
 	limits := usercontrol.Limits{ScopedRules: []usercontrol.ScopedRule{{ID: "scope-runtime", Models: []string{"client-model"}, Limits: usercontrol.Limits{Rate: &usercontrol.RateLimits{RPM: 10}}, Actions: &usercontrol.Actions{
 		RouteModel: "routed-model", PromptPrefix: "secret-prompt-not-in-audit", Response: &usercontrol.StaticResponse{Mode: "text", Body: "replacement-not-in-audit"},

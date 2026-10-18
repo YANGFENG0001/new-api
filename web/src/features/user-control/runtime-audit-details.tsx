@@ -1,5 +1,6 @@
 import { useTranslation } from 'react-i18next'
 
+import { formatPoolDecision } from './pool-decision'
 import type { AuditLogItem } from './types'
 
 export function RuntimeAuditDetails(props: { item: AuditLogItem }) {
@@ -57,7 +58,10 @@ export function RuntimeAuditDetails(props: { item: AuditLogItem }) {
               value =
                 parsed
                   .filter((v): v is string => typeof v === 'string')
-                  .map((v) => (key === 'actions' ? (actionLabels[v] ?? v) : v))
+                  .map((v) => {
+                    if (key === 'actions') return actionLabels[v] ?? v
+                    return formatPoolDecision(v, t)
+                  })
                   .join(', ') || t('None')
             }
           } catch {

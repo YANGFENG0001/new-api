@@ -64,6 +64,8 @@ func mergeScopedRules(base, extra []ScopedRule) []ScopedRule {
 			out[i].Limits = Merge(out[i].Limits, rule.Limits)
 			if rule.Actions != nil {
 				out[i].Actions = rule.Actions
+				out[i].PolicyPriority = max(out[i].PolicyPriority, rule.PolicyPriority)
+				out[i].Override = out[i].Override || rule.Override
 			}
 		} else {
 			indexes[key] = len(out)

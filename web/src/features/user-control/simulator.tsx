@@ -16,6 +16,7 @@ import {
 
 import { simulate } from './api'
 import { LimitsSummary } from './limits-summary'
+import { formatPoolDecision } from './pool-decision'
 import { UserPicker } from './user-picker'
 
 export function Simulator() {
@@ -55,12 +56,25 @@ export function Simulator() {
     let label = t(kind)
     if (kind === 'list') label = t('Control list')
     if (kind === 'subscription') label = t('Subscription plan')
-    if (kind === 'override') label = t('User override')
+    if (
+      kind === 'override' ||
+      kind === 'application_user' ||
+      kind === 'override_reset'
+    ) {
+      label = t('Personal settings')
+    }
+    if (kind === 'application_list') label = t('Control list')
+    if (kind === 'application_plan') label = t('Subscription plan')
     return split < 0 ? label : `${label}: ${source.slice(split + 1)}`
   }
 
   return (
     <div className='min-w-0 space-y-4'>
+      <p className='text-muted-foreground text-sm'>
+        {t(
+          'Preview uses current configuration. Later edits can change future results.'
+        )}
+      </p>
       <UserPicker
         selected={selected}
         onChange={(ids) => {
@@ -133,13 +147,17 @@ export function Simulator() {
           <p className='text-sm'>
             {t('Schedule hits')}:{' '}
             {(result.schedule_hits ?? [])
-              .map((hit) => (hit === 'rule' ? t('Time window') : hit))
+              .map((hit) =>
+                hit === 'rule' ? t('Time window') : formatPoolDecision(hit, t)
+              )
               .join(', ') || t('None')}
           </p>
           <LimitsSummary value={result.limits} />
           <div className='text-muted-foreground space-y-1 text-xs'>
             {(result.details ?? []).map((detail) => (
-              <p key={`${detail.source}-${detail.source_id}`}>
+              <p
+                key={`${detail.source}-${detail.source_id}-${detail.policy_id}-${detail.pool_id ?? 0}`}
+              >
                 {sourceLabel(detail.source)} #{detail.source_id} ·{' '}
                 {detail.policy_name} · {t('Priority')} {detail.priority} ·{' '}
                 {detail.active ? t('Active') : t('Inactive')}

@@ -23,7 +23,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 
-import { DelimitedInput } from './delimited-input'
+import { ResourceSelector } from './resource-selector'
 import { ScopedRulesEditor } from './scoped-rules-editor'
 import type { Limits } from './types'
 
@@ -262,8 +262,9 @@ export function LimitsEditor({
                 >
                   {t('Allowed models (comma separated)')}
                 </Label>
-                <DelimitedInput
+                <ResourceSelector
                   id={`${editorId}-field-2`}
+                  kind='model'
                   value={value.models?.allow ?? []}
                   onChange={(items) =>
                     set({
@@ -283,8 +284,9 @@ export function LimitsEditor({
                 >
                   {t('Blocked models (comma separated)')}
                 </Label>
-                <DelimitedInput
+                <ResourceSelector
                   id={`${editorId}-field-3`}
+                  kind='model'
                   value={value.models?.block ?? []}
                   onChange={(items) =>
                     set({
@@ -309,8 +311,9 @@ export function LimitsEditor({
                 >
                   {t('Allowed channel IDs')}
                 </Label>
-                <DelimitedInput
+                <ResourceSelector
                   id={`${editorId}-field-4`}
+                  kind='channel'
                   value={value.channels?.allow_ids?.map(String) ?? []}
                   onChange={(items) =>
                     set({
@@ -329,8 +332,9 @@ export function LimitsEditor({
                 >
                   {t('Blocked channel IDs')}
                 </Label>
-                <DelimitedInput
+                <ResourceSelector
                   id={`${editorId}-field-5`}
+                  kind='channel'
                   value={value.channels?.block_ids?.map(String) ?? []}
                   onChange={(items) =>
                     set({
@@ -349,8 +353,9 @@ export function LimitsEditor({
                 >
                   {t('Allowed channel types')}
                 </Label>
-                <DelimitedInput
+                <ResourceSelector
                   id={`${editorId}-field-6`}
+                  kind='channel-type'
                   value={value.channels?.allow_types?.map(String) ?? []}
                   onChange={(items) =>
                     set({
@@ -369,8 +374,9 @@ export function LimitsEditor({
                 >
                   {t('Blocked channel types')}
                 </Label>
-                <DelimitedInput
+                <ResourceSelector
                   id={`${editorId}-field-7`}
+                  kind='channel-type'
                   value={value.channels?.block_types?.map(String) ?? []}
                   onChange={(items) =>
                     set({
@@ -389,8 +395,9 @@ export function LimitsEditor({
                 >
                   {t('Allowed groups')}
                 </Label>
-                <DelimitedInput
+                <ResourceSelector
                   id={`${editorId}-field-8`}
+                  kind='group'
                   value={value.channels?.allow_groups ?? []}
                   onChange={(items) =>
                     set({

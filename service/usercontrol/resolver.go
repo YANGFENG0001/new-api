@@ -90,41 +90,33 @@ func resolveAt(userID int, role int, now time.Time) (*Effective, error) {
 	effective := &Effective{Timezone: DefaultTimezone, ResolvedAt: now}
 	var merged Limits
 	for _, source := range sources {
-		limits, err := ParseLimits(source.Policy.Limits)
-		if err != nil {
-			return nil, fmt.Errorf("policy %q: %w", source.Policy.Name, err)
-		}
-		schedule, err := ParseSchedule(source.Policy.Schedule)
-		if err != nil {
-			return nil, fmt.Errorf("policy %q schedule: %w", source.Policy.Name, err)
-		}
-		if len(limits.ScopedRules) > 0 {
-			effective.HasScopedRules = true
-		}
-		if schedule != nil {
-			if schedule.Default != nil && len(schedule.Default.ScopedRules) > 0 {
-				effective.HasScopedRules = true
-			}
-			for _, rule := range schedule.Rules {
-				if len(rule.Limits.ScopedRules) > 0 {
-					effective.HasScopedRules = true
-				}
-			}
-		}
-		active, hits, timezone, err := schedule.ActiveLimitsForUser(now, limits, userID)
-		if err != nil {
-			return nil, fmt.Errorf("policy %q schedule: %w", source.Policy.Name, err)
-		}
-		loc, _ := time.LoadLocation(timezone)
-		active, poolHits, selectedID, err := resolvePool(active, now, loc, userID, source.Policy.Id)
+		active, hits, timezone, selectedID, policy, err := resolveSource(source, userID, now)
 		if err != nil {
 			return nil, fmt.Errorf("%w: %v", ErrPolicyRuntime, err)
+		}
+		if len(active.ScopedRules) > 0 {
+			effective.HasScopedRules = true
+		}
+
+		// Preserve conservative WebSocket rejection for legacy scheduled scoped
+		// rules: an open connection can outlive the currently inactive window.
+		if !effective.HasScopedRules && source.Policy.Schedule != "" {
+			schedule, _ := ParseSchedule(source.Policy.Schedule)
+			if schedule != nil {
+				if schedule.Default != nil && len(schedule.Default.ScopedRules) > 0 {
+					effective.HasScopedRules = true
+				}
+				for _, rule := range schedule.Rules {
+					if len(rule.Limits.ScopedRules) > 0 {
+						effective.HasScopedRules = true
+					}
+				}
+			}
 		}
 		if selectedID > 0 {
 			effective.PolicyIDs = append(effective.PolicyIDs, selectedID)
 			effective.HasScopedRules = true
 		}
-		hits = append(hits, poolHits...)
 		if timezone != "" {
 			effective.Timezone = timezone
 		}
@@ -132,12 +124,18 @@ func resolveAt(userID int, role int, now time.Time) (*Effective, error) {
 			merged = Limits{}
 		}
 		for i := range active.ScopedRules {
-			active.ScopedRules[i].Namespace = fmt.Sprintf("%s:%d:%d", source.Source, source.SourceId, source.Policy.Id)
-			active.ScopedRules[i].PolicyPriority = source.Policy.Priority
-			active.ScopedRules[i].Override = source.Source == "override"
+			active.ScopedRules[i].Namespace = fmt.Sprintf("%s:%d:%d", source.Source, source.SourceId, policy.Id)
+			if BehaviorOnly(policy) && policy.Id > 0 {
+				active.ScopedRules[i].Namespace = fmt.Sprintf("policy:%d", policy.Id)
+			}
+			active.ScopedRules[i].PolicyPriority = policy.Priority
+			if source.Pool != nil {
+				active.ScopedRules[i].PolicyPriority = source.Pool.Priority
+			}
+			active.ScopedRules[i].Override = source.Source == "override" || source.Source == "application_user"
 		}
 		merged = Merge(merged, active)
-		effective.HasPolicy = true
+		effective.HasPolicy = effective.HasPolicy || source.Policy.Id > 0 || source.Pool != nil || !active.Empty()
 		if source.Policy.Id > 0 {
 			effective.PolicyIDs = append(effective.PolicyIDs, source.Policy.Id)
 		}
@@ -150,6 +148,9 @@ func resolveAt(userID int, role int, now time.Time) (*Effective, error) {
 
 func sourceLabel(source model.UserControlSource) string {
 	name := source.Policy.Name
+	if source.Pool != nil {
+		name = source.Pool.Name
+	}
 	switch source.Source {
 	case "list":
 		return fmt.Sprintf("list:%s", name)
@@ -220,4 +221,29 @@ func (e *Effective) Location() *time.Location {
 		return time.FixedZone("CST", 8*3600)
 	}
 	return loc
+}
+
+// resolveSource is shared by enforcement and explanation, avoiding divergent
+// simulation decisions. Pool misses carry audit hits but no behavior.
+func resolveSource(source model.UserControlSource, userID int, now time.Time) (Limits, []string, string, int, model.UserControlPolicy, error) {
+	if source.Pool != nil {
+		p, l, h, t, e := resolveScheduledPool(*source.Pool, userID, now)
+		return l, h, t, p.Id, p, e
+	}
+	p := source.Policy
+	l, e := ParseLimits(p.Limits)
+	if e != nil {
+		return Limits{}, nil, "", 0, p, e
+	}
+	s, e := ParseSchedule(p.Schedule)
+	if e != nil {
+		return Limits{}, nil, "", 0, p, e
+	}
+	active, hits, t, e := s.ActiveLimitsForUser(now, l, userID)
+	if e != nil {
+		return Limits{}, nil, t, 0, p, e
+	}
+	loc, _ := time.LoadLocation(t)
+	active, ph, id, e := resolvePool(active, now, loc, userID, p.Id)
+	return active, append(hits, ph...), t, id, p, e
 }

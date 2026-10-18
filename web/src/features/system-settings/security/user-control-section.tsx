@@ -16,72 +16,68 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Loader2, Plus, RefreshCw, Trash2, Users } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useState, useId } from 'react'
+import { useEffect, useId, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
+import { ConfirmDialog } from '@/components/confirm-dialog'
 import { Dialog as FormDialog } from '@/components/dialog'
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
+import { ErrorState } from '@/components/error-state'
+import { LoadingState } from '@/components/loading-state'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
-import { getAdminPlans } from '@/features/subscriptions/api'
 import {
   createControlList,
+  updateControlList,
   deleteControlList,
-  deletePlanBinding,
   deletePolicy,
-  deleteUserOverride,
+  deletePool,
   getCapabilities,
-  listAudit,
+  listPolicies,
+  listPools,
+  listApplications,
   listControlLists,
   listOverrides,
   listPlanBindings,
-  listPolicies,
-  putPlanBinding,
-  updateControlList,
+  listAudit,
 } from '@/features/user-control/api'
+import { ApplicationEditor } from '@/features/user-control/application-editor'
+import { parseTargets } from '@/features/user-control/application-targets'
 import { LimitsSummary } from '@/features/user-control/limits-summary'
 import { MembersDialog } from '@/features/user-control/members-dialog'
-import { OverrideDialog } from '@/features/user-control/override-dialog'
 import { PolicyEditorDialog } from '@/features/user-control/policy-editor'
+import { useResourceCatalog } from '@/features/user-control/resource-catalog'
+import { ResourceCatalogProvider } from '@/features/user-control/resource-selector'
 import { RuntimeAuditDetails } from '@/features/user-control/runtime-audit-details'
+import { ScheduledPoolEditor } from '@/features/user-control/scheduled-pool-editor'
 import { Simulator } from '@/features/user-control/simulator'
-import type {
-  AuditLogItem,
-  Capabilities,
-  ControlList,
-  PlanBinding,
-  PolicyView,
-  UserOverride,
+import {
+  isBehaviorPolicy,
+  type ControlList,
+  type OwnerKind,
+  type PolicyView,
+  type PoolView,
 } from '@/features/user-control/types'
 import { UserPicker } from '@/features/user-control/user-picker'
 import { toIntlLocale } from '@/i18n/languages'
 import { handleServerError } from '@/lib/handle-server-error'
+import { requireServerSuccess } from '@/lib/server-error-message'
 
 function ListFormDialog({
   open,
   list,
-  policies,
   onClose,
   onSaved,
 }: {
   open: boolean
   list: ControlList | null
-  policies: PolicyView[]
   onClose: () => void
   onSaved: () => void
 }) {
@@ -89,7 +85,6 @@ function ListFormDialog({
   const formId = useId()
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
-  const [policyId, setPolicyId] = useState(0)
   const [enabled, setEnabled] = useState(true)
   const [saving, setSaving] = useState(false)
 
@@ -97,7 +92,6 @@ function ListFormDialog({
     if (!open) return
     setName(list?.name ?? '')
     setDescription(list?.description ?? '')
-    setPolicyId(list?.policy_id ?? 0)
     setEnabled(list?.enabled ?? true)
   }, [open, list])
 
@@ -111,7 +105,7 @@ function ListFormDialog({
       const payload = {
         name: name.trim(),
         description,
-        policy_id: policyId,
+        policy_id: list?.policy_id ?? 0,
         enabled,
       }
       const result = list
@@ -182,40 +176,6 @@ function ListFormDialog({
             onChange={(event) => setDescription(event.target.value)}
           />
         </div>
-        <div className='space-y-1'>
-          <Label htmlFor={`${formId}-policy`}>{t('Policy template')}</Label>
-          <Select
-            items={[
-              { value: '0', label: t('None') },
-              ...policies.map((item) => ({
-                value: String(item.policy.id),
-                label: item.policy.name,
-              })),
-            ]}
-            value={String(policyId)}
-            onValueChange={(value) => setPolicyId(Number(value))}
-          >
-            <SelectTrigger id={`${formId}-policy`} className='w-full min-w-0'>
-              <SelectValue>
-                {policies.find((item) => item.policy.id === policyId)?.policy
-                  .name ?? t('None')}
-              </SelectValue>
-            </SelectTrigger>
-            <SelectContent>
-              <SelectGroup>
-                <SelectItem value='0'>{t('None')}</SelectItem>
-                {policies.map((item) => (
-                  <SelectItem
-                    key={item.policy.id}
-                    value={String(item.policy.id)}
-                  >
-                    {item.policy.name}
-                  </SelectItem>
-                ))}
-              </SelectGroup>
-            </SelectContent>
-          </Select>
-        </div>
         <label className='flex items-center gap-2 text-sm'>
           <Switch checked={enabled} onCheckedChange={setEnabled} />
           {t('Enabled')}
@@ -228,730 +188,600 @@ function ListFormDialog({
 export function UserControlSection() {
   const { t, i18n } = useTranslation()
   const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
+  const client = useQueryClient()
   const [activeTab, setActiveTab] = useState('policies')
-  const [capabilities, setCapabilities] = useState<Capabilities | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState('')
-  const [policies, setPolicies] = useState<PolicyView[]>([])
-  const [lists, setLists] = useState<ControlList[]>([])
-  const [overrides, setOverrides] = useState<UserOverride[]>([])
-  const [bindings, setBindings] = useState<PlanBinding[]>([])
-  const [plans, setPlans] = useState<{ id: number; title: string }[]>([])
-  const [audit, setAudit] = useState<AuditLogItem[]>([])
-  const [auditTotal, setAuditTotal] = useState(0)
-  const [auditPage, setAuditPage] = useState(1)
-
-  const [policyDialogOpen, setPolicyDialogOpen] = useState(false)
+  const [policyOpen, setPolicyOpen] = useState(false)
   const [editingPolicy, setEditingPolicy] = useState<PolicyView | null>(null)
-  const [listDialogOpen, setListDialogOpen] = useState(false)
+  const [poolOpen, setPoolOpen] = useState(false)
+  const [editingPool, setEditingPool] = useState<PoolView | null>(null)
+  const [listOpen, setListOpen] = useState(false)
   const [editingList, setEditingList] = useState<ControlList | null>(null)
   const [membersList, setMembersList] = useState<ControlList | null>(null)
-  const [overrideUserId, setOverrideUserId] = useState<number | null>(null)
-  const [editingOverride, setEditingOverride] = useState<UserOverride | null>(
-    null
-  )
-  const [overridePickerOpen, setOverridePickerOpen] = useState(false)
-  const [overrideSelection, setOverrideSelection] = useState<number[]>([])
-  const loadAll = useCallback(async () => {
-    setLoading(true)
-    setError('')
-    try {
-      const caps = await getCapabilities()
-      if (!caps.success || !caps.data) {
-        setError(
-          caps.message ||
-            t('You do not have permission to manage user controls.')
-        )
-        setCapabilities(null)
-        return
-      }
-      setCapabilities(caps.data)
-      const [policyRes, listRes, overrideRes, bindingRes, planRes] =
+  const [owner, setOwner] = useState<{
+    kind: OwnerKind
+    id: number
+    name: string
+  } | null>(null)
+  const [bulkUsers, setBulkUsers] = useState<number[]>([])
+  const [pickerOpen, setPickerOpen] = useState(false)
+  const [selected, setSelected] = useState<number[]>([])
+  const [deleting, setDeleting] = useState<{
+    kind: 'policy' | 'pool' | 'list'
+    id: number
+    name: string
+  } | null>(null)
+  const [auditPage, setAuditPage] = useState(1)
+  const capabilities = useQuery({
+    queryKey: ['user-control', 'capabilities'],
+    queryFn: async () => requireServerSuccess(await getCapabilities()).data,
+  })
+  const caps = capabilities.data
+  const catalog = useResourceCatalog(!!caps?.read)
+  const settings = useQuery({
+    queryKey: ['user-control', 'settings'],
+    enabled: !!caps?.read,
+    queryFn: async () => {
+      const [policies, pools, applications, lists, overrides, bindings] =
         await Promise.all([
           listPolicies(),
+          listPools(),
+          listApplications(),
           listControlLists(),
           listOverrides(),
           listPlanBindings(),
-          getAdminPlans().catch(() => null),
         ])
-      if (policyRes.success && policyRes.data) setPolicies(policyRes.data.items)
-      if (listRes.success && listRes.data) setLists(listRes.data.items)
-      if (overrideRes.success && overrideRes.data) {
-        setOverrides(overrideRes.data.items)
-      }
-      if (bindingRes.success && bindingRes.data) {
-        setBindings(bindingRes.data.items)
-      }
-      if (planRes?.success && planRes.data) {
-        setPlans(
-          planRes.data.map((item) => ({
-            id: item.plan.id,
-            title: item.plan.title,
-          }))
-        )
-      }
-    } catch (err) {
-      handleServerError(err, t('Failed to load user control settings'))
-    } finally {
-      setLoading(false)
-    }
-  }, [t])
-
-  const loadAudit = useCallback(
-    async (page = 1) => {
-      try {
-        const result = await listAudit({ p: page, page_size: 20 })
-        if (result.success && result.data) {
-          setAudit(result.data.items)
-          setAuditTotal(result.data.total)
-          setAuditPage(result.data.page)
-        }
-      } catch (err) {
-        handleServerError(err, t('Failed to load audit log'))
+      return {
+        policies: requireServerSuccess(policies).data?.items ?? [],
+        pools: requireServerSuccess(pools).data?.items ?? [],
+        applications: requireServerSuccess(applications).data?.items ?? [],
+        lists: requireServerSuccess(lists).data?.items ?? [],
+        overrides: requireServerSuccess(overrides).data?.items ?? [],
+        bindings: requireServerSuccess(bindings).data?.items ?? [],
       }
     },
-    [t]
-  )
-
-  useEffect(() => {
-    void loadAll()
-  }, [loadAll])
-
-  useEffect(() => {
-    if (capabilities?.audit_read) void loadAudit(1)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [capabilities?.audit_read])
-
-  const policyName = useMemo(() => {
-    const map = new Map<number, string>()
-    for (const item of policies) map.set(item.policy.id, item.policy.name)
-    return map
-  }, [policies])
-
-  const handleDeletePolicy = async (policy: PolicyView) => {
-    if (
-      !window.confirm(
-        t('Delete policy "{{name}}"?', { name: policy.policy.name })
-      )
-    ) {
-      return
-    }
-    try {
-      const result = await deletePolicy(policy.policy.id)
-      if (result.success) {
-        toast.success(t('Policy deleted'))
-        await loadAll()
-      } else {
-        handleServerError(result, t('Failed to delete policy'))
-      }
-    } catch (err) {
-      handleServerError(err, t('Failed to delete policy'))
-    }
+  })
+  const audit = useQuery({
+    queryKey: ['user-control', 'audit', auditPage],
+    enabled: !!caps?.audit_read && activeTab === 'audit',
+    queryFn: async () =>
+      requireServerSuccess(await listAudit({ p: auditPage, page_size: 20 }))
+        .data,
+  })
+  const reload = () =>
+    void client.invalidateQueries({ queryKey: ['user-control'] })
+  const removal = useMutation({
+    mutationFn: async () => {
+      if (!deleting) return
+      const fn = {
+        policy: deletePolicy,
+        pool: deletePool,
+        list: deleteControlList,
+      }[deleting.kind]
+      requireServerSuccess(await fn(deleting.id))
+    },
+    onSuccess: () => {
+      setDeleting(null)
+      reload()
+    },
+  })
+  if (capabilities.isPending || (!!caps?.read && settings.isPending)) {
+    return <LoadingState />
   }
-
-  const handleDeleteList = async (list: ControlList) => {
-    if (
-      !window.confirm(t('Delete control list "{{name}}"?', { name: list.name }))
-    ) {
-      return
-    }
-    try {
-      const result = await deleteControlList(list.id)
-      if (result.success) {
-        toast.success(t('List deleted'))
-        await loadAll()
-      } else {
-        handleServerError(result, t('Failed to delete list'))
-      }
-    } catch (err) {
-      handleServerError(err, t('Failed to delete list'))
-    }
+  if (capabilities.isError || settings.isError) {
+    return <ErrorState onRetry={reload} />
   }
-
-  const handleDeleteOverride = async (override: UserOverride) => {
-    if (
-      !window.confirm(
-        t('Remove the override for user #{{id}}?', { id: override.user_id })
-      )
-    ) {
-      return
-    }
-    try {
-      const result = await deleteUserOverride(override.user_id)
-      if (result.success) {
-        toast.success(t('Override removed'))
-        await loadAll()
-      } else {
-        handleServerError(result, t('Failed to remove override'))
-      }
-    } catch (err) {
-      handleServerError(err, t('Failed to remove override'))
-    }
-  }
-
-  const handleBind = async (planId: number, policyId: number) => {
-    try {
-      if (policyId === 0) {
-        const result = await deletePlanBinding(planId)
-        if (!result.success) {
-          handleServerError(result, t('Failed to unbind policy'))
-          return
-        }
-      } else {
-        const result = await putPlanBinding(planId, policyId)
-        if (!result.success) {
-          handleServerError(result, t('Failed to bind policy'))
-          return
-        }
-      }
-      toast.success(t('Plan binding updated'))
-      await loadAll()
-    } catch (err) {
-      handleServerError(err, t('Failed to update plan binding'))
-    }
-  }
-
-  if (loading) {
+  if (!caps?.read || !settings.data) {
     return (
-      <div className='flex min-h-40 items-center justify-center'>
-        <Loader2 className='size-6 animate-spin' />
-      </div>
+      <p role='alert'>
+        {t('You do not have permission to manage user controls.')}
+      </p>
     )
   }
-
-  if (!capabilities || error) {
+  const data = settings.data
+  const appFor = (kind: OwnerKind, id: number) =>
+    data.applications.find((a) => a.owner_kind === kind && a.owner_id === id)
+  const names = new Map(data.policies.map((p) => [p.policy.id, p.policy.name]))
+  const targetSummary = (kind: OwnerKind, id: number) => {
+    const app = appFor(kind, id)
+    const empty =
+      kind === 'user'
+        ? t('No personal binding; inherit other controls')
+        : t('None')
+    if (!app || app.use_legacy) {
+      let hasLegacy = false
+      if (kind === 'user') {
+        hasLegacy = data.overrides.some((o) => o.user_id === id)
+      } else if (kind === 'list') {
+        hasLegacy = data.lists.some((l) => l.id === id && l.policy_id > 0)
+      } else hasLegacy = data.bindings.some((b) => b.plan_id === id)
+      return hasLegacy ? t('Legacy configuration') : empty
+    }
     return (
-      <Alert variant='destructive'>
-        <AlertTitle>{t('Access denied')}</AlertTitle>
-        <AlertDescription>
-          {error || t('You do not have permission to manage user controls.')}
-        </AlertDescription>
-      </Alert>
+      parseTargets(app.targets)
+        .map((target) =>
+          target.kind === 'policy'
+            ? `${t('Policy')}: ${names.get(target.id) ?? `#${target.id}`} (${t('All day')})`
+            : `${t('Strategy pool')}: ${data.pools.find((p) => p.pool.id === target.id)?.pool.name ?? `#${target.id}`}`
+        )
+        .join(' · ') || empty
     )
   }
-
+  const legacyFor = () => {
+    if (!owner) return undefined
+    let legacy: unknown
+    if (owner.kind === 'user') {
+      legacy = data.overrides.find((o) => o.user_id === owner.id)
+    }
+    if (owner.kind === 'list') {
+      const list = data.lists.find((l) => l.id === owner.id)
+      legacy = data.policies.find((p) => p.policy.id === list?.policy_id)
+    }
+    if (owner.kind === 'plan') {
+      const binding = data.bindings.find((b) => b.plan_id === owner.id)
+      legacy = data.policies.find((p) => p.policy.id === binding?.policy_id)
+    }
+    return legacy ? JSON.stringify(legacy, null, 2) : undefined
+  }
+  const userIDs = [
+    ...new Set([
+      ...data.overrides.map((o) => o.user_id),
+      ...data.applications
+        .filter((a) => a.owner_kind === 'user')
+        .map((a) => a.owner_id),
+    ]),
+  ]
   return (
-    <div className='space-y-4'>
-      <div className='flex flex-wrap items-center justify-between gap-2'>
-        <div>
-          <h2 className='text-lg font-semibold'>{t('User control')}</h2>
-          <p className='text-muted-foreground text-sm'>
-            {t(
-              'Apply rate, quota, request, model, channel, API key and time-window limits to users, lists and subscription plans.'
+    <ResourceCatalogProvider>
+      <div className='min-w-0 space-y-4'>
+        <header className='flex flex-wrap items-center justify-between gap-2'>
+          <div>
+            <h2 className='text-lg font-semibold'>{t('User control')}</h2>
+            <p className='text-muted-foreground text-sm'>
+              {t(
+                'Policies define behavior, pools define scheduling, applications define who is controlled.'
+              )}
+            </p>
+          </div>
+          <Button variant='outline' onClick={reload}>
+            <RefreshCw className='size-4' />
+            {t('Refresh')}
+          </Button>
+        </header>
+        <Tabs value={activeTab} onValueChange={setActiveTab}>
+          <TabsList className='h-auto flex-wrap'>
+            <TabsTrigger value='policies'>{t('Policies')}</TabsTrigger>
+            <TabsTrigger value='pools'>{t('Strategy pools')}</TabsTrigger>
+            <TabsTrigger value='lists'>{t('Lists')}</TabsTrigger>
+            <TabsTrigger value='users'>{t('Personal settings')}</TabsTrigger>
+            <TabsTrigger value='plans'>{t('Subscription plans')}</TabsTrigger>
+            <TabsTrigger value='legacy'>
+              {t('Legacy configuration')}
+            </TabsTrigger>
+            <TabsTrigger value='simulator'>{t('Simulator')}</TabsTrigger>
+            {caps.audit_read && (
+              <TabsTrigger value='audit'>{t('Audit')}</TabsTrigger>
             )}
-          </p>
-        </div>
-        <Button variant='outline' size='sm' onClick={() => void loadAll()}>
-          <RefreshCw className='size-4' />
-          {t('Refresh')}
-        </Button>
-      </div>
-
-      <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className='flex-wrap'>
-          <TabsTrigger value='policies'>{t('Policies')}</TabsTrigger>
-          <TabsTrigger value='pools'>{t('Strategy pools')}</TabsTrigger>
-          <TabsTrigger value='lists'>{t('Lists')}</TabsTrigger>
-          <TabsTrigger value='overrides'>{t('User overrides')}</TabsTrigger>
-          <TabsTrigger value='plans'>{t('Subscription plans')}</TabsTrigger>
-          <TabsTrigger value='simulator'>{t('Simulator')}</TabsTrigger>
-          {capabilities.audit_read && (
-            <TabsTrigger value='audit'>{t('Audit')}</TabsTrigger>
-          )}
-        </TabsList>
-
-        <TabsContent
-          value={activeTab === 'pools' ? 'pools' : 'policies'}
-          className='space-y-3'
-        >
-          <div className='flex justify-end'>
-            {capabilities.policy_write && (
+          </TabsList>
+          <TabsContent value='policies' className='space-y-3'>
+            {caps.policy_write && (
               <Button
-                size='sm'
                 onClick={() => {
                   setEditingPolicy(null)
-                  setPolicyDialogOpen(true)
+                  setPolicyOpen(true)
                 }}
               >
                 <Plus className='size-4' />
-                {activeTab === 'pools'
-                  ? t('New strategy pool')
-                  : t('New policy')}
+                {t('New policy')}
               </Button>
             )}
-          </div>
-          <div className='grid gap-3 md:grid-cols-2'>
-            {policies
-              .filter(
-                (item) =>
-                  Boolean(item.limits.random_pool) === (activeTab === 'pools')
-              )
-              .map((item) => (
-                <div
-                  key={item.policy.id}
-                  className='space-y-2 rounded-lg border p-3'
+            <div className='grid gap-3 md:grid-cols-2'>
+              {data.policies.filter(isBehaviorPolicy).map((p) => (
+                <section
+                  key={p.policy.id}
+                  className='min-w-0 space-y-2 rounded border p-3'
                 >
                   <div className='flex flex-wrap items-center gap-2'>
-                    <span className='font-medium'>{item.policy.name}</span>
-                    <Badge
-                      variant={item.policy.enabled ? 'secondary' : 'outline'}
-                    >
-                      {item.policy.enabled ? t('Enabled') : t('Disabled')}
+                    <h3 className='font-medium'>{p.policy.name}</h3>
+                    <Badge variant='outline'>
+                      {p.policy.enabled ? t('Enabled') : t('Disabled')}
                     </Badge>
                     <Badge variant='outline'>
-                      {t('Priority')} {item.policy.priority}
+                      {t('Priority')} {p.policy.priority}
                     </Badge>
-                    <div className='ml-auto flex gap-1'>
-                      {capabilities.policy_write && (
-                        <>
-                          <Button
-                            size='sm'
-                            variant='ghost'
-                            onClick={() => {
-                              setEditingPolicy(item)
-                              setPolicyDialogOpen(true)
-                            }}
-                          >
-                            {t('Edit')}
-                          </Button>
-                          <Button
-                            size='icon'
-                            variant='ghost'
-                            className='text-destructive size-8'
-                            onClick={() => void handleDeletePolicy(item)}
-                            aria-label={t('Delete')}
-                          >
-                            <Trash2 className='size-4' />
-                          </Button>
-                        </>
-                      )}
-                    </div>
-                  </div>
-                  {item.policy.description && (
-                    <p className='text-muted-foreground text-sm'>
-                      {item.policy.description}
-                    </p>
-                  )}
-                  <p className='text-muted-foreground text-xs'>
-                    {t('Base limits')}:{' '}
-                    <LimitsSummary value={item.limits} compact />
-                  </p>
-                  <p className='text-muted-foreground text-xs'>
-                    {t('Time windows')}: {item.schedule?.rules?.length ?? 0} ·{' '}
-                    {item.schedule?.timezone ?? capabilities.default_timezone}
-                  </p>
-                </div>
-              ))}
-            {policies.length === 0 && (
-              <p className='text-muted-foreground text-sm'>
-                {t('No policies yet')}
-              </p>
-            )}
-          </div>
-        </TabsContent>
-
-        <TabsContent value='lists' className='space-y-3'>
-          <div className='flex justify-end'>
-            {capabilities.list_write && (
-              <Button
-                size='sm'
-                onClick={() => {
-                  setEditingList(null)
-                  setListDialogOpen(true)
-                }}
-              >
-                <Plus className='size-4' />
-                {t('New list')}
-              </Button>
-            )}
-          </div>
-          <div className='grid gap-3 md:grid-cols-2'>
-            {lists.map((list) => (
-              <div key={list.id} className='space-y-2 rounded-lg border p-3'>
-                <div className='flex flex-wrap items-center gap-2'>
-                  <span className='font-medium'>{list.name}</span>
-                  <Badge variant={list.enabled ? 'secondary' : 'outline'}>
-                    {list.enabled ? t('Enabled') : t('Disabled')}
-                  </Badge>
-                  <Badge variant='outline'>
-                    {t('{{count}} members', { count: list.members })}
-                  </Badge>
-                  <div className='ml-auto flex gap-1'>
-                    <Button
-                      size='sm'
-                      variant='ghost'
-                      onClick={() => setMembersList(list)}
-                    >
-                      <Users className='size-4' />
-                      {t('Members')}
-                    </Button>
-                    {capabilities.list_write && (
+                    {caps.policy_write && (
                       <>
                         <Button
-                          size='sm'
                           variant='ghost'
                           onClick={() => {
-                            setEditingList(list)
-                            setListDialogOpen(true)
+                            setEditingPolicy(p)
+                            setPolicyOpen(true)
                           }}
                         >
                           {t('Edit')}
                         </Button>
                         <Button
-                          size='icon'
                           variant='ghost'
-                          className='text-destructive size-8'
-                          onClick={() => void handleDeleteList(list)}
                           aria-label={t('Delete')}
+                          onClick={() =>
+                            setDeleting({
+                              kind: 'policy',
+                              id: p.policy.id,
+                              name: p.policy.name,
+                            })
+                          }
                         >
                           <Trash2 className='size-4' />
                         </Button>
                       </>
                     )}
                   </div>
-                </div>
-                <p className='text-muted-foreground text-xs'>
-                  {t('Policy')}: {policyName.get(list.policy_id) ?? t('None')}
-                </p>
-              </div>
-            ))}
-            {lists.length === 0 && (
-              <p className='text-muted-foreground text-sm'>
-                {t('No lists yet')}
-              </p>
-            )}
-          </div>
-        </TabsContent>
-
-        <TabsContent value='overrides' className='space-y-3'>
-          <div className='flex flex-wrap items-end justify-end gap-2'>
-            {capabilities.override_write && (
+                  <LimitsSummary value={p.limits} />
+                </section>
+              ))}
+            </div>
+          </TabsContent>
+          <TabsContent value='pools' className='space-y-3'>
+            {caps.policy_write && (
               <Button
-                size='sm'
                 onClick={() => {
-                  setOverrideSelection([])
-                  setOverridePickerOpen(true)
+                  setEditingPool(null)
+                  setPoolOpen(true)
                 }}
               >
                 <Plus className='size-4' />
-                {t('Override for user')}
+                {t('New strategy pool')}
               </Button>
             )}
-          </div>
-          <div className='min-w-0 overflow-x-auto rounded-md border'>
-            <table className='w-full text-sm'>
-              <thead className='bg-muted/50 text-left'>
-                <tr>
-                  <th className='p-2'>{t('User')}</th>
-                  <th className='p-2'>{t('Policy')}</th>
-                  <th className='p-2'>{t('Mode')}</th>
-                  <th className='p-2'>{t('Limits')}</th>
-                  <th className='p-2'>{t('Expires')}</th>
-                  <th className='p-2' />
-                </tr>
-              </thead>
-              <tbody>
-                {overrides.map((item) => (
-                  <tr key={item.id} className='border-t'>
-                    <td className='p-2'>
-                      {item.username || '-'} #{item.user_id}
-                    </td>
-                    <td className='p-2'>
-                      {policyName.get(item.policy_id) ?? t('None')}
-                    </td>
-                    <td className='p-2'>
-                      {item.mode === 'replace'
-                        ? t('Replace (relax inherited limits)')
-                        : t('Merge (tighten only)')}
-                    </td>
-                    <td className='text-muted-foreground p-2'>
-                      <LimitsSummary value={item.limits_view} compact />
-                    </td>
-                    <td className='p-2'>
-                      {item.expires_at
-                        ? new Date(item.expires_at * 1000).toLocaleString(
-                            locale
-                          )
-                        : t('Never')}
-                    </td>
-                    <td className='p-2 text-right'>
-                      {capabilities.override_write && (
-                        <>
-                          <Button
-                            size='sm'
-                            variant='ghost'
-                            onClick={() => {
-                              setEditingOverride(item)
-                              setOverrideUserId(item.user_id)
-                            }}
-                          >
-                            {t('Edit')}
-                          </Button>
-                          <Button
-                            size='icon'
-                            variant='ghost'
-                            className='text-destructive size-8'
-                            onClick={() => void handleDeleteOverride(item)}
-                            aria-label={t('Delete')}
-                          >
-                            <Trash2 className='size-4' />
-                          </Button>
-                        </>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-                {overrides.length === 0 && (
-                  <tr>
-                    <td
-                      colSpan={6}
-                      className='text-muted-foreground p-4 text-center'
-                    >
-                      {t('No user overrides')}
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </TabsContent>
-
-        <TabsContent value='plans' className='space-y-3'>
-          <p className='text-muted-foreground text-sm'>
-            {t('Assign a control policy to every active subscriber of a plan.')}
-          </p>
-          <div className='min-w-0 overflow-x-auto rounded-md border'>
-            <table className='w-full text-sm'>
-              <thead className='bg-muted/50 text-left'>
-                <tr>
-                  <th className='p-2'>{t('Plan')}</th>
-                  <th className='p-2'>{t('Policy')}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {plans.map((plan) => {
-                  const binding = bindings.find(
-                    (item) => item.plan_id === plan.id
-                  )
-                  return (
-                    <tr key={plan.id} className='border-t'>
-                      <td className='p-2'>
-                        {plan.title} #{plan.id}
-                      </td>
-                      <td className='p-2'>
-                        <Select
-                          items={[
-                            { value: '0', label: t('None') },
-                            ...policies.map((item) => ({
-                              value: String(item.policy.id),
-                              label: item.policy.name,
-                            })),
-                          ]}
-                          value={String(binding?.policy_id ?? 0)}
-                          onValueChange={(value) =>
-                            void handleBind(plan.id, Number(value))
-                          }
-                          disabled={!capabilities.policy_write}
-                        >
-                          <SelectTrigger
-                            aria-label={t('Policy for plan {{name}}', {
-                              name: plan.title,
-                            })}
-                            className='w-full max-w-64 min-w-40'
-                          >
-                            <SelectValue>
-                              {policyName.get(binding?.policy_id ?? 0) ??
-                                t('None')}
-                            </SelectValue>
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectGroup>
-                              <SelectItem value='0'>{t('None')}</SelectItem>
-                              {policies.map((item) => (
-                                <SelectItem
-                                  key={item.policy.id}
-                                  value={String(item.policy.id)}
-                                >
-                                  {item.policy.name}
-                                </SelectItem>
-                              ))}
-                            </SelectGroup>
-                          </SelectContent>
-                        </Select>
-                      </td>
-                    </tr>
-                  )
-                })}
-                {plans.length === 0 && (
-                  <tr>
-                    <td
-                      colSpan={2}
-                      className='text-muted-foreground p-4 text-center'
-                    >
-                      {t('No subscription plans')}
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </TabsContent>
-
-        <TabsContent value='simulator' className='min-w-0 space-y-3'>
-          <Simulator />
-        </TabsContent>
-
-        {capabilities.audit_read && (
-          <TabsContent value='audit' className='space-y-3'>
-            <div className='min-w-0 overflow-x-auto rounded-md border'>
-              <table className='w-full text-sm'>
-                <thead className='bg-muted/50 text-left'>
-                  <tr>
-                    <th className='p-2'>{t('Time')}</th>
-                    <th className='p-2'>{t('Actor')}</th>
-                    <th className='p-2'>{t('Action')}</th>
-                    <th className='p-2'>{t('Result')}</th>
-                    <th className='p-2'>{t('Details')}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {audit.map((item, index) => (
-                    <tr key={item.event_id ?? index} className='border-t'>
-                      <td className='p-2'>
-                        {item.created_at
-                          ? new Date(item.created_at * 1000).toLocaleString(
-                              locale
-                            )
-                          : '-'}
-                      </td>
-                      <td className='p-2'>
-                        {item.username || item.user_id || '-'}
-                      </td>
-                      <td className='p-2'>
-                        {item.action ? t(item.action) : '-'}
-                      </td>
-                      <td className='p-2'>
-                        {item.success === false ? t('Failed') : t('Success')}
-                      </td>
-                      <td className='max-w-md p-2'>
-                        <RuntimeAuditDetails item={item} />
-                      </td>
-                    </tr>
+            <div className='grid gap-3 md:grid-cols-2'>
+              {data.pools.map((p) => (
+                <section
+                  key={p.pool.id}
+                  className='min-w-0 space-y-2 rounded border p-3'
+                >
+                  <h3 className='font-medium'>{p.pool.name}</h3>
+                  <Badge variant='outline'>
+                    {p.pool.enabled ? t('Enabled') : t('Disabled')}
+                  </Badge>
+                  <p>
+                    {t('Pool activation probability (%)')}:{' '}
+                    {p.config.probability / 100}
+                  </p>
+                  {p.config.members.map((m) => (
+                    <p key={m.policy_id} className='text-sm'>
+                      {names.get(m.policy_id) ?? `#${m.policy_id}`}:{' '}
+                      {m.probability / 100}%
+                    </p>
                   ))}
-                  {audit.length === 0 && (
-                    <tr>
-                      <td
-                        colSpan={5}
-                        className='text-muted-foreground p-4 text-center'
+                  <p className='text-muted-foreground text-sm'>
+                    {p.config.schedule
+                      ? t('Controlled by pool schedule and probability')
+                      : t('All day')}
+                  </p>
+                  {caps.policy_write && (
+                    <div className='flex gap-2'>
+                      <Button
+                        variant='outline'
+                        onClick={() => {
+                          setEditingPool(p)
+                          setPoolOpen(true)
+                        }}
                       >
-                        {t('No audit entries')}
-                      </td>
-                    </tr>
+                        {t('Edit')}
+                      </Button>
+                      <Button
+                        variant='ghost'
+                        aria-label={t('Delete')}
+                        onClick={() =>
+                          setDeleting({
+                            kind: 'pool',
+                            id: p.pool.id,
+                            name: p.pool.name,
+                          })
+                        }
+                      >
+                        <Trash2 className='size-4' />
+                      </Button>
+                    </div>
                   )}
-                </tbody>
-              </table>
-            </div>
-            <div className='flex items-center justify-between'>
-              <Button
-                size='sm'
-                variant='outline'
-                disabled={auditPage <= 1}
-                onClick={() => void loadAudit(auditPage - 1)}
-              >
-                {t('Previous')}
-              </Button>
-              <span className='text-muted-foreground text-sm'>
-                {auditPage} / {Math.max(1, Math.ceil(auditTotal / 20))}
-              </span>
-              <Button
-                size='sm'
-                variant='outline'
-                disabled={auditPage >= Math.ceil(auditTotal / 20)}
-                onClick={() => void loadAudit(auditPage + 1)}
-              >
-                {t('Next')}
-              </Button>
+                </section>
+              ))}
             </div>
           </TabsContent>
-        )}
-      </Tabs>
-
-      <FormDialog
-        open={overridePickerOpen}
-        onOpenChange={setOverridePickerOpen}
-        title={t('Select a user for override')}
-        showCloseButton={false}
-        footer={
-          <>
+          <TabsContent value='lists' className='space-y-3'>
+            {caps.list_write && (
+              <Button
+                onClick={() => {
+                  setEditingList(null)
+                  setListOpen(true)
+                }}
+              >
+                <Plus className='size-4' />
+                {t('New list')}
+              </Button>
+            )}
+            <div className='grid gap-3 md:grid-cols-2'>
+              {data.lists.map((list) => (
+                <section
+                  key={list.id}
+                  className='min-w-0 space-y-2 rounded border p-3'
+                >
+                  <h3 className='font-medium'>{list.name}</h3>
+                  <Badge variant='outline'>
+                    {t('{{count}} members', { count: list.members })}
+                  </Badge>
+                  <p className='text-muted-foreground text-sm'>
+                    {targetSummary('list', list.id)}
+                  </p>
+                  <div className='flex flex-wrap gap-2'>
+                    <Button
+                      variant='outline'
+                      onClick={() => setMembersList(list)}
+                    >
+                      <Users className='size-4' />
+                      {t('Members')}
+                    </Button>
+                    {caps.list_write && (
+                      <>
+                        <Button
+                          variant='outline'
+                          onClick={() =>
+                            setOwner({
+                              kind: 'list',
+                              id: list.id,
+                              name: list.name,
+                            })
+                          }
+                        >
+                          {t('Manage applications')}
+                        </Button>
+                        <Button
+                          variant='ghost'
+                          onClick={() => {
+                            setEditingList(list)
+                            setListOpen(true)
+                          }}
+                        >
+                          {t('Edit')}
+                        </Button>
+                        <Button
+                          variant='ghost'
+                          aria-label={t('Delete')}
+                          onClick={() =>
+                            setDeleting({
+                              kind: 'list',
+                              id: list.id,
+                              name: list.name,
+                            })
+                          }
+                        >
+                          <Trash2 className='size-4' />
+                        </Button>
+                      </>
+                    )}
+                  </div>
+                </section>
+              ))}
+            </div>
+          </TabsContent>
+          <TabsContent value='users' className='space-y-3'>
+            {caps.override_write && (
+              <Button
+                onClick={() => {
+                  setSelected([])
+                  setPickerOpen(true)
+                }}
+              >
+                {t('Select users')}
+              </Button>
+            )}
+            {userIDs.map((id) => (
+              <section key={id} className='space-y-2 rounded border p-3'>
+                <h3>
+                  {data.overrides.find((o) => o.user_id === id)?.username ??
+                    t('User')}{' '}
+                  #{id}
+                </h3>
+                <p>{targetSummary('user', id)}</p>
+                {caps.override_write && (
+                  <Button
+                    variant='outline'
+                    onClick={() =>
+                      setOwner({
+                        kind: 'user',
+                        id,
+                        name: `${t('User')} #${id}`,
+                      })
+                    }
+                  >
+                    {t('Manage applications')}
+                  </Button>
+                )}
+              </section>
+            ))}
+          </TabsContent>
+          <TabsContent value='plans' className='space-y-3'>
+            <p>
+              {t(
+                'Assign policies or pools to active subscribers. Subscription billing is unchanged.'
+              )}
+            </p>
+            {(catalog.data?.plans ?? []).map((plan) => (
+              <section key={plan.id} className='space-y-2 rounded border p-3'>
+                <h3>{plan.title}</h3>
+                <p>{targetSummary('plan', plan.id)}</p>
+                {caps.policy_write && (
+                  <Button
+                    variant='outline'
+                    onClick={() =>
+                      setOwner({ kind: 'plan', id: plan.id, name: plan.title })
+                    }
+                  >
+                    {t('Manage applications')}
+                  </Button>
+                )}
+              </section>
+            ))}
+          </TabsContent>
+          <TabsContent value='legacy' className='space-y-3'>
+            <p>
+              {t(
+                'Legacy scheduled policies and pools keep their original behavior. Review bindings before switching; no automatic destructive migration is performed.'
+              )}
+            </p>
+            {data.policies
+              .filter((p) => !isBehaviorPolicy(p))
+              .map((p) => (
+                <section
+                  key={p.policy.id}
+                  className='min-w-0 space-y-2 rounded border p-3'
+                >
+                  <h3>{p.policy.name}</h3>
+                  <pre className='max-h-64 overflow-auto text-xs break-all whitespace-pre-wrap'>
+                    {JSON.stringify(p, null, 2)}
+                  </pre>
+                  {caps.policy_write && (
+                    <Button
+                      variant='outline'
+                      onClick={() => {
+                        setEditingPolicy(null)
+                        setPolicyOpen(true)
+                      }}
+                    >
+                      {t('Create a behavior-only replacement')}
+                    </Button>
+                  )}
+                </section>
+              ))}
+          </TabsContent>
+          <TabsContent value='simulator'>
+            <Simulator />
+          </TabsContent>
+          {caps.audit_read && (
+            <TabsContent value='audit' className='space-y-3'>
+              {audit.isPending && <LoadingState />}
+              {audit.isError && (
+                <ErrorState onRetry={() => void audit.refetch()} />
+              )}
+              {audit.data?.items.map((item, index) => (
+                <section
+                  key={item.event_id ?? index}
+                  className='space-y-1 rounded border p-3'
+                >
+                  <p className='text-muted-foreground text-xs'>
+                    {item.created_at
+                      ? new Date(item.created_at * 1000).toLocaleString(locale)
+                      : ''}{' '}
+                    · {item.action ? t(item.action) : ''}
+                  </p>
+                  <RuntimeAuditDetails item={item} />
+                </section>
+              ))}
+              <div className='flex justify-between'>
+                <Button
+                  variant='outline'
+                  disabled={auditPage <= 1}
+                  onClick={() => setAuditPage(auditPage - 1)}
+                >
+                  {t('Previous')}
+                </Button>
+                <Button
+                  variant='outline'
+                  disabled={auditPage * 20 >= (audit.data?.total ?? 0)}
+                  onClick={() => setAuditPage(auditPage + 1)}
+                >
+                  {t('Next')}
+                </Button>
+              </div>
+            </TabsContent>
+          )}
+        </Tabs>
+        <PolicyEditorDialog
+          open={policyOpen}
+          policy={editingPolicy}
+          defaultTimezone={caps.default_timezone}
+          onOpenChange={setPolicyOpen}
+          onSaved={reload}
+        />
+        <ScheduledPoolEditor
+          open={poolOpen}
+          pool={editingPool}
+          policies={data.policies}
+          defaultTimezone={caps.default_timezone}
+          onOpenChange={setPoolOpen}
+          onSaved={reload}
+        />
+        <ListFormDialog
+          open={listOpen}
+          list={editingList}
+          onClose={() => setListOpen(false)}
+          onSaved={reload}
+        />
+        <MembersDialog
+          list={membersList}
+          canWrite={caps.list_write}
+          onClose={() => {
+            setMembersList(null)
+            reload()
+          }}
+        />
+        <ApplicationEditor
+          owner={owner}
+          bulkUsers={bulkUsers}
+          applications={data.applications}
+          application={
+            owner && !bulkUsers.length
+              ? appFor(owner.kind, owner.id)
+              : undefined
+          }
+          legacy={bulkUsers.length ? undefined : legacyFor()}
+          policies={data.policies}
+          pools={data.pools}
+          canRestore={caps.root}
+          canRelax={caps.override_relax}
+          onClose={() => {
+            setOwner(null)
+            setBulkUsers([])
+          }}
+          onSaved={reload}
+        />
+        <FormDialog
+          open={pickerOpen}
+          onOpenChange={setPickerOpen}
+          title={t('Select users')}
+          showCloseButton={false}
+          footer={
             <Button
-              type='button'
-              variant='outline'
-              onClick={() => setOverridePickerOpen(false)}
-            >
-              {t('Cancel')}
-            </Button>
-            <Button
-              type='button'
-              disabled={overrideSelection.length !== 1}
+              disabled={selected.length === 0}
               onClick={() => {
-                const id = overrideSelection[0]
-                if (!id) return
-                setEditingOverride(
-                  overrides.find((item) => item.user_id === id) ?? null
-                )
-                setOverrideUserId(id)
-                setOverridePickerOpen(false)
+                const id = selected[0]
+                setBulkUsers(selected.length > 1 ? selected : [])
+                setOwner({ kind: 'user', id, name: `${t('User')} #${id}` })
+                setPickerOpen(false)
               }}
             >
               {t('Continue')}
             </Button>
-          </>
-        }
-      >
-        {overridePickerOpen && (
-          <UserPicker
-            selected={overrideSelection}
-            onChange={setOverrideSelection}
-          />
-        )}
-      </FormDialog>
-      <PolicyEditorDialog
-        open={policyDialogOpen}
-        policy={editingPolicy}
-        policies={policies}
-        createPool={activeTab === 'pools'}
-        defaultTimezone={capabilities.default_timezone}
-        onOpenChange={setPolicyDialogOpen}
-        onSaved={() => void loadAll()}
-      />
-      <ListFormDialog
-        open={listDialogOpen}
-        list={editingList}
-        policies={policies}
-        onClose={() => setListDialogOpen(false)}
-        onSaved={() => void loadAll()}
-      />
-      <MembersDialog
-        list={membersList}
-        canWrite={capabilities.list_write}
-        onClose={() => {
-          setMembersList(null)
-          void loadAll()
-        }}
-      />
-      <OverrideDialog
-        userId={overrideUserId}
-        existing={editingOverride}
-        policies={policies}
-        defaultTimezone={capabilities.default_timezone}
-        canRelax={capabilities.override_relax}
-        onClose={() => {
-          setOverrideUserId(null)
-          setEditingOverride(null)
-          setOverrideSelection([])
-        }}
-        onSaved={() => void loadAll()}
-      />
-    </div>
+          }
+        >
+          {pickerOpen && (
+            <UserPicker selected={selected} onChange={setSelected} />
+          )}
+        </FormDialog>
+        <ConfirmDialog
+          open={!!deleting}
+          onOpenChange={(open) => {
+            if (!open) setDeleting(null)
+          }}
+          title={t('Delete')}
+          desc={t(
+            'Delete {{name}}? Referenced policies and pools cannot be deleted.',
+            { name: deleting?.name }
+          )}
+          destructive
+          isLoading={removal.isPending}
+          handleConfirm={() => removal.mutate()}
+        />
+      </div>
+    </ResourceCatalogProvider>
   )
 }

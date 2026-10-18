@@ -207,11 +207,11 @@ func CreateUserControlPolicy(c *gin.Context) {
 	}
 	policy, err := usercontrol.BuildPolicy(payload, c.GetInt("id"))
 	if err != nil {
-		userControlWriteError(c, err)
+		userControlV2WriteError(c, err)
 		return
 	}
 	if err := model.CreateUserControlPolicy(policy); err != nil {
-		userControlWriteError(c, err)
+		userControlV2WriteError(c, err)
 		return
 	}
 	usercontrol.Invalidate()
@@ -236,11 +236,11 @@ func UpdateUserControlPolicy(c *gin.Context) {
 		return
 	}
 	if err := usercontrol.ApplyPolicyPayload(policy, payload, c.GetInt("id")); err != nil {
-		userControlWriteError(c, err)
+		userControlV2WriteError(c, err)
 		return
 	}
 	if err := model.UpdateUserControlPolicy(policy); err != nil {
-		userControlWriteError(c, err)
+		userControlV2WriteError(c, err)
 		return
 	}
 	usercontrol.Invalidate()
@@ -338,6 +338,9 @@ func UpdateUserControlList(c *gin.Context) {
 	var payload usercontrol.ListPayload
 	if err := common.DecodeJson(c.Request.Body, &payload); err != nil {
 		userControlFail(c, http.StatusBadRequest, "Invalid parameters")
+		return
+	}
+	if list.PolicyId != payload.PolicyId && migratedApplication(c, "list", id) {
 		return
 	}
 	if err := usercontrol.ApplyListPayload(list, payload, c.GetInt("id")); err != nil {
@@ -531,6 +534,9 @@ func GetUserControlOverride(c *gin.Context) {
 
 func PutUserControlOverride(c *gin.Context) {
 	userID, _ := strconv.Atoi(c.Param("user_id"))
+	if migratedApplication(c, "user", userID) {
+		return
+	}
 	var payload usercontrol.OverridePayload
 	if err := common.DecodeJson(c.Request.Body, &payload); err != nil {
 		userControlFail(c, http.StatusBadRequest, "Invalid parameters")
@@ -580,6 +586,9 @@ func DeleteUserControlOverride(c *gin.Context) {
 		return
 	}
 	userID, _ := strconv.Atoi(c.Param("user_id"))
+	if migratedApplication(c, "user", userID) {
+		return
+	}
 	if err := usercontrol.CheckControlTarget(c.GetInt("id"), c.GetInt("role"), userID); err != nil {
 		userControlWriteError(c, err)
 		return
@@ -626,6 +635,9 @@ func PutUserControlPlanBinding(c *gin.Context) {
 		return
 	}
 	planID, _ := strconv.Atoi(c.Param("plan_id"))
+	if migratedApplication(c, "plan", planID) {
+		return
+	}
 	if _, err := model.GetSubscriptionPlanById(planID); err != nil {
 		userControlFail(c, http.StatusNotFound, "Subscription plan does not exist")
 		return
@@ -662,6 +674,9 @@ func DeleteUserControlPlanBinding(c *gin.Context) {
 		return
 	}
 	planID, _ := strconv.Atoi(c.Param("plan_id"))
+	if migratedApplication(c, "plan", planID) {
+		return
+	}
 	if err := model.DeleteUserControlPlanBinding(planID); err != nil {
 		userControlWriteError(c, err)
 		return
@@ -766,7 +781,7 @@ func ApplyUserControlToUsers(c *gin.Context) {
 	}
 	results, err := usercontrol.ApplyToUsers(c.GetInt("id"), c.GetInt("role"), payload.PolicyID, payload.UserIDs, mode, payload.ExpiresAt, payload.Reason)
 	if err != nil {
-		userControlWriteError(c, err)
+		userControlV2WriteError(c, err)
 		return
 	}
 	applied, skipped, failed := 0, 0, 0

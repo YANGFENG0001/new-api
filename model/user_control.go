@@ -13,18 +13,19 @@ import (
 // UserControlPolicy is a reusable bundle of limits plus an optional schedule.
 // Limits and Schedule are JSON documents parsed by service/usercontrol.
 type UserControlPolicy struct {
-	Id          int    `json:"id" gorm:"primaryKey"`
-	Name        string `json:"name" gorm:"type:varchar(64);uniqueIndex;not null"`
-	Description string `json:"description" gorm:"type:varchar(255)"`
-	Enabled     bool   `json:"enabled" gorm:"default:true;index"`
-	Priority    int    `json:"priority" gorm:"default:0"`
-	Limits      string `json:"limits" gorm:"type:text"`
-	Schedule    string `json:"schedule" gorm:"type:text"`
-	Version     int64  `json:"version" gorm:"bigint;default:1"`
-	CreatedBy   int    `json:"created_by"`
-	UpdatedBy   int    `json:"updated_by"`
-	CreatedAt   int64  `json:"created_at" gorm:"bigint"`
-	UpdatedAt   int64  `json:"updated_at" gorm:"bigint"`
+	SchemaVersion int    `json:"schema_version" gorm:"default:1"`
+	Id            int    `json:"id" gorm:"primaryKey"`
+	Name          string `json:"name" gorm:"type:varchar(64);uniqueIndex;not null"`
+	Description   string `json:"description" gorm:"type:varchar(255)"`
+	Enabled       bool   `json:"enabled" gorm:"index"`
+	Priority      int    `json:"priority" gorm:"default:0"`
+	Limits        string `json:"limits" gorm:"type:text"`
+	Schedule      string `json:"schedule" gorm:"type:text"`
+	Version       int64  `json:"version" gorm:"bigint;default:1"`
+	CreatedBy     int    `json:"created_by"`
+	UpdatedBy     int    `json:"updated_by"`
+	CreatedAt     int64  `json:"created_at" gorm:"bigint"`
+	UpdatedAt     int64  `json:"updated_at" gorm:"bigint"`
 }
 
 func (UserControlPolicy) TableName() string { return "user_control_policies" }
@@ -35,7 +36,7 @@ type UserControlList struct {
 	Name        string `json:"name" gorm:"type:varchar(64);uniqueIndex;not null"`
 	Description string `json:"description" gorm:"type:varchar(255)"`
 	PolicyId    int    `json:"policy_id" gorm:"index;default:0"`
-	Enabled     bool   `json:"enabled" gorm:"default:true;index"`
+	Enabled     bool   `json:"enabled" gorm:"index"`
 	CreatedBy   int    `json:"created_by"`
 	UpdatedBy   int    `json:"updated_by"`
 	CreatedAt   int64  `json:"created_at" gorm:"bigint"`
