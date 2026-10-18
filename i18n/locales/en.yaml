@@ -1,4 +1,10 @@
 # English translations
+user_control.action_invalid: "User control cannot process this request. Check the request format or contact the administrator to review the rule configuration."
+user_control.counter_unavailable: "User control counters are temporarily unavailable. Please retry later."
+user_control.scoped_limit_reached: "The request exceeds a model or channel control limit. Please retry later."
+user_control.simulation_needs_nonstream: "JSON simulation requires a non-streaming request (stream=false)."
+user_control.websocket_unavailable: "This account's control policy requires HTTP JSON requests; WebSocket is unavailable."
+user_control.model_forbidden: "Model {{.Model}} is not allowed by the account control policy."
 
 # Errors returned to AI clients
 common.database_error: "Database error, please contact the administrator"

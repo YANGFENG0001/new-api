@@ -114,6 +114,14 @@ func assignDisplayLogIds(logs []*Log, startIdx int) {
 func formatUserLogs(logs []*Log, startIdx int) {
 	for i := range logs {
 		logs[i].ChannelName = ""
+		var metadata struct {
+			AdminInfo struct {
+				OriginalModel string `json:"user_control_original_model"`
+			} `json:"admin_info"`
+		}
+		if common.UnmarshalJsonStr(logs[i].Other, &metadata) == nil && metadata.AdminInfo.OriginalModel != "" {
+			logs[i].ModelName = metadata.AdminInfo.OriginalModel
+		}
 		logs[i].Other = formatLogOtherJSON(logs[i].Other, logOtherVisibilityUser)
 	}
 	assignDisplayLogIds(logs, startIdx)

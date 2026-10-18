@@ -105,6 +105,11 @@ describe('user management server error translations', () => {
         ],
         ['invalid end time "25:00"', 'invalid end time {{value}}', '"25:00"'],
         [
+          'request template cannot set model',
+          'request template cannot set {{value}}',
+          'model',
+        ],
+        [
           'models cannot be both allowed and blocked: model-a, model-b',
           'models cannot be both allowed and blocked: {{models}}',
           'model-a, model-b',

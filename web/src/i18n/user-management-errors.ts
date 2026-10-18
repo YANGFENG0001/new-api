@@ -32,6 +32,10 @@ export function translateUserManagementError(
   if (validation) {
     const patterns = [
       {
+        pattern: /^request template cannot set (model|group|stream)$/,
+        key: 'request template cannot set {{value}}',
+      },
+      {
         pattern: /^invalid timezone (".*")$/s,
         key: 'invalid timezone {{value}}',
       },
@@ -72,6 +76,10 @@ export function translateUserManagementError(
         () => match[1]
       )
       return `${t('invalid user control input')}: ${reason}`
+    }
+    const translated = t(validation[1])
+    if (translated !== validation[1]) {
+      return `${t('invalid user control input')}: ${translated}`
     }
   }
   return undefined

@@ -8,6 +8,14 @@ import type { Limits } from './types'
 export function LimitsSummary(props: { value?: Limits; compact?: boolean }) {
   const { t, i18n } = useTranslation()
   const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
+  const effortLabels: Record<string, string> = {
+    none: t('No reasoning'),
+    minimal: t('Minimal reasoning'),
+    low: t('Low reasoning'),
+    medium: t('Medium reasoning'),
+    high: t('High reasoning'),
+    xhigh: t('Extra high reasoning'),
+  }
   const labels: Record<string, string> = {
     blocked: t('Block all requests'),
     allow_relay: t('Allow relay'),
@@ -26,8 +34,8 @@ export function LimitsSummary(props: { value?: Limits; compact?: boolean }) {
     monthly: t('Monthly requests'),
     daily_quota: t('Daily quota (quota units)'),
     monthly_quota: t('Monthly quota (quota units)'),
-    input_tokens: t('Input tokens'),
-    output_tokens: t('Output tokens'),
+    input_tokens: t('Monthly input tokens'),
+    output_tokens: t('Monthly output tokens'),
     allow: t('Allowed models'),
     block: t('Blocked models'),
     allow_ids: t('Allowed channel IDs'),
@@ -37,6 +45,7 @@ export function LimitsSummary(props: { value?: Limits; compact?: boolean }) {
     allow_groups: t('Allowed groups'),
     max_active: t('Max active keys'),
     max_total: t('Max total keys'),
+    scoped_rules: t('Model and channel rules'),
   }
   const entries = Object.entries(props.value ?? {}).filter(
     ([, value]) => value !== undefined
@@ -50,6 +59,7 @@ export function LimitsSummary(props: { value?: Limits; compact?: boolean }) {
 
   const rows: { label: string; value: unknown }[] = []
   for (const [key, value] of entries) {
+    if (key === 'scoped_rules') continue
     if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
       for (const [field, fieldValue] of Object.entries(value)) {
         if (fieldValue !== undefined) {
@@ -62,26 +72,65 @@ export function LimitsSummary(props: { value?: Limits; compact?: boolean }) {
     } else rows.push({ label: labels[key] ?? t(key), value })
   }
   return (
-    <dl className='grid min-w-0 gap-2 text-sm sm:grid-cols-2'>
-      {rows.map((row) => {
-        let value = String(row.value ?? '')
-        if (typeof row.value === 'boolean') {
-          value = row.value ? t('Yes') : t('No')
-        }
-        if (typeof row.value === 'number') {
-          value = formatNumber(row.value, locale)
-        }
-        if (Array.isArray(row.value)) value = row.value.join(', ') || t('None')
-        return (
-          <div
-            key={row.label}
-            className='min-w-0 rounded-md border p-2 [overflow-wrap:anywhere] break-words'
-          >
-            <dt className='text-muted-foreground text-xs'>{row.label}</dt>
-            <dd>{value}</dd>
-          </div>
-        )
-      })}
-    </dl>
+    <div className='min-w-0 space-y-3'>
+      <dl className='grid min-w-0 gap-2 text-sm sm:grid-cols-2'>
+        {rows.map((row) => {
+          let value = String(row.value ?? '')
+          if (typeof row.value === 'boolean') {
+            value = row.value ? t('Yes') : t('No')
+          }
+          if (typeof row.value === 'number') {
+            value = formatNumber(row.value, locale)
+          }
+          if (Array.isArray(row.value)) {
+            value = row.value.join(', ') || t('None')
+          }
+          return (
+            <div
+              key={row.label}
+              className='min-w-0 rounded-md border p-2 [overflow-wrap:anywhere] break-words'
+            >
+              <dt className='text-muted-foreground text-xs'>{row.label}</dt>
+              <dd>{value}</dd>
+            </div>
+          )
+        })}
+      </dl>
+      {(props.value?.scoped_rules ?? []).map((rule) => (
+        <section
+          key={rule.id}
+          className='min-w-0 space-y-2 rounded-lg border p-3'
+        >
+          <h4 className='text-sm font-medium'>
+            {rule.name || t('Scoped rule')} ·{' '}
+            {rule.enabled === false ? t('Disabled') : t('Enabled')}
+          </h4>
+          <p className='text-muted-foreground text-xs'>
+            {t('Match original models')}: {rule.models?.join(', ') || t('All')}{' '}
+            · {t('Match channel IDs')}:{' '}
+            {rule.channel_ids?.join(', ') || t('All')}
+          </p>
+          <LimitsSummary value={rule.limits} />
+          {rule.actions && (
+            <p className='text-xs'>
+              {t('Request and response actions')}:{' '}
+              {[
+                rule.actions.route_model &&
+                  `${t('Route to model')}: ${rule.actions.route_model}`,
+                rule.actions.reasoning_effort &&
+                  `${t('Reasoning effort override')}: ${effortLabels[rule.actions.reasoning_effort] ?? t('Unknown')}`,
+                rule.actions.request_body !== undefined &&
+                  t('Request body rewrite'),
+                rule.actions.prompt_prefix && t('Prepend system prompt'),
+                rule.actions.prompt_suffix && t('Append system prompt'),
+                rule.actions.response && t('Response replacement (simulation)'),
+              ]
+                .filter(Boolean)
+                .join(', ')}
+            </p>
+          )}
+        </section>
+      ))}
+    </div>
   )
 }

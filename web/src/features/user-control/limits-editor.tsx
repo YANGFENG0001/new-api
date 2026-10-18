@@ -24,6 +24,7 @@ import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 
 import { DelimitedInput } from './delimited-input'
+import { ScopedRulesEditor } from './scoped-rules-editor'
 import type { Limits } from './types'
 
 const QUOTA_UNIT = 500000
@@ -89,9 +90,11 @@ function NumberField({
 export function LimitsEditor({
   value,
   onChange,
+  scoped = false,
 }: {
   value: Limits
   onChange: (next: Limits) => void
+  scoped?: boolean
 }) {
   const { t } = useTranslation()
   const editorId = useId()
@@ -109,24 +112,28 @@ export function LimitsEditor({
           />
           {t('Block all requests')}
         </label>
-        <label className='flex items-center gap-2 text-sm'>
-          <Switch
-            checked={value.allow_relay !== false}
-            onCheckedChange={(checked) =>
-              set({ allow_relay: checked ? undefined : false })
-            }
-          />
-          {t('Allow relay')}
-        </label>
-        <label className='flex items-center gap-2 text-sm'>
-          <Switch
-            checked={value.allow_playground !== false}
-            onCheckedChange={(checked) =>
-              set({ allow_playground: checked ? undefined : false })
-            }
-          />
-          {t('Allow Playground')}
-        </label>
+        {!scoped && (
+          <>
+            <label className='flex items-center gap-2 text-sm'>
+              <Switch
+                checked={value.allow_relay !== false}
+                onCheckedChange={(checked) =>
+                  set({ allow_relay: checked ? undefined : false })
+                }
+              />
+              {t('Allow relay')}
+            </label>
+            <label className='flex items-center gap-2 text-sm'>
+              <Switch
+                checked={value.allow_playground !== false}
+                onCheckedChange={(checked) =>
+                  set({ allow_playground: checked ? undefined : false })
+                }
+              />
+              {t('Allow Playground')}
+            </label>
+          </>
+        )}
       </div>
 
       <section className='space-y-2'>
@@ -147,11 +154,13 @@ export function LimitsEditor({
             value={value.rate?.concurrent}
             onChange={(v) => set({ rate: { ...value.rate, concurrent: v } })}
           />
-          <NumberField
-            label={t('Burst capacity')}
-            value={value.rate?.burst}
-            onChange={(v) => set({ rate: { ...value.rate, burst: v } })}
-          />
+          {!scoped && (
+            <NumberField
+              label={t('Burst capacity')}
+              value={value.rate?.burst}
+              onChange={(v) => set({ rate: { ...value.rate, burst: v } })}
+            />
+          )}
         </div>
       </section>
 
@@ -225,14 +234,14 @@ export function LimitsEditor({
             />
           </div>
           <NumberField
-            label={t('Input tokens')}
+            label={t('Monthly input tokens')}
             value={value.usage?.input_tokens}
             onChange={(v) =>
               set({ usage: { ...value.usage, input_tokens: v } })
             }
           />
           <NumberField
-            label={t('Output tokens')}
+            label={t('Monthly output tokens')}
             value={value.usage?.output_tokens}
             onChange={(v) =>
               set({ usage: { ...value.usage, output_tokens: v } })
@@ -241,178 +250,191 @@ export function LimitsEditor({
         </div>
       </section>
 
-      <section className='space-y-2'>
-        <h4 className='text-sm font-medium'>{t('Model access')}</h4>
-        <div className='grid gap-3 md:grid-cols-2'>
-          <div className='min-w-0 space-y-1'>
-            <Label
-              htmlFor={`${editorId}-field-2`}
-              className='text-muted-foreground text-xs font-normal'
-            >
-              {t('Allowed models (comma separated)')}
-            </Label>
-            <DelimitedInput
-              id={`${editorId}-field-2`}
-              value={value.models?.allow ?? []}
-              onChange={(items) =>
-                set({
-                  models: {
-                    ...value.models,
-                    allow: items,
-                  },
-                })
-              }
-              placeholder={t('Empty = all models')}
-            />
-          </div>
-          <div className='min-w-0 space-y-1'>
-            <Label
-              htmlFor={`${editorId}-field-3`}
-              className='text-muted-foreground text-xs font-normal'
-            >
-              {t('Blocked models (comma separated)')}
-            </Label>
-            <DelimitedInput
-              id={`${editorId}-field-3`}
-              value={value.models?.block ?? []}
-              onChange={(items) =>
-                set({
-                  models: {
-                    ...value.models,
-                    block: items,
-                  },
-                })
-              }
-            />
-          </div>
-        </div>
-      </section>
+      {!scoped && (
+        <>
+          <section className='space-y-2'>
+            <h4 className='text-sm font-medium'>{t('Model access')}</h4>
+            <div className='grid gap-3 md:grid-cols-2'>
+              <div className='min-w-0 space-y-1'>
+                <Label
+                  htmlFor={`${editorId}-field-2`}
+                  className='text-muted-foreground text-xs font-normal'
+                >
+                  {t('Allowed models (comma separated)')}
+                </Label>
+                <DelimitedInput
+                  id={`${editorId}-field-2`}
+                  value={value.models?.allow ?? []}
+                  onChange={(items) =>
+                    set({
+                      models: {
+                        ...value.models,
+                        allow: items,
+                      },
+                    })
+                  }
+                  placeholder={t('Empty = all models')}
+                />
+              </div>
+              <div className='min-w-0 space-y-1'>
+                <Label
+                  htmlFor={`${editorId}-field-3`}
+                  className='text-muted-foreground text-xs font-normal'
+                >
+                  {t('Blocked models (comma separated)')}
+                </Label>
+                <DelimitedInput
+                  id={`${editorId}-field-3`}
+                  value={value.models?.block ?? []}
+                  onChange={(items) =>
+                    set({
+                      models: {
+                        ...value.models,
+                        block: items,
+                      },
+                    })
+                  }
+                />
+              </div>
+            </div>
+          </section>
 
-      <section className='space-y-2'>
-        <h4 className='text-sm font-medium'>{t('Channel access')}</h4>
-        <div className='grid gap-3 md:grid-cols-2'>
-          <div className='min-w-0 space-y-1'>
-            <Label
-              htmlFor={`${editorId}-field-4`}
-              className='text-muted-foreground text-xs font-normal'
-            >
-              {t('Allowed channel IDs')}
-            </Label>
-            <DelimitedInput
-              id={`${editorId}-field-4`}
-              value={value.channels?.allow_ids?.map(String) ?? []}
-              onChange={(items) =>
-                set({
-                  channels: {
-                    ...value.channels,
-                    allow_ids: parseIds(items),
-                  },
-                })
-              }
-            />
-          </div>
-          <div className='min-w-0 space-y-1'>
-            <Label
-              htmlFor={`${editorId}-field-5`}
-              className='text-muted-foreground text-xs font-normal'
-            >
-              {t('Blocked channel IDs')}
-            </Label>
-            <DelimitedInput
-              id={`${editorId}-field-5`}
-              value={value.channels?.block_ids?.map(String) ?? []}
-              onChange={(items) =>
-                set({
-                  channels: {
-                    ...value.channels,
-                    block_ids: parseIds(items),
-                  },
-                })
-              }
-            />
-          </div>
-          <div className='min-w-0 space-y-1'>
-            <Label
-              htmlFor={`${editorId}-field-6`}
-              className='text-muted-foreground text-xs font-normal'
-            >
-              {t('Allowed channel types')}
-            </Label>
-            <DelimitedInput
-              id={`${editorId}-field-6`}
-              value={value.channels?.allow_types?.map(String) ?? []}
-              onChange={(items) =>
-                set({
-                  channels: {
-                    ...value.channels,
-                    allow_types: parseIds(items),
-                  },
-                })
-              }
-            />
-          </div>
-          <div className='min-w-0 space-y-1'>
-            <Label
-              htmlFor={`${editorId}-field-7`}
-              className='text-muted-foreground text-xs font-normal'
-            >
-              {t('Blocked channel types')}
-            </Label>
-            <DelimitedInput
-              id={`${editorId}-field-7`}
-              value={value.channels?.block_types?.map(String) ?? []}
-              onChange={(items) =>
-                set({
-                  channels: {
-                    ...value.channels,
-                    block_types: parseIds(items),
-                  },
-                })
-              }
-            />
-          </div>
-          <div className='space-y-1 md:col-span-2'>
-            <Label
-              htmlFor={`${editorId}-field-8`}
-              className='text-muted-foreground text-xs font-normal'
-            >
-              {t('Allowed groups')}
-            </Label>
-            <DelimitedInput
-              id={`${editorId}-field-8`}
-              value={value.channels?.allow_groups ?? []}
-              onChange={(items) =>
-                set({
-                  channels: {
-                    ...value.channels,
-                    allow_groups: items,
-                  },
-                })
-              }
-            />
-          </div>
-        </div>
-      </section>
+          <section className='space-y-2'>
+            <h4 className='text-sm font-medium'>{t('Channel access')}</h4>
+            <div className='grid gap-3 md:grid-cols-2'>
+              <div className='min-w-0 space-y-1'>
+                <Label
+                  htmlFor={`${editorId}-field-4`}
+                  className='text-muted-foreground text-xs font-normal'
+                >
+                  {t('Allowed channel IDs')}
+                </Label>
+                <DelimitedInput
+                  id={`${editorId}-field-4`}
+                  value={value.channels?.allow_ids?.map(String) ?? []}
+                  onChange={(items) =>
+                    set({
+                      channels: {
+                        ...value.channels,
+                        allow_ids: parseIds(items),
+                      },
+                    })
+                  }
+                />
+              </div>
+              <div className='min-w-0 space-y-1'>
+                <Label
+                  htmlFor={`${editorId}-field-5`}
+                  className='text-muted-foreground text-xs font-normal'
+                >
+                  {t('Blocked channel IDs')}
+                </Label>
+                <DelimitedInput
+                  id={`${editorId}-field-5`}
+                  value={value.channels?.block_ids?.map(String) ?? []}
+                  onChange={(items) =>
+                    set({
+                      channels: {
+                        ...value.channels,
+                        block_ids: parseIds(items),
+                      },
+                    })
+                  }
+                />
+              </div>
+              <div className='min-w-0 space-y-1'>
+                <Label
+                  htmlFor={`${editorId}-field-6`}
+                  className='text-muted-foreground text-xs font-normal'
+                >
+                  {t('Allowed channel types')}
+                </Label>
+                <DelimitedInput
+                  id={`${editorId}-field-6`}
+                  value={value.channels?.allow_types?.map(String) ?? []}
+                  onChange={(items) =>
+                    set({
+                      channels: {
+                        ...value.channels,
+                        allow_types: parseIds(items),
+                      },
+                    })
+                  }
+                />
+              </div>
+              <div className='min-w-0 space-y-1'>
+                <Label
+                  htmlFor={`${editorId}-field-7`}
+                  className='text-muted-foreground text-xs font-normal'
+                >
+                  {t('Blocked channel types')}
+                </Label>
+                <DelimitedInput
+                  id={`${editorId}-field-7`}
+                  value={value.channels?.block_types?.map(String) ?? []}
+                  onChange={(items) =>
+                    set({
+                      channels: {
+                        ...value.channels,
+                        block_types: parseIds(items),
+                      },
+                    })
+                  }
+                />
+              </div>
+              <div className='space-y-1 md:col-span-2'>
+                <Label
+                  htmlFor={`${editorId}-field-8`}
+                  className='text-muted-foreground text-xs font-normal'
+                >
+                  {t('Allowed groups')}
+                </Label>
+                <DelimitedInput
+                  id={`${editorId}-field-8`}
+                  value={value.channels?.allow_groups ?? []}
+                  onChange={(items) =>
+                    set({
+                      channels: {
+                        ...value.channels,
+                        allow_groups: items,
+                      },
+                    })
+                  }
+                />
+              </div>
+            </div>
+          </section>
 
-      <section className='space-y-2'>
-        <h4 className='text-sm font-medium'>{t('API key limits')}</h4>
-        <div className='grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4'>
-          <NumberField
-            label={t('Max active keys')}
-            value={value.api_keys?.max_active}
-            onChange={(v) =>
-              set({ api_keys: { ...value.api_keys, max_active: v } })
+          <section className='space-y-2'>
+            <h4 className='text-sm font-medium'>{t('API key limits')}</h4>
+            <div className='grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4'>
+              <NumberField
+                label={t('Max active keys')}
+                value={value.api_keys?.max_active}
+                onChange={(v) =>
+                  set({ api_keys: { ...value.api_keys, max_active: v } })
+                }
+              />
+              <NumberField
+                label={t('Max total keys')}
+                value={value.api_keys?.max_total}
+                onChange={(v) =>
+                  set({ api_keys: { ...value.api_keys, max_total: v } })
+                }
+              />
+            </div>
+          </section>
+          <ScopedRulesEditor
+            value={value.scoped_rules ?? []}
+            renderLimits={(limits, onChange) => (
+              <LimitsEditor scoped value={limits} onChange={onChange} />
+            )}
+            onChange={(rules) =>
+              set({ scoped_rules: rules.length ? rules : undefined })
             }
           />
-          <NumberField
-            label={t('Max total keys')}
-            value={value.api_keys?.max_total}
-            onChange={(v) =>
-              set({ api_keys: { ...value.api_keys, max_total: v } })
-            }
-          />
-        </div>
-      </section>
+        </>
+      )}
     </div>
   )
 }

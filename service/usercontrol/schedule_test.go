@@ -1,12 +1,239 @@
 package usercontrol
 
 import (
+	"fmt"
+	"net/http/httptest"
+	"strings"
+	"sync"
 	"testing"
 	"time"
+
+	"github.com/QuantumNous/new-api/common"
+	"github.com/alicebob/miniredis/v2"
+	"github.com/gin-gonic/gin"
+	"github.com/go-redis/redis/v8"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestScopedRedisConcurrencyIsAtomicAndUsageDoesNotFailOpen(t *testing.T) {
+	server := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: server.Addr(), MaxRetries: -1})
+	previousClient, previousEnabled := common.RDB, common.RedisEnabled
+	common.RDB, common.RedisEnabled = client, true
+	t.Cleanup(func() { common.RDB, common.RedisEnabled = previousClient, previousEnabled; _ = client.Close() })
+	rule := ScopedRule{ID: common.GetUUID(), Limits: Limits{Rate: &RateLimits{Concurrent: 2}, Usage: &UsageLimits{DailyQuota: 5}}}
+	type result struct {
+		release func()
+		reason  string
+		err     error
+	}
+	results := make(chan result, 20)
+	var wg sync.WaitGroup
+	for range 20 {
+		wg.Go(func() {
+			release, reason, err := AdmitScoped(rule, 123, time.Now(), time.UTC)
+			results <- result{release, reason, err}
+		})
+	}
+	wg.Wait()
+	close(results)
+	var releases []func()
+	for result := range results {
+		require.NoError(t, result.err)
+		if result.reason == "" {
+			releases = append(releases, result.release)
+		}
+	}
+	require.Len(t, releases, 2)
+	for _, release := range releases {
+		release()
+		release()
+	}
+	release, reason, err := AdmitScoped(rule, 123, time.Now(), time.UTC)
+	require.NoError(t, err)
+	require.Empty(t, reason)
+	release()
+	recordScopedUsage(rule, 123, time.Now(), time.UTC, 5, 2, 3)
+	_, reason, err = AdmitScoped(rule, 123, time.Now(), time.UTC)
+	require.NoError(t, err)
+	assert.Equal(t, "usage", reason)
+	server.Close()
+	rule.Limits.Rate = nil
+	_, _, err = AdmitScoped(rule, 123, time.Now(), time.UTC)
+	require.Error(t, err)
+}
+
+func TestScopedDisabledActionsDoNotRejectNontextRequest(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest("POST", "/v1/embeddings", nil)
+	SetContext(c, &Effective{HasPolicy: true, Limits: Limits{ScopedRules: []ScopedRule{{ID: "disabled-actions", Actions: &Actions{RequestMode: "merge"}}}}})
+	changed, err := ApplyActions(c, "client", 0)
+	require.NoError(t, err)
+	assert.False(t, changed)
+}
+
+func TestScopedActionsPriorityAndDuplicateReferences(t *testing.T) {
+	response := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(response)
+	c.Request = httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{"model":"client","messages":[{"role":"user","content":"hello"}]}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	t.Cleanup(func() { common.CleanupBodyStorage(c) })
+	high := ScopedRule{ID: "high", Namespace: "policy:1", PolicyPriority: 10, Actions: &Actions{RouteModel: "high-model"}}
+	low := ScopedRule{ID: "low", Namespace: "policy:2", PolicyPriority: 1, Actions: &Actions{RouteModel: "low-model"}}
+	SetContext(c, &Effective{HasPolicy: true, Limits: Limits{ScopedRules: []ScopedRule{high, low}}})
+	_, err := ApplyActions(c, "client", 0)
+	require.NoError(t, err)
+	var body struct {
+		Model string `json:"model"`
+	}
+	require.NoError(t, common.UnmarshalBodyReusable(c, &body))
+	assert.Equal(t, "high-model", body.Model)
+	merged := Merge(Limits{ScopedRules: []ScopedRule{high}}, Limits{ScopedRules: []ScopedRule{high}})
+	assert.Len(t, merged.ScopedRules, 1)
+}
+
+func TestScopedRulesScheduleIsolationAndAdmission(t *testing.T) {
+	now := time.Now()
+	rule := ScopedRule{ID: common.GetUUID(), Models: []string{"client-model"}, ChannelIDs: []int{7}, Limits: Limits{Rate: &RateLimits{RPM: 1}, Usage: &UsageLimits{DailyQuota: 10}}}
+	assert.True(t, rule.Matches("client-model", 7))
+	assert.False(t, rule.Matches("other-model", 7))
+	assert.False(t, rule.Matches("client-model", 8))
+	schedule := &Schedule{Timezone: "UTC", Rules: []ScheduleRule{{ID: "night", Start: "22:00", End: "06:00", Limits: Limits{ScopedRules: []ScopedRule{rule}}}}}
+	active, _, _, err := schedule.ActiveLimits(at(t, "UTC", 2026, 10, 19, 23, 0), Limits{})
+	require.NoError(t, err)
+	require.Len(t, active.ScopedRules, 1)
+	inactive, _, _, err := schedule.ActiveLimits(at(t, "UTC", 2026, 10, 19, 12, 0), Limits{})
+	require.NoError(t, err)
+	assert.Empty(t, inactive.ScopedRules)
+	release, reason, err := AdmitScoped(rule, 731, now, time.UTC)
+	require.NoError(t, err)
+	require.Empty(t, reason)
+	release()
+	_, reason, err = AdmitScoped(rule, 731, now, time.UTC)
+	require.NoError(t, err)
+	assert.Equal(t, "requests", reason)
+	release, reason, err = AdmitScoped(rule, 732, now, time.UTC)
+	require.NoError(t, err)
+	require.Empty(t, reason)
+	release()
+	// Changing thresholds must not erase already consumed usage.
+	rule.Limits.Rate = nil
+	recordScopedUsage(rule, 731, now, time.UTC, 10, 3, 4)
+	_, reason, err = AdmitScoped(rule, 731, now, time.UTC)
+	require.NoError(t, err)
+	assert.Equal(t, "usage", reason)
+	other := rule
+	other.ID = common.GetUUID()
+	release, reason, err = AdmitScoped(other, 731, now, time.UTC)
+	require.NoError(t, err)
+	require.Empty(t, reason)
+	release()
+}
+
+func TestScopedActionsPreserveProtocolNumbersAndUseOnePassRouting(t *testing.T) {
+	response := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(response)
+	c.Request = httptest.NewRequest("POST", "/v1/responses", strings.NewReader(`{"model":"client-model","stream":false,"instructions":"original","input":"hello","reasoning":{"summary":"auto"},"exact":9007199254740993}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	t.Cleanup(func() { common.CleanupBodyStorage(c) })
+	rules := []ScopedRule{
+		{ID: "model", Models: []string{"client-model"}, Actions: &Actions{RouteModel: "target-model", PromptPrefix: "before", PromptSuffix: "after", ReasoningEffort: "high", RequestBody: `{"temperature":0,"reasoning":{"summary":null}}`}},
+		{ID: "channel", ChannelIDs: []int{7}, Actions: &Actions{RouteModel: "final-model"}},
+	}
+	SetContext(c, &Effective{HasPolicy: true, Limits: Limits{ScopedRules: rules}})
+	changed, err := ApplyActions(c, "client-model", 0)
+	require.NoError(t, err)
+	assert.True(t, changed)
+	changed, err = ApplyActions(c, "client-model", 7)
+	require.NoError(t, err)
+	assert.True(t, changed)
+	storage, err := common.GetBodyStorage(c)
+	require.NoError(t, err)
+	raw, err := storage.Bytes()
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), `9007199254740993`)
+	var body map[string]common.RawMessage
+	require.NoError(t, common.Unmarshal(raw, &body))
+	assert.JSONEq(t, `"final-model"`, string(body["model"]))
+	assert.JSONEq(t, `false`, string(body["stream"]))
+	assert.JSONEq(t, `0`, string(body["temperature"]))
+	assert.JSONEq(t, `{"effort":"high"}`, string(body["reasoning"]))
+	assert.JSONEq(t, `"before\noriginal\nafter"`, string(body["instructions"]))
+	assert.Equal(t, "client-model", c.GetString(OriginalModelKey))
+}
+
+func TestScopedActionValidationRejectsBypassesAndMalformedTemplates(t *testing.T) {
+	for _, raw := range []string{
+		`{"scoped_rules":[{"id":"a","limits":{"rate":{"rpm":-1}}}]}`,
+		`{"scoped_rules":[{"id":"a","limits":{"api_keys":{"max_total":1}}}]}`,
+		`{"scoped_rules":[{"id":"a","limits":{"scoped_rules":[{"id":"b","limits":{}}]}}]}`,
+		`{"scoped_rules":[{"id":"a","limits":{},"actions":{"request_body":"[]"}}]}`,
+		`{"scoped_rules":[{"id":"a","limits":{},"actions":{"request_body":"{\"model\":\"bypass\"}"}}]}`,
+		`{"scoped_rules":[{"id":"a","limits":{},"actions":{"request_body":"{\"ſtream\":true}"}}]}`,
+		`{"scoped_rules":[{"id":"a","limits":{},"actions":{"response":{"mode":"error","status":200,"body":"failed"}}}]}`,
+		`{"scoped_rules":[{"id":"a","limits":{},"actions":{"reasoning_effort":"arbitrary"}}]}`,
+	} {
+		_, _, err := ParseLimitsJSON([]byte(raw))
+		require.ErrorIs(t, err, ErrInvalidInput, raw)
+	}
+}
+
+func TestScopedStaticResponsesAreMarkedAndPreserveStreamingProtocols(t *testing.T) {
+	for _, path := range []string{"/v1/chat/completions", "/v1/responses", "/v1/messages"} {
+		for _, stream := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/stream=%t", path, stream), func(t *testing.T) {
+				response := httptest.NewRecorder()
+				c, _ := gin.CreateTestContext(response)
+				c.Request = httptest.NewRequest("POST", path, strings.NewReader(fmt.Sprintf(`{"model":"client","stream":%t}`, stream)))
+				c.Request.Header.Set("Content-Type", "application/json")
+				t.Cleanup(func() { common.CleanupBodyStorage(c) })
+				c.Set(OriginalModelKey, "client")
+				state(c).Response = &StaticResponse{Mode: "text", Body: "replacement"}
+				handled, err := WriteStaticResponse(c)
+				require.NoError(t, err)
+				assert.True(t, handled)
+				assert.Equal(t, "true", response.Header().Get("X-New-API-Simulated"))
+				assert.Contains(t, response.Body.String(), "replacement")
+				if stream {
+					assert.Contains(t, response.Header().Get("Content-Type"), "text/event-stream")
+				}
+				assert.True(t, state(c).Synthetic)
+			})
+		}
+	}
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{"stream":true}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	t.Cleanup(func() { common.CleanupBodyStorage(c) })
+	state(c).Response = &StaticResponse{Mode: "json", Body: `{"ok":true}`}
+	handled, err := WriteStaticResponse(c)
+	require.Error(t, err)
+	assert.False(t, handled)
+	assert.False(t, state(c).Synthetic)
+}
+
+func TestScopedRetryCountsRuleOnceAndEnforcesNewChannel(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest("POST", "/v1/chat/completions", nil)
+	c.Set("id", 98765)
+	rule := ScopedRule{ID: common.GetUUID(), Limits: Limits{Rate: &RateLimits{RPM: 1, Concurrent: 1}, Usage: &UsageLimits{DailyQuota: 10}}}
+	channel := ScopedRule{ID: common.GetUUID(), ChannelIDs: []int{9}, Limits: Limits{Blocked: boolPtr(true)}}
+	SetContext(c, &Effective{HasPolicy: true, Timezone: "UTC", Limits: Limits{ScopedRules: []ScopedRule{rule, channel}}})
+	require.NoError(t, AdmitChannel(c, "client", 7))
+	require.NoError(t, AdmitChannel(c, "client", 7))
+	RecordContextUsage(c, 98765, 10, 2, 3)
+	require.ErrorContains(t, AdmitChannel(c, "client", 9), "blocked")
+	// Release without database audit; the database-backed integration covers it.
+	for _, release := range state(c).Releases {
+		release()
+	}
+	rule.Limits.Rate = nil
+	_, reason, err := AdmitScoped(rule, 98765, time.Now(), time.UTC)
+	require.NoError(t, err)
+	assert.Equal(t, "usage", reason)
+}
 
 func mustLocation(t *testing.T, name string) *time.Location {
 	t.Helper()

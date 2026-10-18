@@ -139,6 +139,9 @@ func RecordAuditLog(c *gin.Context, entry AuditLog) {
 
 func GetAuditLogs(filter AuditLogFilter, start, limit, viewerRole int) ([]*AuditLog, int64, error) {
 	query := LOG_DB.Model(&AuditLog{})
+	if filter.SelfView || viewerRole < common.RoleAdminUser {
+		query = query.Where("action NOT LIKE ?", "user_control.runtime.%")
+	}
 	if common.UsingLogDatabase(common.DatabaseTypeClickHouse) {
 		// Decode native JSON through database/sql as text for AuditOther.Scan.
 		// Preserve numeric metadata instead of returning quoted Int64 values.

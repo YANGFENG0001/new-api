@@ -79,6 +79,9 @@ func NormalizeLimits(limits *Limits) error {
 	if limits == nil {
 		return nil
 	}
+	if err := normalizeScopedRules(limits.ScopedRules); err != nil {
+		return err
+	}
 	validateNonNegative := func(name string, values ...int) error {
 		for _, value := range values {
 			if value < 0 {

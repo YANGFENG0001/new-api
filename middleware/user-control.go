@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/service/usercontrol"
 
 	"github.com/gin-gonic/gin"
@@ -34,6 +35,13 @@ func UserControl() gin.HandlerFunc {
 			return
 		}
 		usercontrol.SetContext(c, effective)
+		defer usercontrol.FinishRequest(c)
+		// A long-lived socket could outlive a time window and bypass per-message
+		// policies. Keep scoped control HTTP-only until the WS runner supports it.
+		if effective.HasScopedRules && strings.EqualFold(c.GetHeader("Upgrade"), "websocket") {
+			abortUserControl(c, http.StatusForbidden, i18n.T(c, i18n.MsgUserControlWebsocketUnavailable))
+			return
+		}
 
 		if effective.Blocked() {
 			abortUserControl(c, http.StatusForbidden, "This account has been blocked by an administrator.")

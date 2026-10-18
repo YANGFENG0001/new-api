@@ -1,8 +1,10 @@
 package usercontrol
 
 import (
+	"strings"
 	"time"
 
+	"github.com/QuantumNous/new-api/i18n"
 	"github.com/gin-gonic/gin"
 )
 
@@ -10,6 +12,21 @@ import (
 // policy so downstream stages (distributor, usage settlement) reuse it without
 // another database lookup.
 const ContextKeyEffective = "user_control_effective"
+
+// ClientErrorMessage exposes a stable translated category, never internal
+// parser errors or administrator-authored request/prompt content.
+func ClientErrorMessage(c *gin.Context, err error) string {
+	key := i18n.MsgUserControlActionInvalid
+	switch message := err.Error(); {
+	case message == "user control counter unavailable":
+		key = i18n.MsgUserControlCounterUnavailable
+	case strings.HasPrefix(message, "scoped user control limit reached:"):
+		key = i18n.MsgUserControlScopedLimitReached
+	case message == "synthetic JSON responses require stream=false":
+		key = i18n.MsgUserControlSimulationNeedsNonstream
+	}
+	return i18n.T(c, key)
+}
 
 func SetContext(c *gin.Context, effective *Effective) {
 	if c == nil || effective == nil {
@@ -41,4 +58,12 @@ func RecordContextUsage(c *gin.Context, userID int, quota, inputTokens, outputTo
 		return
 	}
 	_ = RecordUsage(userID, time.Now(), effective.Location(), quota, inputTokens, outputTokens)
+	if value, ok := c.Get(runtimeKey); ok {
+		s := value.(*requestState)
+		for _, rule := range effective.Limits.ScopedRules {
+			if rule.Matches(c.GetString(OriginalModelKey), s.FinalChannel) && s.Admitted[rule.Bucket(userID)] {
+				recordScopedUsage(rule, userID, time.Now(), effective.Location(), quota, inputTokens, outputTokens)
+			}
+		}
+	}
 }

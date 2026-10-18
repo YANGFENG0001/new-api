@@ -54,6 +54,7 @@ export interface APIKeyLimits {
 }
 
 export interface Limits {
+  scoped_rules?: ScopedRule[]
   blocked?: boolean
   allow_relay?: boolean
   allow_playground?: boolean
@@ -63,6 +64,32 @@ export interface Limits {
   models?: ModelLimits
   channels?: ChannelLimits
   api_keys?: APIKeyLimits
+}
+
+export interface ScopedRule {
+  id: string
+  priority?: number
+  name?: string
+  enabled?: boolean
+  models?: string[]
+  channel_ids?: number[]
+  limits: Limits
+  actions?: ControlActions
+}
+
+export interface ControlActions {
+  request_mode?: 'merge' | 'replace'
+  request_body?: string
+  prompt_prefix?: string
+  prompt_suffix?: string
+  route_model?: string
+  reasoning_effort?: string
+  response?: {
+    mode: 'text' | 'json' | 'error'
+    body: string
+    status?: number
+    error_code?: string
+  }
 }
 
 export interface ScheduleRule {

@@ -13,13 +13,14 @@ const cacheTTL = 15 * time.Second
 
 // Effective is the fully merged policy for one user at a point in time.
 type Effective struct {
-	Limits       Limits
-	Sources      []string
-	PolicyIDs    []int
-	Timezone     string
-	ScheduleHits []string
-	HasPolicy    bool
-	ResolvedAt   time.Time
+	Limits         Limits
+	Sources        []string
+	PolicyIDs      []int
+	Timezone       string
+	ScheduleHits   []string
+	HasPolicy      bool
+	HasScopedRules bool
+	ResolvedAt     time.Time
 }
 
 type cacheEntry struct {
@@ -45,7 +46,9 @@ func Resolve(userID int, role int) (*Effective, error) {
 	cacheMu.RLock()
 	entry, ok := cache[userID]
 	cacheMu.RUnlock()
-	if ok && entry.epoch == epoch && now.Before(entry.expires) {
+	// Schedule boundaries have minute precision. Never reuse a resolution from
+	// the previous minute even when the ordinary cache TTL has not expired.
+	if ok && entry.epoch == epoch && now.Before(entry.expires) && now.Unix()/60 == entry.effective.ResolvedAt.Unix()/60 {
 		return entry.effective, nil
 	}
 
@@ -92,6 +95,19 @@ func resolveAt(userID int, role int, now time.Time) (*Effective, error) {
 		if err != nil {
 			return nil, fmt.Errorf("policy %q schedule: %w", source.Policy.Name, err)
 		}
+		if len(limits.ScopedRules) > 0 {
+			effective.HasScopedRules = true
+		}
+		if schedule != nil {
+			if schedule.Default != nil && len(schedule.Default.ScopedRules) > 0 {
+				effective.HasScopedRules = true
+			}
+			for _, rule := range schedule.Rules {
+				if len(rule.Limits.ScopedRules) > 0 {
+					effective.HasScopedRules = true
+				}
+			}
+		}
 		active, hits, timezone, err := schedule.ActiveLimits(now, limits)
 		if err != nil {
 			return nil, fmt.Errorf("policy %q schedule: %w", source.Policy.Name, err)
@@ -101,6 +117,11 @@ func resolveAt(userID int, role int, now time.Time) (*Effective, error) {
 		}
 		if source.Replace {
 			merged = Limits{}
+		}
+		for i := range active.ScopedRules {
+			active.ScopedRules[i].Namespace = fmt.Sprintf("%s:%d:%d", source.Source, source.SourceId, source.Policy.Id)
+			active.ScopedRules[i].PolicyPriority = source.Policy.Priority
+			active.ScopedRules[i].Override = source.Source == "override"
 		}
 		merged = Merge(merged, active)
 		effective.HasPolicy = true

@@ -51,9 +51,26 @@ func Distribute() func(c *gin.Context) {
 			abortWithOpenAiMessage(c, invalidRequestStatus(err), i18n.T(c, i18n.MsgDistributorInvalidRequest, map[string]any{"Error": err.Error()}))
 			return
 		}
+		clientModel := modelRequest.Model
+		if !userControlModelAllowed(c, clientModel) {
+			return
+		}
+		if changed, err := usercontrol.ApplyActions(c, clientModel, 0); err != nil {
+			abortWithOpenAiMessage(c, http.StatusBadRequest, usercontrol.ClientErrorMessage(c, err))
+			return
+		} else if changed {
+			modelRequest, shouldSelectChannel, err = getModelRequest(c)
+			if err != nil {
+				abortWithOpenAiMessage(c, http.StatusBadRequest, err.Error())
+				return
+			}
+			if !userControlModelAllowed(c, modelRequest.Model) {
+				return
+			}
+		}
 		if effective, ok := usercontrol.FromContext(c); ok {
 			if modelRequest.Model != "" && !effective.Limits.AllowsModel(modelRequest.Model) {
-				abortWithOpenAiMessage(c, http.StatusForbidden, "Model is not allowed by the user control policy: "+modelRequest.Model)
+				abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgUserControlModelForbidden, map[string]any{"Model": modelRequest.Model}))
 				return
 			}
 			if channels := effective.Limits.Channels; channels != nil &&
@@ -141,13 +158,72 @@ func Distribute() func(c *gin.Context) {
 				return
 			}
 		}
+		if channel != nil {
+			if changed, actionErr := usercontrol.ApplyActions(c, clientModel, channel.Id); actionErr != nil {
+				abortWithOpenAiMessage(c, http.StatusBadRequest, usercontrol.ClientErrorMessage(c, actionErr))
+				return
+			} else if changed {
+				updated, _, parseErr := getModelRequest(c)
+				if parseErr != nil {
+					abortWithOpenAiMessage(c, http.StatusBadRequest, parseErr.Error())
+					return
+				}
+				if !userControlModelAllowed(c, updated.Model) {
+					return
+				}
+				if updated.Model != modelRequest.Model {
+					var selectErr *service.ChannelSelectError
+					channel, _, selectErr = service.SelectChannelForRequest(c, updated.Model, &service.RetryParam{
+						Ctx: c, ModelName: updated.Model, TokenGroup: common.GetContextKeyString(c, constant.ContextKeyUsingGroup),
+						RequestPath: c.Request.URL.Path, Retry: common.GetPointer(0),
+					})
+					if selectErr != nil {
+						abortWithOpenAiMessage(c, selectErr.StatusCode, selectErr.Message)
+						return
+					}
+					// Assign the final channel without recursively applying its actions.
+					if channel == nil {
+						abortWithOpenAiMessage(c, http.StatusServiceUnavailable, "No available channel")
+						return
+					}
+				}
+				modelRequest = updated
+			}
+			if err := usercontrol.AdmitChannel(c, modelRequest.Model, channel.Id); err != nil {
+				abortWithOpenAiMessage(c, http.StatusTooManyRequests, usercontrol.ClientErrorMessage(c, err))
+				return
+			}
+		}
 		common.SetContextKey(c, constant.ContextKeyRequestStartTime, time.Now())
-		SetupContextForSelectedChannel(c, channel, modelRequest.Model)
+		if setupErr := SetupContextForSelectedChannel(c, channel, modelRequest.Model); channel != nil && setupErr != nil {
+			abortWithOpenAiMessage(c, setupErr.StatusCode, setupErr.Error())
+			return
+		}
 		c.Next()
 		if channel != nil && c.Writer != nil && c.Writer.Status() < http.StatusBadRequest {
 			service.RecordChannelAffinity(c, channel.Id)
 		}
 	}
+}
+
+// Both the original and routed models must pass the ordinary access controls.
+func userControlModelAllowed(c *gin.Context, modelName string) bool {
+	if _, ok := usercontrol.FromContext(c); !ok {
+		return true
+	}
+	if effective, ok := usercontrol.FromContext(c); ok && !effective.Limits.AllowsModel(modelName) {
+		abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgUserControlModelForbidden, map[string]any{"Model": modelName}))
+		return false
+	}
+	if common.GetContextKeyBool(c, constant.ContextKeyTokenModelLimitEnabled) {
+		value, _ := common.GetContextKey(c, constant.ContextKeyTokenModelLimit)
+		allowed, _ := value.(map[string]bool)
+		if !TokenModelLimitAllows(allowed, modelName) {
+			abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorTokenModelForbidden, map[string]any{"Model": modelName}))
+			return false
+		}
+	}
+	return true
 }
 
 // noAvailableChannelMessage explains a 503 for a task-plugin-claimed model.

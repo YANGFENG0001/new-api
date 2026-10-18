@@ -25,6 +25,7 @@ import (
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/service/usercontrol"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 
 	"github.com/gin-gonic/gin"
@@ -91,6 +92,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 
 	defer func() {
 		if newAPIError != nil {
+			c.Set("user_control_runtime_failed", true)
 			service.RecordRequestPolicyTermination(c, newAPIError)
 			logger.LogError(c, common.LogText("relay error: %s", common.LocalLogPreview(newAPIError.Error())))
 			newAPIError.SetMessage(common.MessageWithRequestId(newAPIError.Error(), requestId))
@@ -119,6 +121,13 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		} else {
 			newAPIError = types.NewError(err, types.ErrorCodeInvalidRequest, types.ErrOptionWithStatusCode(http.StatusBadRequest), types.ErrOptionWithSkipRetry())
 		}
+		return
+	}
+
+	if handled, staticErr := usercontrol.WriteStaticResponse(c); staticErr != nil {
+		newAPIError = types.NewError(errors.New(usercontrol.ClientErrorMessage(c, staticErr)), types.ErrorCodeInvalidRequest, types.ErrOptionWithStatusCode(http.StatusBadRequest), types.ErrOptionWithSkipRetry())
+		return
+	} else if handled {
 		return
 	}
 
@@ -171,6 +180,10 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			break
 		}
 		service.AppendUsedChannel(c, channel.Id)
+		if err := usercontrol.AdmitChannel(c, relayInfo.OriginModelName, channel.Id); err != nil {
+			newAPIError = types.NewError(errors.New(usercontrol.ClientErrorMessage(c, err)), types.ErrorCodeInvalidRequest, types.ErrOptionWithStatusCode(http.StatusTooManyRequests), types.ErrOptionWithSkipRetry())
+			break
+		}
 		if billingErr := service.PrepareTieredBillingForSelectedGroup(c, relayInfo); billingErr != nil {
 			newAPIError = billingErr
 			break
@@ -201,6 +214,9 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 
 		if newAPIError == nil {
 			service.MarkRequestPolicySuccess(c, relayInfo.StreamStatus)
+			if !service.RequestPolicy(c).Successful {
+				c.Set("user_control_runtime_failed", true)
+			}
 			relayInfo.LastError = nil
 			return
 		}

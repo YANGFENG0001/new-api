@@ -5,15 +5,17 @@ package usercontrol
 import (
 	_ "time/tzdata"
 
-	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/QuantumNous/new-api/common"
 )
 
 const DefaultTimezone = "Asia/Shanghai"
 
 type Limits struct {
+	ScopedRules     []ScopedRule   `json:"scoped_rules,omitempty"`
 	Blocked         *bool          `json:"blocked,omitempty"`
 	AllowRelay      *bool          `json:"allow_relay,omitempty"`
 	AllowPlayground *bool          `json:"allow_playground,omitempty"`
@@ -87,7 +89,7 @@ func ParseLimits(raw string) (Limits, error) {
 	if strings.TrimSpace(raw) == "" {
 		return limits, nil
 	}
-	if err := json.Unmarshal([]byte(raw), &limits); err != nil {
+	if err := common.Unmarshal([]byte(raw), &limits); err != nil {
 		return Limits{}, err
 	}
 	return limits, nil
@@ -98,7 +100,7 @@ func ParseSchedule(raw string) (*Schedule, error) {
 		return nil, nil
 	}
 	var schedule Schedule
-	if err := json.Unmarshal([]byte(raw), &schedule); err != nil {
+	if err := common.Unmarshal([]byte(raw), &schedule); err != nil {
 		return nil, err
 	}
 	if schedule.Timezone == "" {
@@ -113,7 +115,7 @@ func ParseSchedule(raw string) (*Schedule, error) {
 func (l Limits) Empty() bool {
 	return l.Blocked == nil && l.AllowRelay == nil && l.AllowPlayground == nil &&
 		l.Rate == nil && l.Requests == nil && l.Usage == nil &&
-		l.Models == nil && l.Channels == nil && l.APIKeys == nil
+		l.Models == nil && l.Channels == nil && l.APIKeys == nil && len(l.ScopedRules) == 0
 }
 
 func boolPtr(v bool) *bool { return &v }
@@ -316,6 +318,7 @@ func mergeAPIKeys(base, extra *APIKeyLimits) *APIKeyLimits {
 // value; allow-lists intersect; block-lists union; booleans AND.
 func Merge(base, extra Limits) Limits {
 	out := base
+	out.ScopedRules = mergeScopedRules(base.ScopedRules, extra.ScopedRules)
 	if extra.Blocked != nil {
 		out.Blocked = boolPtr((base.Blocked != nil && *base.Blocked) || *extra.Blocked)
 	}

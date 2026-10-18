@@ -58,6 +58,7 @@ import { LimitsSummary } from '@/features/user-control/limits-summary'
 import { MembersDialog } from '@/features/user-control/members-dialog'
 import { OverrideDialog } from '@/features/user-control/override-dialog'
 import { PolicyEditorDialog } from '@/features/user-control/policy-editor'
+import { RuntimeAuditDetails } from '@/features/user-control/runtime-audit-details'
 import { Simulator } from '@/features/user-control/simulator'
 import type {
   AuditLogItem,
@@ -799,6 +800,7 @@ export function UserControlSection() {
                     <th className='p-2'>{t('Actor')}</th>
                     <th className='p-2'>{t('Action')}</th>
                     <th className='p-2'>{t('Result')}</th>
+                    <th className='p-2'>{t('Details')}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -820,12 +822,15 @@ export function UserControlSection() {
                       <td className='p-2'>
                         {item.success === false ? t('Failed') : t('Success')}
                       </td>
+                      <td className='max-w-md p-2'>
+                        <RuntimeAuditDetails item={item} />
+                      </td>
                     </tr>
                   ))}
                   {audit.length === 0 && (
                     <tr>
                       <td
-                        colSpan={4}
+                        colSpan={5}
                         className='text-muted-foreground p-4 text-center'
                       >
                         {t('No audit entries')}

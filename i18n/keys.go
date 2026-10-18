@@ -1,5 +1,14 @@
 package i18n
 
+const (
+	MsgUserControlActionInvalid            = "user_control.action_invalid"
+	MsgUserControlCounterUnavailable       = "user_control.counter_unavailable"
+	MsgUserControlScopedLimitReached       = "user_control.scoped_limit_reached"
+	MsgUserControlSimulationNeedsNonstream = "user_control.simulation_needs_nonstream"
+	MsgUserControlWebsocketUnavailable     = "user_control.websocket_unavailable"
+	MsgUserControlModelForbidden           = "user_control.model_forbidden"
+)
+
 // Message keys of i18n/locales/*.yaml, for text the backend translates itself:
 // errors returned to AI clients, emails and notifications. Web console messages
 // are not listed here; the web console translates them (see common.Message).
