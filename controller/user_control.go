@@ -259,7 +259,12 @@ func DeleteUserControlPolicy(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	if references > 0 {
+	poolReference, err := usercontrol.PoolReferences(id)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if references > 0 || poolReference {
 		userControlFail(c, http.StatusConflict, usercontrol.ErrPolicyInUse.Error())
 		return
 	}

@@ -32,7 +32,12 @@ import dayjs from '@/lib/dayjs'
 import { formatLogQuota, formatTimestampToDate } from '@/lib/format'
 
 import type { UsageLog } from '../data/schema'
-import { formatModelName, logTokenName, parseLogOther } from '../lib/format'
+import {
+  formatModelName,
+  logTokenName,
+  parseLogOther,
+  getClientOutputTps,
+} from '../lib/format'
 import {
   getLogTypeConfig,
   isDisplayableLogType,
@@ -195,11 +200,7 @@ export function CommonLogMobileCard<TData>(props: {
                   isStream={log.is_stream}
                   isTask={other?.is_task === true}
                   isSyncTask={other?.task_sync === true}
-                  tokensPerSecond={
-                    log.use_time > 0 && log.completion_tokens > 0
-                      ? log.completion_tokens / log.use_time
-                      : null
-                  }
+                  tokensPerSecond={getClientOutputTps(log, other)}
                   streamStatus={other?.stream_status}
                 />
               )}

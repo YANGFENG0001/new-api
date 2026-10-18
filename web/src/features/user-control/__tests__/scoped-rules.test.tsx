@@ -183,6 +183,32 @@ test('choosing a simulated error exposes real status and content and can be turn
   expect(screen.queryByLabelText('Replacement content')).not.toBeInTheDocument()
 })
 
+test('settlement audit shows actual usage and incomplete delivery separately from request success', () => {
+  render(
+    <RuntimeAuditDetails
+      item={{
+        action: 'user_control.runtime.delivery.settled',
+        other: {
+          audit_info: {
+            params: {
+              actual_model: 'real-model',
+              quota: '57',
+              prompt_tokens: '11',
+              completion_tokens: '100',
+              delivery_complete: 'false',
+            },
+          },
+        },
+      }}
+    />
+  )
+  expect(screen.getByText('real-model')).toBeVisible()
+  expect(screen.getByText('57')).toBeVisible()
+  expect(screen.getByText('11')).toBeVisible()
+  expect(screen.getByText('100')).toBeVisible()
+  expect(screen.getByText('No')).toBeVisible()
+})
+
 test('summaries show scoped filters and admin audit translates action names without raw request content', () => {
   render(
     <>

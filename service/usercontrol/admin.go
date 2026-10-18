@@ -119,12 +119,15 @@ func BuildPolicy(payload PolicyPayload, actorID int) (*model.UserControlPolicy, 
 	if err != nil {
 		return nil, err
 	}
-	_, limitsJSON, err := ParseLimitsJSON(payload.Limits)
+	limits, limitsJSON, err := ParseLimitsJSON(payload.Limits)
 	if err != nil {
 		return nil, err
 	}
-	_, scheduleJSON, err := ParseScheduleJSON(payload.Schedule)
+	schedule, scheduleJSON, err := ParseScheduleJSON(payload.Schedule)
 	if err != nil {
+		return nil, err
+	}
+	if err := ValidatePoolReferences(limits, schedule, 0); err != nil {
 		return nil, err
 	}
 	enabled := true
@@ -153,12 +156,15 @@ func ApplyPolicyPayload(policy *model.UserControlPolicy, payload PolicyPayload, 
 	if err != nil {
 		return err
 	}
-	_, limitsJSON, err := ParseLimitsJSON(payload.Limits)
+	limits, limitsJSON, err := ParseLimitsJSON(payload.Limits)
 	if err != nil {
 		return err
 	}
-	_, scheduleJSON, err := ParseScheduleJSON(payload.Schedule)
+	schedule, scheduleJSON, err := ParseScheduleJSON(payload.Schedule)
 	if err != nil {
+		return err
+	}
+	if err := ValidatePoolReferences(limits, schedule, policy.Id); err != nil {
 		return err
 	}
 	enabled := policy.Enabled
@@ -255,8 +261,11 @@ func BuildOverride(userID int, payload OverridePayload, actorID int) (*model.Use
 	if err != nil {
 		return nil, err
 	}
-	_, scheduleJSON, err := ParseScheduleJSON(payload.Schedule)
+	schedule, scheduleJSON, err := ParseScheduleJSON(payload.Schedule)
 	if err != nil {
+		return nil, err
+	}
+	if err := ValidatePoolReferences(limits, schedule, 0); err != nil {
 		return nil, err
 	}
 	if limits.Empty() && scheduleJSON == "" && payload.PolicyId == 0 {
@@ -335,10 +344,16 @@ func ExplainAt(userID, role int, at time.Time) (*EffectiveView, error) {
 		if err != nil {
 			return nil, err
 		}
-		active, hits, _, err := schedule.ActiveLimits(at, base)
+		active, hits, timezone, err := schedule.ActiveLimitsForUser(at, base, userID)
 		if err != nil {
 			return nil, err
 		}
+		loc, _ := time.LoadLocation(timezone)
+		active, poolHits, _, err := resolvePool(active, at, loc, userID, source.Policy.Id)
+		if err != nil {
+			return nil, err
+		}
+		hits = append(hits, poolHits...)
 		detail := SourceDetail{
 			Source:       source.Source,
 			SourceID:     source.SourceId,

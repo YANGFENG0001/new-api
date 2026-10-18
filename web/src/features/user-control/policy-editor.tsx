@@ -31,17 +31,22 @@ import { handleServerError } from '@/lib/handle-server-error'
 
 import { createPolicy, updatePolicy } from './api'
 import { LimitsEditor } from './limits-editor'
+import { PoolEditor } from './pool-editor'
 import { ScheduleEditor } from './schedule-editor'
 import type { Limits, PolicyView, Schedule } from './types'
 
 export function PolicyEditorDialog({
   open,
+  policies = [],
+  createPool = false,
   policy,
   defaultTimezone,
   onOpenChange,
   onSaved,
 }: {
   open: boolean
+  policies?: PolicyView[]
+  createPool?: boolean
   policy: PolicyView | null
   defaultTimezone: string
   onOpenChange: (open: boolean) => void
@@ -75,16 +80,24 @@ export function PolicyEditorDialog({
       setDescription('')
       setEnabled(true)
       setPriority(0)
-      setLimits({})
+      setLimits(
+        createPool
+          ? { random_pool: { policy_ids: [], hold_min: 5, hold_max: 15 } }
+          : {}
+      )
       setSchedule(null)
       setUseDefault(false)
       setDefaultLimits({})
     }
-  }, [open, policy])
+  }, [open, policy, createPool])
 
   const handleSave = async () => {
     if (!name.trim()) {
       toast.error(t('Policy name is required'))
+      return
+    }
+    if (limits.random_pool && limits.random_pool.policy_ids.length === 0) {
+      toast.error(t('Select at least one policy for the pool'))
       return
     }
     setSaving(true)
@@ -204,6 +217,14 @@ export function PolicyEditorDialog({
           </label>
         </div>
 
+        {limits.random_pool && (
+          <PoolEditor
+            value={limits.random_pool}
+            policies={policies}
+            selfID={policy?.policy.id}
+            onChange={(random_pool) => setLimits({ ...limits, random_pool })}
+          />
+        )}
         <section className='space-y-2 rounded-lg border p-3'>
           <h3 className='text-sm font-semibold'>{t('Base limits')}</h3>
           <LimitsEditor value={limits} onChange={setLimits} />

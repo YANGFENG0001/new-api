@@ -450,6 +450,7 @@ export function UserControlSection() {
       <Tabs value={activeTab} onValueChange={setActiveTab}>
         <TabsList className='flex-wrap'>
           <TabsTrigger value='policies'>{t('Policies')}</TabsTrigger>
+          <TabsTrigger value='pools'>{t('Strategy pools')}</TabsTrigger>
           <TabsTrigger value='lists'>{t('Lists')}</TabsTrigger>
           <TabsTrigger value='overrides'>{t('User overrides')}</TabsTrigger>
           <TabsTrigger value='plans'>{t('Subscription plans')}</TabsTrigger>
@@ -459,7 +460,10 @@ export function UserControlSection() {
           )}
         </TabsList>
 
-        <TabsContent value='policies' className='space-y-3'>
+        <TabsContent
+          value={activeTab === 'pools' ? 'pools' : 'policies'}
+          className='space-y-3'
+        >
           <div className='flex justify-end'>
             {capabilities.policy_write && (
               <Button
@@ -470,67 +474,74 @@ export function UserControlSection() {
                 }}
               >
                 <Plus className='size-4' />
-                {t('New policy')}
+                {activeTab === 'pools'
+                  ? t('New strategy pool')
+                  : t('New policy')}
               </Button>
             )}
           </div>
           <div className='grid gap-3 md:grid-cols-2'>
-            {policies.map((item) => (
-              <div
-                key={item.policy.id}
-                className='space-y-2 rounded-lg border p-3'
-              >
-                <div className='flex flex-wrap items-center gap-2'>
-                  <span className='font-medium'>{item.policy.name}</span>
-                  <Badge
-                    variant={item.policy.enabled ? 'secondary' : 'outline'}
-                  >
-                    {item.policy.enabled ? t('Enabled') : t('Disabled')}
-                  </Badge>
-                  <Badge variant='outline'>
-                    {t('Priority')} {item.policy.priority}
-                  </Badge>
-                  <div className='ml-auto flex gap-1'>
-                    {capabilities.policy_write && (
-                      <>
-                        <Button
-                          size='sm'
-                          variant='ghost'
-                          onClick={() => {
-                            setEditingPolicy(item)
-                            setPolicyDialogOpen(true)
-                          }}
-                        >
-                          {t('Edit')}
-                        </Button>
-                        <Button
-                          size='icon'
-                          variant='ghost'
-                          className='text-destructive size-8'
-                          onClick={() => void handleDeletePolicy(item)}
-                          aria-label={t('Delete')}
-                        >
-                          <Trash2 className='size-4' />
-                        </Button>
-                      </>
-                    )}
+            {policies
+              .filter(
+                (item) =>
+                  Boolean(item.limits.random_pool) === (activeTab === 'pools')
+              )
+              .map((item) => (
+                <div
+                  key={item.policy.id}
+                  className='space-y-2 rounded-lg border p-3'
+                >
+                  <div className='flex flex-wrap items-center gap-2'>
+                    <span className='font-medium'>{item.policy.name}</span>
+                    <Badge
+                      variant={item.policy.enabled ? 'secondary' : 'outline'}
+                    >
+                      {item.policy.enabled ? t('Enabled') : t('Disabled')}
+                    </Badge>
+                    <Badge variant='outline'>
+                      {t('Priority')} {item.policy.priority}
+                    </Badge>
+                    <div className='ml-auto flex gap-1'>
+                      {capabilities.policy_write && (
+                        <>
+                          <Button
+                            size='sm'
+                            variant='ghost'
+                            onClick={() => {
+                              setEditingPolicy(item)
+                              setPolicyDialogOpen(true)
+                            }}
+                          >
+                            {t('Edit')}
+                          </Button>
+                          <Button
+                            size='icon'
+                            variant='ghost'
+                            className='text-destructive size-8'
+                            onClick={() => void handleDeletePolicy(item)}
+                            aria-label={t('Delete')}
+                          >
+                            <Trash2 className='size-4' />
+                          </Button>
+                        </>
+                      )}
+                    </div>
                   </div>
-                </div>
-                {item.policy.description && (
-                  <p className='text-muted-foreground text-sm'>
-                    {item.policy.description}
+                  {item.policy.description && (
+                    <p className='text-muted-foreground text-sm'>
+                      {item.policy.description}
+                    </p>
+                  )}
+                  <p className='text-muted-foreground text-xs'>
+                    {t('Base limits')}:{' '}
+                    <LimitsSummary value={item.limits} compact />
                   </p>
-                )}
-                <p className='text-muted-foreground text-xs'>
-                  {t('Base limits')}:{' '}
-                  <LimitsSummary value={item.limits} compact />
-                </p>
-                <p className='text-muted-foreground text-xs'>
-                  {t('Time windows')}: {item.schedule?.rules?.length ?? 0} ·{' '}
-                  {item.schedule?.timezone ?? capabilities.default_timezone}
-                </p>
-              </div>
-            ))}
+                  <p className='text-muted-foreground text-xs'>
+                    {t('Time windows')}: {item.schedule?.rules?.length ?? 0} ·{' '}
+                    {item.schedule?.timezone ?? capabilities.default_timezone}
+                  </p>
+                </div>
+              ))}
             {policies.length === 0 && (
               <p className='text-muted-foreground text-sm'>
                 {t('No policies yet')}
@@ -907,6 +918,8 @@ export function UserControlSection() {
       <PolicyEditorDialog
         open={policyDialogOpen}
         policy={editingPolicy}
+        policies={policies}
+        createPool={activeTab === 'pools'}
         defaultTimezone={capabilities.default_timezone}
         onOpenChange={setPolicyDialogOpen}
         onSaved={() => void loadAll()}

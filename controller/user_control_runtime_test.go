@@ -20,6 +20,129 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestUserControlPoolPersistenceSelectionAndReferenceGuards(t *testing.T) {
+	_, identity, target := setupAdminUserTest(t)
+	connection, err := model.LOG_DB.DB()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = connection.Close(); usercontrol.Invalidate() })
+	require.NoError(t, model.DB.AutoMigrate(&model.UserControlPolicy{}, &model.UserControlList{}, &model.UserControlListMember{}, &model.UserControlUserOverride{}, &model.UserControlPlanBinding{}, &model.UserSubscription{}))
+	var ids []int
+	for _, rpm := range []int{3, 7} {
+		raw, err := common.Marshal(usercontrol.Limits{Rate: &usercontrol.RateLimits{RPM: rpm}})
+		require.NoError(t, err)
+		p, err := usercontrol.BuildPolicy(usercontrol.PolicyPayload{Name: fmt.Sprint("member-", rpm), Limits: raw}, identity.UserID)
+		require.NoError(t, err)
+		require.NoError(t, model.CreateUserControlPolicy(p))
+		ids = append(ids, p.Id)
+	}
+	raw, err := common.Marshal(usercontrol.Limits{RandomPool: &usercontrol.RandomPool{PolicyIDs: ids, HoldMin: 10, HoldMax: 10}, Requests: &usercontrol.RequestLimits{Daily: 9}})
+	require.NoError(t, err)
+	pool, err := usercontrol.BuildPolicy(usercontrol.PolicyPayload{Name: "reusable-pool", Limits: raw, Schedule: []byte(`{"timezone":"UTC","rules":[{"id":"random","start":"01:00","end":"02:00","limits":{},"random":{"enabled":true,"active_min":2,"active_max":5,"idle_min":1,"idle_max":3}}]}`)}, identity.UserID)
+	require.NoError(t, err)
+	require.NoError(t, model.CreateUserControlPolicy(pool))
+	require.NoError(t, model.UpsertUserControlOverride(&model.UserControlUserOverride{UserId: target.Id, PolicyId: pool.Id, Mode: "merge"}))
+	stored, err := model.GetUserControlPolicy(pool.Id)
+	require.NoError(t, err)
+	view, err := usercontrol.ParsePolicyView(stored)
+	require.NoError(t, err)
+	assert.NotEmpty(t, view.Limits.RandomPool.Seed)
+	assert.NotEmpty(t, view.Schedule.Rules[0].Random.Seed)
+	when := time.Date(2026, 10, 18, 12, 1, 0, 0, time.UTC)
+	first, err := usercontrol.ResolveAt(target.Id, target.Role, when)
+	require.NoError(t, err)
+	second, err := usercontrol.ResolveAt(target.Id, target.Role, when.Add(8*time.Minute))
+	require.NoError(t, err)
+	assert.Equal(t, first.PolicyIDs, second.PolicyIDs)
+	assert.Contains(t, []int{3, 7}, first.Rate().RPM)
+	assert.Equal(t, 9, first.Requests().Daily)
+	assert.NotEmpty(t, first.ScheduleHits)
+	explained, err := usercontrol.ExplainAt(target.Id, target.Role, when)
+	require.NoError(t, err)
+	require.Len(t, explained.Details, 1)
+	assert.Equal(t, first.Limits, explained.Details[0].Limits)
+	used, err := usercontrol.PoolReferences(ids[0])
+	require.NoError(t, err)
+	assert.True(t, used)
+	nested, err := common.Marshal(usercontrol.Limits{RandomPool: &usercontrol.RandomPool{PolicyIDs: []int{pool.Id}, HoldMin: 1, HoldMax: 2}})
+	require.NoError(t, err)
+	_, err = usercontrol.BuildPolicy(usercontrol.PolicyPayload{Name: "nested", Limits: nested}, identity.UserID)
+	require.Error(t, err)
+	member, err := model.GetUserControlPolicy(ids[0])
+	require.NoError(t, err)
+	err = usercontrol.ApplyPolicyPayload(member, usercontrol.PolicyPayload{Name: member.Name, Limits: raw}, identity.UserID)
+	require.Error(t, err)
+	// Disabled members are never chosen; an empty pool must not fail open.
+	for _, id := range ids {
+		p, err := model.GetUserControlPolicy(id)
+		require.NoError(t, err)
+		p.Enabled = false
+		require.NoError(t, model.UpdateUserControlPolicy(p))
+	}
+	_, err = usercontrol.ResolveAt(target.Id, target.Role, when)
+	require.ErrorIs(t, err, usercontrol.ErrPolicyRuntime)
+}
+
+func TestUserControlDeferredLogsKeepRealAccountingAndActualClientTiming(t *testing.T) {
+	_, _, target := setupAdminUserTest(t)
+	connection, err := model.LOG_DB.DB()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = connection.Close() })
+	require.NoError(t, model.LOG_DB.AutoMigrate(&model.Log{}))
+	previous := common.LogConsumeEnabled
+	common.LogConsumeEnabled = true
+	t.Cleanup(func() { common.LogConsumeEnabled = previous })
+	for _, complete := range []bool{true, false} {
+		c, _ := gin.CreateTestContext(httptest.NewRecorder())
+		c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+		c.Set("username", target.Username)
+		other := model.NewLogOther()
+		other.SetPublic("frt", 50)
+		model.BeginDeferredConsumeLogs(c)
+		model.RecordConsumeLog(c, target.Id, model.RecordConsumeLogParams{ChannelId: 7, ModelName: "real-model", PromptTokens: 11, CompletionTokens: 100, Quota: 57, UseTimeSeconds: 1, IsStream: true, Other: other})
+		var settlement model.AuditLog
+		require.NoError(t, model.LOG_DB.Where("action = ?", "user_control.runtime.delivery.settled").Order("id DESC").First(&settlement).Error)
+		require.NotNil(t, settlement.Other.AuditInfo)
+		assert.Equal(t, http.StatusAccepted, settlement.Status)
+		assert.Equal(t, "57", settlement.Other.AuditInfo.Params["quota"])
+		assert.Equal(t, "11", settlement.Other.AuditInfo.Params["prompt_tokens"])
+		assert.Equal(t, "100", settlement.Other.AuditInfo.Params["completion_tokens"])
+		assert.Equal(t, "false", settlement.Other.AuditInfo.Params["delivery_complete"])
+		_, visible, err := model.GetAuditLogs(model.AuditLogFilter{SelfView: true, UserId: target.Id, ActionPrefix: "user_control.runtime."}, 0, 10, common.RoleRootUser)
+		require.NoError(t, err)
+		assert.Zero(t, visible)
+		var before int64
+		require.NoError(t, model.LOG_DB.Model(&model.Log{}).Count(&before).Error)
+		if complete {
+			assert.Zero(t, before)
+		} else {
+			assert.EqualValues(t, 1, before)
+		}
+		start := time.Date(2026, 10, 18, 0, 0, 0, 0, time.UTC)
+		model.FlushDeferredConsumeLogs(c, model.DeliveryTiming{UpstreamDuration: time.Second, Started: start, OutputStarted: start.Add(5 * time.Second), FirstByte: start.Add(5 * time.Second), Finished: start.Add(15 * time.Second), Complete: complete, DelayMS: 1000})
+		var log model.Log
+		require.NoError(t, model.LOG_DB.Order("id DESC").First(&log).Error)
+		assert.Equal(t, 57, log.Quota)
+		assert.Equal(t, 100, log.CompletionTokens)
+		assert.Equal(t, 11, log.PromptTokens)
+		assert.Equal(t, 15, log.UseTime)
+		var data map[string]any
+		require.NoError(t, common.Unmarshal([]byte(log.Other), &data))
+		assert.Equal(t, float64(5000), data["frt"])
+		admin := data["admin_info"].(map[string]any)
+		assert.Equal(t, float64(1), admin["upstream_use_time"])
+		assert.Equal(t, float64(50), admin["upstream_frt"])
+		assert.Equal(t, complete, admin["delivery_complete"])
+		assert.Equal(t, float64(100), admin["upstream_output_tps"])
+		assert.Equal(t, float64(1000), admin["upstream_duration_ms"])
+		if complete {
+			assert.Equal(t, float64(10), data["client_output_tps"])
+		} else {
+			assert.Nil(t, data["client_output_tps"])
+			assert.Contains(t, log.Other, "client_delivery_incomplete")
+		}
+	}
+}
+
 func TestUserControlDistributorRoutesBothStagesAndChecksFinalChannelLimit(t *testing.T) {
 	require.NoError(t, i18n.Init())
 	previousDB := model.DB

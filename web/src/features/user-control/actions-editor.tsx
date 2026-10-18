@@ -16,6 +16,7 @@ import {
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 
+import { TransportEditor } from './transport-editor'
 import type { ControlActions } from './types'
 
 export function ActionsEditor(props: {
@@ -55,6 +56,7 @@ export function ActionsEditor(props: {
   ]
   return (
     <FieldGroup className='gap-4'>
+      <TransportEditor value={value} onChange={set} />
       <Alert>
         <AlertDescription>
           {t(

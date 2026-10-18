@@ -30,6 +30,8 @@ type ScopedRule struct {
 }
 
 type Actions struct {
+	Delay           *DelayAction    `json:"delay,omitempty"`
+	Delivery        *DeliveryAction `json:"delivery,omitempty"`
 	RequestMode     string          `json:"request_mode,omitempty"`
 	RequestBody     string          `json:"request_body,omitempty"`
 	PromptPrefix    string          `json:"prompt_prefix,omitempty"`
@@ -109,7 +111,7 @@ func normalizeScopedRules(rules []ScopedRule) error {
 			}
 		}
 		l := &r.Limits
-		if len(l.ScopedRules) > 0 || l.Models != nil || l.Channels != nil || l.APIKeys != nil || l.AllowPlayground != nil || l.AllowRelay != nil {
+		if l.RandomPool != nil || len(l.ScopedRules) > 0 || l.Models != nil || l.Channels != nil || l.APIKeys != nil || l.AllowPlayground != nil || l.AllowRelay != nil {
 			return fmt.Errorf("%w: scoped rules support blocking, rate, requests and usage only", ErrInvalidInput)
 		}
 		if err := NormalizeLimits(l); err != nil {
@@ -128,6 +130,12 @@ func normalizeScopedRules(rules []ScopedRule) error {
 }
 
 func normalizeActions(a *Actions) error {
+	if d := a.Delay; d != nil && (d.MinMS < 0 || d.MaxMS < d.MinMS || d.MaxMS > 120000) {
+		return fmt.Errorf("%w: delay must be between 0 and 120000 ms", ErrInvalidInput)
+	}
+	if d := a.Delivery; d != nil && (d.MinCPS < 1 || d.MaxCPS < d.MinCPS || d.MaxCPS > 1000) {
+		return fmt.Errorf("%w: delivery rate must be between 1 and 1000 characters/s", ErrInvalidInput)
+	}
 	if a.RequestMode != "" && a.RequestMode != "merge" && a.RequestMode != "replace" {
 		return fmt.Errorf("%w: invalid request replacement mode", ErrInvalidInput)
 	}

@@ -79,6 +79,9 @@ func NormalizeLimits(limits *Limits) error {
 	if limits == nil {
 		return nil
 	}
+	if err := normalizeRandomPool(limits.RandomPool); err != nil {
+		return err
+	}
 	if err := normalizeScopedRules(limits.ScopedRules); err != nil {
 		return err
 	}
@@ -173,11 +176,22 @@ func NormalizeSchedule(schedule *Schedule) error {
 			return err
 		}
 	}
+	if len(schedule.Rules) > 128 {
+		return fmt.Errorf("%w: at most 128 time windows", ErrInvalidInput)
+	}
 	seenIDs := make(map[string]struct{}, len(schedule.Rules))
 	for index := range schedule.Rules {
 		rule := &schedule.Rules[index]
 		rule.ID = strings.TrimSpace(rule.ID)
 		rule.Name = strings.TrimSpace(rule.Name)
+		if r := rule.Random; r != nil {
+			if len(r.Seed) > 128 || (r.Enabled && (!validMinuteRange(r.ActiveMin, r.ActiveMax) || !validMinuteRange(r.IdleMin, r.IdleMax))) {
+				return fmt.Errorf("%w: invalid random time window", ErrInvalidInput)
+			}
+			if r.Seed == "" {
+				r.Seed = common.GetUUID()
+			}
+		}
 		if len(rule.Name) > 64 {
 			return fmt.Errorf("%w: schedule rule name is too long", ErrInvalidInput)
 		}

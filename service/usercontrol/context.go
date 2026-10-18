@@ -33,6 +33,11 @@ func SetContext(c *gin.Context, effective *Effective) {
 		return
 	}
 	c.Set(ContextKeyEffective, effective)
+	for _, hit := range effective.ScheduleHits {
+		if strings.HasPrefix(hit, "pool:") {
+			state(c).Rules = append(state(c).Rules, hit)
+		}
+	}
 }
 
 func FromContext(c *gin.Context) (*Effective, bool) {

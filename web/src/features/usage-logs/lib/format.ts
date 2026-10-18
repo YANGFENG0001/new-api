@@ -637,3 +637,21 @@ export function renderAuditContent(
   const params = { ...op.params }
   return t(template, params)
 }
+
+// Prefer measured client delivery timing; explicit null means incomplete delivery,
+// and must not fall back to the much faster upstream generation throughput.
+export function getClientOutputTps(
+  log: Pick<UsageLog, 'completion_tokens' | 'use_time'>,
+  other?: LogOtherData | null
+): number | null {
+  if (other?.client_output_tps !== undefined) {
+    const tps = other.client_output_tps
+    return typeof tps === 'number' && Number.isFinite(tps) && tps >= 0
+      ? tps
+      : null
+  }
+  if (log.use_time > 0 && log.completion_tokens > 0) {
+    return log.completion_tokens / log.use_time
+  }
+  return null
+}

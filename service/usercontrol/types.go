@@ -15,6 +15,7 @@ import (
 const DefaultTimezone = "Asia/Shanghai"
 
 type Limits struct {
+	RandomPool      *RandomPool    `json:"random_pool,omitempty"`
 	ScopedRules     []ScopedRule   `json:"scoped_rules,omitempty"`
 	Blocked         *bool          `json:"blocked,omitempty"`
 	AllowRelay      *bool          `json:"allow_relay,omitempty"`
@@ -71,17 +72,18 @@ type Schedule struct {
 }
 
 type ScheduleRule struct {
-	ID        string   `json:"id,omitempty"`
-	Name      string   `json:"name,omitempty"`
-	Enabled   *bool    `json:"enabled,omitempty"`
-	Priority  int      `json:"priority,omitempty"`
-	Days      []int    `json:"days,omitempty"`
-	Dates     []string `json:"dates,omitempty"`
-	StartDate string   `json:"start_date,omitempty"`
-	EndDate   string   `json:"end_date,omitempty"`
-	Start     string   `json:"start,omitempty"`
-	End       string   `json:"end,omitempty"`
-	Limits    Limits   `json:"limits"`
+	Random    *RandomWindow `json:"random,omitempty"`
+	ID        string        `json:"id,omitempty"`
+	Name      string        `json:"name,omitempty"`
+	Enabled   *bool         `json:"enabled,omitempty"`
+	Priority  int           `json:"priority,omitempty"`
+	Days      []int         `json:"days,omitempty"`
+	Dates     []string      `json:"dates,omitempty"`
+	StartDate string        `json:"start_date,omitempty"`
+	EndDate   string        `json:"end_date,omitempty"`
+	Start     string        `json:"start,omitempty"`
+	End       string        `json:"end,omitempty"`
+	Limits    Limits        `json:"limits"`
 }
 
 func ParseLimits(raw string) (Limits, error) {
@@ -115,7 +117,7 @@ func ParseSchedule(raw string) (*Schedule, error) {
 func (l Limits) Empty() bool {
 	return l.Blocked == nil && l.AllowRelay == nil && l.AllowPlayground == nil &&
 		l.Rate == nil && l.Requests == nil && l.Usage == nil &&
-		l.Models == nil && l.Channels == nil && l.APIKeys == nil && len(l.ScopedRules) == 0
+		l.Models == nil && l.Channels == nil && l.APIKeys == nil && len(l.ScopedRules) == 0 && l.RandomPool == nil
 }
 
 func boolPtr(v bool) *bool { return &v }
@@ -318,6 +320,9 @@ func mergeAPIKeys(base, extra *APIKeyLimits) *APIKeyLimits {
 // value; allow-lists intersect; block-lists union; booleans AND.
 func Merge(base, extra Limits) Limits {
 	out := base
+	if extra.RandomPool != nil {
+		out.RandomPool = extra.RandomPool
+	}
 	out.ScopedRules = mergeScopedRules(base.ScopedRules, extra.ScopedRules)
 	if extra.Blocked != nil {
 		out.Blocked = boolPtr((base.Blocked != nil && *base.Blocked) || *extra.Blocked)
@@ -334,6 +339,22 @@ func Merge(base, extra Limits) Limits {
 	out.Models = mergeModels(base.Models, extra.Models)
 	out.Channels = mergeChannels(base.Channels, extra.Channels)
 	out.APIKeys = mergeAPIKeys(base.APIKeys, extra.APIKeys)
+	// An empty intersection of two actual allow-lists means deny all, not
+	// "unlimited". This matters especially when merging a pool baseline/member.
+	if base.Models != nil && extra.Models != nil && len(base.Models.Allow) > 0 && len(extra.Models.Allow) > 0 && len(out.Models.Allow) == 0 {
+		out.Blocked = boolPtr(true)
+	}
+	if base.Channels != nil && extra.Channels != nil {
+		for _, sizes := range [][3]int{
+			{len(base.Channels.AllowIDs), len(extra.Channels.AllowIDs), len(out.Channels.AllowIDs)},
+			{len(base.Channels.AllowTypes), len(extra.Channels.AllowTypes), len(out.Channels.AllowTypes)},
+			{len(base.Channels.AllowGroups), len(extra.Channels.AllowGroups), len(out.Channels.AllowGroups)},
+		} {
+			if sizes[0] > 0 && sizes[1] > 0 && sizes[2] == 0 {
+				out.Blocked = boolPtr(true)
+			}
+		}
+	}
 	return out
 }
 
@@ -360,6 +381,10 @@ func parseClock(value string) (int, error) {
 // 22:00-06:00 is active on Saturday 02:00 and still counts as Friday for the
 // weekday, date, and date-range filters.
 func (s *Schedule) ActiveLimits(now time.Time, base Limits) (Limits, []string, string, error) {
+	return s.ActiveLimitsForUser(now, base, 0)
+}
+
+func (s *Schedule) ActiveLimitsForUser(now time.Time, base Limits, userID int) (Limits, []string, string, error) {
 	if s == nil {
 		return base, nil, DefaultTimezone, nil
 	}
@@ -425,6 +450,15 @@ func (s *Schedule) ActiveLimits(now time.Time, base Limits) (Limits, []string, s
 		}
 		if rule.EndDate != "" && dateKey > rule.EndDate {
 			continue
+		}
+		if rule.Random != nil && rule.Random.Enabled {
+			windowStart := time.Date(anchor.Year(), anchor.Month(), anchor.Day(), start/60, start%60, 0, 0, loc)
+			if start == end {
+				windowStart = time.Date(anchor.Year(), anchor.Month(), anchor.Day(), 0, 0, 0, 0, loc)
+			}
+			if !rule.Random.Active(now, windowStart, userID, rule.ID) {
+				continue
+			}
 		}
 		matched = append(matched, matchedRule{rule: rule, priority: rule.Priority})
 		if rule.Priority > maxPriority || len(matched) == 1 {

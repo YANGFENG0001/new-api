@@ -46,6 +46,10 @@ export function LimitsSummary(props: { value?: Limits; compact?: boolean }) {
     max_active: t('Max active keys'),
     max_total: t('Max total keys'),
     scoped_rules: t('Model and channel rules'),
+    random_pool: t('Strategy pool'),
+    policy_ids: t('Policies'),
+    hold_min: t('Minimum policy holding duration (minutes)'),
+    hold_max: t('Maximum policy holding duration (minutes)'),
   }
   const entries = Object.entries(props.value ?? {}).filter(
     ([, value]) => value !== undefined
@@ -62,7 +66,7 @@ export function LimitsSummary(props: { value?: Limits; compact?: boolean }) {
     if (key === 'scoped_rules') continue
     if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
       for (const [field, fieldValue] of Object.entries(value)) {
-        if (fieldValue !== undefined) {
+        if (fieldValue !== undefined && field !== 'seed') {
           rows.push({
             label: `${labels[key] ?? t(key)} · ${labels[field] ?? t(field)}`,
             value: fieldValue,
@@ -115,6 +119,8 @@ export function LimitsSummary(props: { value?: Limits; compact?: boolean }) {
             <p className='text-xs'>
               {t('Request and response actions')}:{' '}
               {[
+                rule.actions.delay && t('Random upstream delay'),
+                rule.actions.delivery && t('Buffered character delivery'),
                 rule.actions.route_model &&
                   `${t('Route to model')}: ${rule.actions.route_model}`,
                 rule.actions.reasoning_effort &&

@@ -1,14 +1,20 @@
 package usercontrol
 
 import (
+	"context"
+	"errors"
 	"fmt"
+	"github.com/tidwall/gjson"
+	"io"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/i18n"
 	"github.com/alicebob/miniredis/v2"
 	"github.com/gin-gonic/gin"
 	"github.com/go-redis/redis/v8"
@@ -16,6 +22,204 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestUserControlDisjointPoolBaselineAllowlistsNeverBecomeUnlimited(t *testing.T) {
+	modelLimits := Merge(Limits{Models: &ModelLimits{Allow: []string{"a"}}}, Limits{Models: &ModelLimits{Allow: []string{"b"}}})
+	require.NotNil(t, modelLimits.Blocked)
+	assert.True(t, *modelLimits.Blocked)
+	channelLimits := Merge(Limits{Channels: &ChannelLimits{AllowIDs: []int{1}}}, Limits{Channels: &ChannelLimits{AllowIDs: []int{2}}})
+	require.NotNil(t, channelLimits.Blocked)
+	assert.True(t, *channelLimits.Blocked)
+	ordinary := Merge(Limits{}, Limits{Models: &ModelLimits{Allow: []string{"a"}}})
+	assert.True(t, ordinary.AllowsModel("a"))
+	assert.False(t, ordinary.AllowsModel("b"))
+	assert.Nil(t, ordinary.Blocked)
+}
+
+func TestUserControlDeliveryMiddlewareCapturesAndRejectsNonstreamFallback(t *testing.T) {
+	require.NoError(t, i18n.Init())
+	for _, tc := range []struct {
+		name, body, kind, response string
+		status, want               int
+		called                     bool
+	}{
+		{"stream", `{"stream":true}`, "text/event-stream", "data: [DONE]\n\n", 200, 200, true},
+		{"explicit text", `{"stream":true,"modalities":["text"],"audio":null}`, "text/event-stream", "data: [DONE]\n\n", 200, 200, true},
+		{"audio", `{"stream":true,"modalities":["audio"]}`, "text/event-stream", "data: [DONE]\n\n", 200, 400, false},
+		{"nonstream fallback", `{"stream":true}`, "application/json", `{"text":"unpaced"}`, 200, 502, true},
+		{"invalid stream", `{"stream":true}`, "text/event-stream", "data: {}\n\n", 200, 502, true},
+		{"upstream error", `{"stream":true}`, "application/json", `{"error":"upstream unavailable"}`, 503, 503, true},
+		{"request without stream", `{"stream":false}`, "text/event-stream", "data: [DONE]\n\n", 200, 400, false},
+		{"multiple choices", `{"stream":true,"n":2}`, "text/event-stream", "data: [DONE]\n\n", 200, 400, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			router := gin.New()
+			router.Use(func(c *gin.Context) { state(c).Delivery = &DeliveryAction{MinCPS: 10, MaxCPS: 20}; Deliver(c) })
+			called := false
+			router.POST("/v1/chat/completions", func(c *gin.Context) {
+				called = true
+				c.Header("Content-Type", tc.kind)
+				c.Status(tc.status)
+				_, err := c.Writer.WriteString(tc.response)
+				require.NoError(t, err)
+				c.Writer.Flush()
+				assert.Empty(t, recorder.Body.String(), "no response may escape until upstream finishes")
+			})
+			router.ServeHTTP(recorder, httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(tc.body)))
+			assert.Equal(t, tc.called, called)
+			assert.Equal(t, tc.want, recorder.Code, recorder.Body.String())
+			if tc.want < 400 {
+				assert.Equal(t, tc.response, recorder.Body.String())
+			}
+		})
+	}
+}
+
+func TestUserControlDeliveryLeaseRenewalKeepsRedisConcurrentSlotUntilRelease(t *testing.T) {
+	server := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
+	previousClient, previousEnabled := common.RDB, common.RedisEnabled
+	common.RDB, common.RedisEnabled = client, true
+	t.Cleanup(func() { common.RDB, common.RedisEnabled = previousClient, previousEnabled; _ = client.Close() })
+	release, allowed, err := AcquireConcurrent("delivery-lease", 1)
+	require.NoError(t, err)
+	require.True(t, allowed)
+	server.FastForward(9 * time.Minute)
+	require.NoError(t, renewConcurrencyLeases([]string{"delivery-lease"}))
+	server.FastForward(2 * time.Minute)
+	_, allowed, err = AcquireConcurrent("delivery-lease", 1)
+	require.NoError(t, err)
+	assert.False(t, allowed)
+	release()
+	next, allowed, err := AcquireConcurrent("delivery-lease", 1)
+	require.NoError(t, err)
+	assert.True(t, allowed)
+	next()
+}
+
+func TestUserControlRandomWindowContinuousAndOvernightAnchor(t *testing.T) {
+	r := &RandomWindow{Enabled: true, ActiveMin: 3, ActiveMax: 3, IdleMin: 2, IdleMax: 2, Seed: "stable"}
+	s := &Schedule{Timezone: "UTC", Rules: []ScheduleRule{{ID: "night", Days: []int{5}, Start: "23:58", End: "01:00", Random: r, Limits: Limits{Rate: &RateLimits{RPM: 1}}}}}
+	base := Limits{Rate: &RateLimits{RPM: 10}}
+	for _, tc := range []struct{ hour, minute, rpm int }{{23, 58, 10}, {23, 59, 10}, {0, 0, 1}, {0, 1, 1}, {0, 2, 1}, {0, 3, 10}} {
+		day := 23
+		if tc.hour == 0 {
+			day = 24
+		}
+		when := time.Date(2026, 10, day, tc.hour, tc.minute, 30, 0, time.UTC)
+		got, _, _, err := s.ActiveLimitsForUser(when, base, 73)
+		require.NoError(t, err)
+		assert.Equal(t, tc.rpm, got.Rate.RPM)
+		copy := *s
+		again, _, _, err := copy.ActiveLimitsForUser(when.Add(10*time.Second), base, 73)
+		require.NoError(t, err)
+		assert.Equal(t, got, again)
+	}
+	r.Enabled = false
+	got, _, _, err := s.ActiveLimitsForUser(time.Date(2026, 10, 23, 23, 58, 0, 0, time.UTC), base, 73)
+	require.NoError(t, err)
+	assert.Equal(t, 1, got.Rate.RPM)
+}
+
+func TestUserControlTransportAndRandomValidation(t *testing.T) {
+	for _, raw := range []string{
+		`{"scoped_rules":[{"id":"x","limits":{},"actions":{"delay":{"min_ms":10,"max_ms":9}}}]}`,
+		`{"scoped_rules":[{"id":"x","limits":{},"actions":{"delivery":{"min_cps":0,"max_cps":9}}}]}`,
+		`{"random_pool":{"policy_ids":[],"hold_min":1,"hold_max":2}}`,
+		`{"random_pool":{"policy_ids":[1],"hold_min":1441,"hold_max":1441}}`,
+	} {
+		_, _, err := ParseLimitsJSON([]byte(raw))
+		require.Error(t, err, raw)
+	}
+	_, _, err := ParseScheduleJSON([]byte(`{"rules":[{"limits":{},"random":{"enabled":true,"active_min":0,"active_max":2,"idle_min":1,"idle_max":1}}]}`))
+	require.Error(t, err)
+	s, _, err := ParseScheduleJSON([]byte(`{"rules":[{"limits":{},"random":{"enabled":true,"active_min":1,"active_max":2,"idle_min":1,"idle_max":2}}]}`))
+	require.NoError(t, err)
+	assert.NotEmpty(t, s.Rules[0].Random.Seed)
+}
+
+func TestUserControlReplaySplitsUnicodeAndPreservesToolCallsUsageAndOpaqueContent(t *testing.T) {
+	input := "data: " + `{"choices":[{"delta":{"content":"中🙂","tool_calls":[{"index":0,"id":"call1"}]},"finish_reason":"stop"}],"usage":{"completion_tokens":2},"encrypted_content":"opaque"}` + "\n\ndata: [DONE]\n\n"
+	var packets []string
+	var waits []time.Duration
+	err := replaySSE(context.Background(), strings.NewReader(input), func(p []byte) error { packets = append(packets, string(p)); return nil }, &DeliveryAction{MinCPS: 20, MaxCPS: 20}, func(_ context.Context, d time.Duration) error { waits = append(waits, d); return nil })
+	require.NoError(t, err)
+	require.Len(t, packets, 3)
+	assert.Equal(t, []time.Duration{50 * time.Millisecond, 50 * time.Millisecond}, waits)
+	first := strings.TrimSpace(strings.TrimPrefix(packets[0], "data: "))
+	last := strings.TrimSpace(strings.TrimPrefix(packets[1], "data: "))
+	assert.Equal(t, "中", gjson.Get(first, "choices.0.delta.content").String())
+	assert.Equal(t, "🙂", gjson.Get(last, "choices.0.delta.content").String())
+	assert.True(t, gjson.Get(first, "choices.0.delta.tool_calls").Exists())
+	assert.False(t, gjson.Get(last, "choices.0.delta.tool_calls").Exists())
+	assert.False(t, gjson.Get(first, "usage").Exists())
+	assert.Equal(t, "stop", gjson.Get(last, "choices.0.finish_reason").String())
+	assert.Equal(t, "opaque", gjson.Get(last, "encrypted_content").String())
+}
+
+func TestUserControlReplayResponsesSequenceAndClaudeThinking(t *testing.T) {
+	for _, input := range []string{
+		"event: response.output_text.delta\nid: a\ndata: {\"type\":\"response.output_text.delta\",\"sequence_number\":7,\"delta\":\"ab\"}\n\ndata: {\"type\":\"response.completed\",\"sequence_number\":8}\n\n",
+		"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"ab\"}}\n\ndata: {\"type\":\"message_stop\"}\n\n",
+	} {
+		var packets []string
+		err := replaySSE(context.Background(), strings.NewReader(input), func(p []byte) error { packets = append(packets, string(p)); return nil }, &DeliveryAction{MinCPS: 5, MaxCPS: 10}, func(_ context.Context, d time.Duration) error {
+			assert.GreaterOrEqual(t, d, 100*time.Millisecond)
+			assert.LessOrEqual(t, d, 200*time.Millisecond)
+			return nil
+		})
+		require.NoError(t, err)
+		require.Len(t, packets, 3)
+		if strings.Contains(input, "sequence_number") {
+			for i, p := range packets {
+				assert.Contains(t, p, fmt.Sprintf(`"sequence_number":%d`, i))
+			}
+			assert.Contains(t, packets[0], "id: a")
+		}
+	}
+}
+
+func TestUserControlReplayFailsClosedOnInvalidMissingTerminalAndCancellation(t *testing.T) {
+	require.Error(t, replaySSE(context.Background(), strings.NewReader("data: "+strings.Repeat("x", maxDeliveryEventBytes)+"\n\n"), nil, nil, nil))
+	for _, input := range []string{
+		"data: not-json\n\n", "data: {}\n\n", "data: [DONE]\n",
+		"data: {\"choices\":[{},{}]}\n\ndata: [DONE]\n\n",
+		"data: {\"error\":{\"message\":\"failed\"}}\n\ndata: [DONE]\n\n",
+	} {
+		require.Error(t, replaySSE(context.Background(), strings.NewReader(input), nil, nil, nil), input)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	require.ErrorIs(t, waitDelivery(ctx, time.Hour), context.Canceled)
+	emitErr := errors.New("client disconnected")
+	require.ErrorIs(t, replaySSE(context.Background(), strings.NewReader("data: [DONE]\n\n"), func([]byte) error { return emitErr }, nil, nil), emitErr)
+}
+
+func TestUserControlDeliveryWriterNeverLeaksBeforeReplayAndCapsCache(t *testing.T) {
+	file, err := os.CreateTemp(t.TempDir(), "cache")
+	require.NoError(t, err)
+	defer file.Close()
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	cancelled := false
+	w := &deliveryWriter{ResponseWriter: c.Writer, file: file, header: c.Writer.Header().Clone(), status: 200, size: -1, cancel: func() { cancelled = true }}
+	w.WriteHeader(201)
+	_, err = w.WriteString("data: [DONE]\n\n")
+	require.NoError(t, err)
+	w.Flush()
+	assert.Equal(t, 201, w.Status())
+	assert.True(t, w.Written())
+	assert.Empty(t, recorder.Body.String())
+	_, err = w.Write(make([]byte, maxDeliveryBytes))
+	require.Error(t, err)
+	assert.True(t, cancelled)
+	_, err = file.Seek(0, io.SeekStart)
+	require.NoError(t, err)
+	stored, err := io.ReadAll(file)
+	require.NoError(t, err)
+	assert.Equal(t, "data: [DONE]\n\n", string(stored))
+}
 
 func TestScopedRedisConcurrencyIsAtomicAndUsageDoesNotFailOpen(t *testing.T) {
 	server := miniredis.RunT(t)

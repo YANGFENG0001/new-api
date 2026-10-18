@@ -61,6 +61,7 @@ import {
   getTieredBillingSummary,
   hasAnyCacheTokens,
   parseLogOther,
+  getClientOutputTps,
   isViolationFeeLog,
   logTokenName,
   renderAuditContent,
@@ -697,12 +698,8 @@ export function useCommonLogsColumns(
           const log = row.original
           if (!isTimingLogType(log.type)) return null
 
-          const useTime = row.getValue('use_time') as number
           const other = parseLogOther(log.other)
-          const tokensPerSecond =
-            useTime > 0 && log.completion_tokens > 0
-              ? log.completion_tokens / useTime
-              : null
+          const tokensPerSecond = getClientOutputTps(log, other)
 
           return (
             <StreamTpsCell

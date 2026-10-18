@@ -53,7 +53,24 @@ export interface APIKeyLimits {
   max_total?: number
 }
 
+export interface RandomPool {
+  policy_ids: number[]
+  hold_min: number
+  hold_max: number
+  seed?: string
+}
+
+export interface RandomWindow {
+  enabled: boolean
+  active_min: number
+  active_max: number
+  idle_min: number
+  idle_max: number
+  seed?: string
+}
+
 export interface Limits {
+  random_pool?: RandomPool
   scoped_rules?: ScopedRule[]
   blocked?: boolean
   allow_relay?: boolean
@@ -78,6 +95,8 @@ export interface ScopedRule {
 }
 
 export interface ControlActions {
+  delay?: { min_ms: number; max_ms: number }
+  delivery?: { min_cps: number; max_cps: number }
   request_mode?: 'merge' | 'replace'
   request_body?: string
   prompt_prefix?: string
@@ -93,6 +112,7 @@ export interface ControlActions {
 }
 
 export interface ScheduleRule {
+  random?: RandomWindow
   id?: string
   name?: string
   enabled?: boolean

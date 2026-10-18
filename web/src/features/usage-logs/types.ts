@@ -115,6 +115,7 @@ export interface ToolSurchargeItem {
 }
 
 export interface LogOtherData {
+  client_output_tps?: number | null
   admin_info?: {
     request_policy?: PolicyEvent[]
     is_multi_key?: boolean

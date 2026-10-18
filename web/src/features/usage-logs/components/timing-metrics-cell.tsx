@@ -207,7 +207,12 @@ export function StreamTpsCell(props: StreamTpsCellProps) {
                   <p>
                     {t('Stream Status')}: {t('Error')}
                   </p>
-                  <p>{props.streamStatus?.end_reason || 'unknown'}</p>
+                  <p>
+                    {props.streamStatus?.end_reason ===
+                    'client_delivery_incomplete'
+                      ? t('Client delivery incomplete')
+                      : props.streamStatus?.end_reason || t('Unknown')}
+                  </p>
                   {(props.streamStatus?.error_count ?? 0) > 0 && (
                     <p>
                       {t('Soft Errors')}: {props.streamStatus?.error_count}

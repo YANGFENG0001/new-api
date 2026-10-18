@@ -18,6 +18,8 @@ const OriginalModelKey = "user_control_original_model"
 const runtimeKey = "user_control_runtime"
 
 type requestState struct {
+	Delay        *DelayAction
+	Delivery     *DeliveryAction
 	Rules        []string
 	Actions      []string
 	Admitted     map[string]bool
@@ -73,7 +75,7 @@ func ApplyActions(c *gin.Context, clientModel string, channelID int) (bool, erro
 			continue
 		}
 		a := r.Actions
-		if a.RequestBody == "" && a.RouteModel == "" && a.ReasoningEffort == "" && a.PromptPrefix == "" && a.PromptSuffix == "" && a.Response == nil {
+		if a.RequestBody == "" && a.RouteModel == "" && a.ReasoningEffort == "" && a.PromptPrefix == "" && a.PromptSuffix == "" && a.Response == nil && a.Delay == nil && a.Delivery == nil {
 			continue
 		}
 		s.Rules = append(s.Rules, r.Namespace+":"+r.ID)
@@ -165,6 +167,14 @@ func ApplyActions(c *gin.Context, clientModel string, channelID int) (bool, erro
 		if a.Response != nil {
 			s.Response = a.Response
 			s.Actions = append(s.Actions, "response")
+		}
+		if a.Delay != nil {
+			s.Delay = a.Delay
+			s.Actions = append(s.Actions, "delay")
+		}
+		if a.Delivery != nil {
+			s.Delivery = a.Delivery
+			s.Actions = append(s.Actions, "delivery")
 		}
 	}
 	if !changed {
@@ -283,7 +293,7 @@ func appendPrompt(body map[string]common.RawMessage, path, prefix, suffix string
 // a scoped quota. An already admitted rule is counted once per client request.
 func AdmitChannel(c *gin.Context, actualModel string, channelID int) error {
 	e, ok := FromContext(c)
-	if !ok || len(e.Limits.ScopedRules) == 0 {
+	if !ok {
 		return nil
 	}
 	s := state(c)
@@ -335,6 +345,18 @@ func FinishRequest(c *gin.Context) {
 	params := map[string]string{
 		"original_model": c.GetString(OriginalModelKey), "actual_model": s.FinalModel,
 		"channel_id": fmt.Sprint(s.FinalChannel), "simulated": fmt.Sprint(s.Synthetic),
+	}
+	if s.Delay != nil {
+		params["delay_ms"] = fmt.Sprint(c.GetInt("user_control_delay_ms"))
+	}
+	if s.Delivery != nil {
+		params["delivery_complete"] = fmt.Sprint(c.GetBool("user_control_delivery_complete"))
+		params["delivery_duration_ms"] = fmt.Sprint(c.GetInt64("user_control_delivery_duration_ms"))
+		params["upstream_duration_ms"] = fmt.Sprint(c.GetInt64("user_control_upstream_duration_ms"))
+		params["upstream_output_tps"] = fmt.Sprint(c.GetFloat64("user_control_upstream_output_tps"))
+		if c.GetBool("user_control_delivery_complete") {
+			params["client_output_tps"] = fmt.Sprint(c.GetFloat64("user_control_client_output_tps"))
+		}
 	}
 	uniqueRules := unionStrings(nil, s.Rules)
 	if len(uniqueRules) > 128 {

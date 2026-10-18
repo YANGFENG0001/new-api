@@ -1,6 +1,7 @@
 package usercontrol
 
 import (
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -8,6 +9,8 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 )
+
+var ErrPolicyRuntime = errors.New("user control policy unavailable")
 
 const cacheTTL = 15 * time.Second
 
@@ -108,10 +111,20 @@ func resolveAt(userID int, role int, now time.Time) (*Effective, error) {
 				}
 			}
 		}
-		active, hits, timezone, err := schedule.ActiveLimits(now, limits)
+		active, hits, timezone, err := schedule.ActiveLimitsForUser(now, limits, userID)
 		if err != nil {
 			return nil, fmt.Errorf("policy %q schedule: %w", source.Policy.Name, err)
 		}
+		loc, _ := time.LoadLocation(timezone)
+		active, poolHits, selectedID, err := resolvePool(active, now, loc, userID, source.Policy.Id)
+		if err != nil {
+			return nil, fmt.Errorf("%w: %v", ErrPolicyRuntime, err)
+		}
+		if selectedID > 0 {
+			effective.PolicyIDs = append(effective.PolicyIDs, selectedID)
+			effective.HasScopedRules = true
+		}
+		hits = append(hits, poolHits...)
 		if timezone != "" {
 			effective.Timezone = timezone
 		}

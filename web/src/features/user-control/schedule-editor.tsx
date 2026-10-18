@@ -29,6 +29,7 @@ import { Switch } from '@/components/ui/switch'
 
 import { DelimitedInput } from './delimited-input'
 import { LimitsEditor } from './limits-editor'
+import { RandomWindowEditor } from './random-window-editor'
 import type { Schedule, ScheduleRule } from './types'
 
 const WEEKDAYS = [
@@ -103,6 +104,7 @@ export function ScheduleEditor({
       id: `rule-${Date.now().toString(36)}-${index}`,
       name: source.name ? t('{{name}} (copy)', { name: source.name }) : '',
       limits: structuredClone(source.limits),
+      random: source.random ? { ...source.random, seed: undefined } : undefined,
     }
     const next = [...rules]
     next.splice(index + 1, 0, copy)
@@ -262,6 +264,10 @@ export function ScheduleEditor({
               </div>
 
               <div className='space-y-4 p-3'>
+                <RandomWindowEditor
+                  value={rule.random}
+                  onChange={(random) => setRule(index, { random })}
+                />
                 <div className='space-y-2'>
                   <Label className='text-muted-foreground text-xs'>
                     {t('Weekdays')}

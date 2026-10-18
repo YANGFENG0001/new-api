@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -26,6 +27,10 @@ func UserControl() gin.HandlerFunc {
 		}
 		effective, err := usercontrol.Resolve(userID, role)
 		if err != nil {
+			if errors.Is(err, usercontrol.ErrPolicyRuntime) {
+				c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{"error": gin.H{"message": i18n.T(c, i18n.MsgUserControlActionInvalid), "type": "user_control_unavailable"}})
+				return
+			}
 			common.SysLog(common.LogText("user control resolve failed for user %d: %s", userID, err.Error()))
 			c.Next()
 			return

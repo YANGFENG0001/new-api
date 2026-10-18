@@ -2,6 +2,8 @@ package model
 
 import (
 	"context"
+	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -345,6 +347,24 @@ type RecordConsumeLogParams struct {
 }
 
 func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams) {
+	if value, ok := c.Get(deferredConsumeKey); ok && value != nil {
+		// Persist truthful upstream accounting facts before a potentially long
+		// delivery. A process restart must not leave only an in-memory billable
+		// record. This is an admin-only settlement event, not client success.
+		RecordAuditLog(c, AuditLog{
+			UserId: userId, ActorRole: c.GetInt("role"), Category: AuditCategoryOperation,
+			Action: "user_control.runtime.delivery.settled", Content: "Upstream usage settled; client delivery pending",
+			Status: http.StatusAccepted, Success: true, AuthMethod: "api_token",
+			Other: AuditOther{AuditInfo: &AuditRequestInfo{Status: http.StatusAccepted, Success: true, Params: map[string]string{
+				"actual_model": params.ModelName, "channel_id": strconv.Itoa(params.ChannelId),
+				"quota": strconv.Itoa(params.Quota), "prompt_tokens": strconv.Itoa(params.PromptTokens), "completion_tokens": strconv.Itoa(params.CompletionTokens),
+				"delivery_complete": "false",
+			}}},
+		})
+		queue := value.([]deferredConsumeLog)
+		c.Set(deferredConsumeKey, append(queue, deferredConsumeLog{userId, params}))
+		return
+	}
 	if !common.LogConsumeEnabled {
 		return
 	}
