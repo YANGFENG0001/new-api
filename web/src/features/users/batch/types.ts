@@ -79,6 +79,7 @@ export interface BatchPreview {
 export interface BatchJob {
   id: string
   action: BatchAction
+  batch_hash: string
   total: number
   succeeded: number
   failed: number

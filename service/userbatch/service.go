@@ -296,12 +296,16 @@ func PreviewBatch(actor Actor, req Request) (*Preview, error) {
 	}
 	byID := make(map[int]*model.User, len(users))
 	for i := range users {
+		if users[i].DeletedAt.Valid {
+			continue
+		}
 		byID[users[i].Id] = &users[i]
 	}
 	preview := &Preview{Action: req.Action, BatchHash: BatchHash(req), Items: make([]ItemPreview, 0, len(req.UserIDs))}
 	for _, id := range req.UserIDs {
 		user, ok := byID[id]
 		if !ok {
+			preview.Skipped++
 			preview.Items = append(preview.Items, ItemPreview{UserID: id, SkipReason: "user does not exist"})
 			continue
 		}
@@ -667,19 +671,22 @@ func RetryFailed(actor Actor, jobID string) (*ExecuteResult, error) {
 	if err := normalizeRequest(&req); err != nil {
 		return nil, err
 	}
-	items, err := model.ResetFailedUserBatchItems(jobID)
+	items, err := model.ListUserBatchJobItems(jobID)
 	if err != nil {
 		return nil, err
 	}
-	if len(items) == 0 {
-		return &ExecuteResult{Job: job, Items: items}, nil
-	}
-	indexes := make([]int, len(items))
+	indexes := make([]int, 0, len(items))
 	for i := range items {
+		if items[i].Status != "failed" {
+			continue
+		}
 		items[i].Status = "pending"
 		items[i].ErrorCode = ""
 		items[i].ErrorMessage = ""
-		indexes[i] = i
+		indexes = append(indexes, i)
+	}
+	if len(indexes) == 0 {
+		return &ExecuteResult{Job: job, Items: items}, nil
 	}
 	cancelledJobs.Delete(jobID)
 	job.Status = "running"

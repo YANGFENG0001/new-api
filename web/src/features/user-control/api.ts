@@ -95,9 +95,22 @@ export async function deleteControlList(id: number) {
   return res.data as Envelope<{ id: number }>
 }
 
-export async function listMembers(listId: number) {
-  const res = await api.get(`${base}/lists/${listId}/members`)
-  return res.data as Envelope<{ items: ListMember[] }>
+export interface SkippedMember {
+  user_id: number
+  reason: string
+}
+
+export async function listMembers(
+  listId: number,
+  params: { p?: number; page_size?: number } = {}
+) {
+  const res = await api.get(`${base}/lists/${listId}/members`, { params })
+  return res.data as Envelope<{
+    items: ListMember[]
+    total: number
+    page: number
+    page_size: number
+  }>
 }
 
 export async function addMembers(
@@ -113,6 +126,7 @@ export async function addMembers(
     list_id: number
     inserted: number
     requested: number
+    skipped: SkippedMember[]
   }>
 }
 
@@ -120,7 +134,11 @@ export async function removeMembers(listId: number, userIds: number[]) {
   const res = await api.delete(`${base}/lists/${listId}/members`, {
     data: { user_ids: userIds },
   })
-  return res.data as Envelope<{ list_id: number; removed: number }>
+  return res.data as Envelope<{
+    list_id: number
+    removed: number
+    skipped: SkippedMember[]
+  }>
 }
 
 export async function listOverrides() {

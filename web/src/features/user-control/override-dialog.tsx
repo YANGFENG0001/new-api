@@ -17,22 +17,22 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { Loader2 } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useId, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
+import { Dialog } from '@/components/dialog'
 import { Button } from '@/components/ui/button'
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { ScrollArea } from '@/components/ui/scroll-area'
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
 import { handleServerError } from '@/lib/handle-server-error'
 
@@ -66,6 +66,7 @@ export function OverrideDialog({
   onSaved: () => void
 }) {
   const { t } = useTranslation()
+  const formId = useId()
   const [policyId, setPolicyId] = useState(0)
   const [mode, setMode] = useState<'merge' | 'replace'>('merge')
   const [expiresAt, setExpiresAt] = useState('')
@@ -115,97 +116,147 @@ export function OverrideDialog({
   }
 
   return (
-    <Dialog open={userId !== null} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className='flex max-h-[92vh] flex-col sm:max-w-4xl'>
-        <DialogHeader>
-          <DialogTitle>
-            {t('User override')} #{userId}
-          </DialogTitle>
-          <DialogDescription>
-            {t(
-              'Override limits are merged with the user\u0027s policy. Replace mode bypasses inherited limits and requires the relax permission.'
-            )}
-          </DialogDescription>
-        </DialogHeader>
-
-        <ScrollArea className='min-h-0 flex-1 pr-3'>
-          <div className='space-y-4 pb-4'>
-            <div className='grid gap-3 md:grid-cols-2'>
-              <div className='space-y-1'>
-                <Label>{t('Policy template')}</Label>
-                <select
-                  className='h-9 w-full rounded-md border bg-transparent px-2 text-sm'
-                  value={policyId}
-                  onChange={(event) => setPolicyId(Number(event.target.value))}
-                >
-                  <option value={0}>{t('None (limits only)')}</option>
-                  {policies.map((item) => (
-                    <option key={item.policy.id} value={item.policy.id}>
-                      {item.policy.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className='space-y-1'>
-                <Label>{t('Mode')}</Label>
-                <select
-                  className='h-9 w-full rounded-md border bg-transparent px-2 text-sm'
-                  value={mode}
-                  onChange={(event) =>
-                    setMode(
-                      event.target.value === 'replace' ? 'replace' : 'merge'
-                    )
-                  }
-                >
-                  <option value='merge'>{t('Merge (tighten only)')}</option>
-                  <option value='replace' disabled={!canRelax}>
-                    {t('Replace (relax inherited limits)')}
-                  </option>
-                </select>
-              </div>
-              <div className='space-y-1'>
-                <Label>{t('Expires at (optional)')}</Label>
-                <Input
-                  type='datetime-local'
-                  value={expiresAt}
-                  onChange={(event) => setExpiresAt(event.target.value)}
-                />
-              </div>
-              <div className='space-y-1'>
-                <Label>{t('Reason')}</Label>
-                <Textarea
-                  rows={1}
-                  maxLength={255}
-                  value={reason}
-                  onChange={(event) => setReason(event.target.value)}
-                />
-              </div>
-            </div>
-
-            <section className='space-y-2 rounded-lg border p-3'>
-              <h3 className='text-sm font-semibold'>{t('Override limits')}</h3>
-              <LimitsEditor value={limits} onChange={setLimits} />
-            </section>
-
-            <section className='space-y-2 rounded-lg border p-3'>
-              <h3 className='text-sm font-semibold'>
-                {t('Override time windows')}
-              </h3>
-              <ScheduleEditor value={schedule} onChange={setSchedule} />
-            </section>
-          </div>
-        </ScrollArea>
-
-        <DialogFooter>
-          <Button variant='outline' onClick={onClose} disabled={saving}>
+    <Dialog
+      open={userId !== null}
+      onOpenChange={(open) => {
+        if (!open && !saving) onClose()
+      }}
+      title={t('User override #{{id}}', { id: userId })}
+      description={t(
+        'Override limits are merged with the user\u0027s policy. Replace mode bypasses inherited limits and requires the relax permission.'
+      )}
+      contentClassName='sm:max-w-4xl'
+      showCloseButton={false}
+      footer={
+        <>
+          <Button
+            type='button'
+            variant='outline'
+            onClick={onClose}
+            disabled={saving}
+          >
             {t('Cancel')}
           </Button>
-          <Button onClick={() => void handleSave()} disabled={saving}>
+          <Button type='submit' form={formId} disabled={saving}>
             {saving && <Loader2 className='size-4 animate-spin' />}
             {t('Save')}
           </Button>
-        </DialogFooter>
-      </DialogContent>
+        </>
+      }
+    >
+      <form
+        id={formId}
+        className='min-w-0 space-y-4'
+        inert={saving}
+        onSubmit={(event) => {
+          event.preventDefault()
+          void handleSave()
+        }}
+      >
+        <div className='grid min-w-0 gap-3 md:grid-cols-2'>
+          <div className='min-w-0 space-y-1'>
+            <Label htmlFor={`${formId}-policy`}>{t('Policy template')}</Label>
+            <Select
+              items={[
+                { value: '0', label: t('None (limits only)') },
+                ...policies.map((item) => ({
+                  value: String(item.policy.id),
+                  label: item.policy.name,
+                })),
+              ]}
+              value={String(policyId)}
+              onValueChange={(value) => setPolicyId(Number(value))}
+            >
+              <SelectTrigger id={`${formId}-policy`} className='w-full min-w-0'>
+                <SelectValue>
+                  {policies.find((item) => item.policy.id === policyId)?.policy
+                    .name ?? t('None (limits only)')}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                <SelectGroup>
+                  <SelectItem value='0'>{t('None (limits only)')}</SelectItem>
+                  {policies.map((item) => (
+                    <SelectItem
+                      key={item.policy.id}
+                      value={String(item.policy.id)}
+                    >
+                      {item.policy.name}
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className='min-w-0 space-y-1'>
+            <Label htmlFor={`${formId}-mode`}>{t('Mode')}</Label>
+            <Select
+              items={[
+                { value: 'merge', label: t('Merge (tighten only)') },
+                {
+                  value: 'replace',
+                  label: t('Replace (relax inherited limits)'),
+                },
+              ]}
+              value={mode}
+              onValueChange={(value) =>
+                setMode(value === 'replace' ? 'replace' : 'merge')
+              }
+            >
+              <SelectTrigger id={`${formId}-mode`} className='w-full min-w-0'>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectGroup>
+                  <SelectItem value='merge'>
+                    {t('Merge (tighten only)')}
+                  </SelectItem>
+                  <SelectItem value='replace' disabled={!canRelax}>
+                    {t('Replace (relax inherited limits)')}
+                  </SelectItem>
+                </SelectGroup>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className='min-w-0 space-y-1'>
+            <Label htmlFor={`${formId}-expiry`}>
+              {t('Expires at (optional)')}
+            </Label>
+            <Input
+              id={`${formId}-expiry`}
+              type='datetime-local'
+              value={expiresAt}
+              onChange={(event) => setExpiresAt(event.target.value)}
+            />
+          </div>
+          <div className='min-w-0 space-y-1'>
+            <Label htmlFor={`${formId}-reason`}>{t('Reason')}</Label>
+            <Textarea
+              id={`${formId}-reason`}
+              rows={1}
+              maxLength={255}
+              value={reason}
+              onChange={(event) => setReason(event.target.value)}
+            />
+          </div>
+        </div>
+
+        <section className='space-y-2 rounded-lg border p-3'>
+          <h3 className='text-sm font-semibold'>{t('Override limits')}</h3>
+          <LimitsEditor value={limits} onChange={setLimits} />
+        </section>
+
+        <section className='space-y-2 rounded-lg border p-3'>
+          <h3 className='text-sm font-semibold'>
+            {t('Override time windows')}
+          </h3>
+          <ScheduleEditor
+            value={schedule}
+            onChange={setSchedule}
+            defaultTimezone={defaultTimezone}
+          />
+        </section>
+      </form>
     </Dialog>
   )
 }

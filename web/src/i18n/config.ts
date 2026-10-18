@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import i18n from 'i18next'
+import i18n, { type PostProcessorModule } from 'i18next'
 import LanguageDetector from 'i18next-browser-languagedetector'
 import { initReactI18next } from 'react-i18next'
 
@@ -28,6 +28,7 @@ import ru from './locales/ru.json'
 import vi from './locales/vi.json'
 import zhTW from './locales/zh-TW.json'
 import zhCN from './locales/zh.json'
+import { translateUserManagementError } from './user-management-errors'
 
 export const resources = {
   en,
@@ -42,12 +43,25 @@ export const resources = {
 i18n
   .use(LanguageDetector)
   .use(initReactI18next)
+  .use({
+    type: 'postProcessor',
+    name: 'userManagementErrors',
+    process: (value, _keys, options) =>
+      translateUserManagementError(value, (template) =>
+        i18n.t(template, {
+          lng: options.lng,
+          lngs: options.lngs,
+          skipInterpolation: true,
+        })
+      ) ?? value,
+  } satisfies PostProcessorModule)
   .init({
     resources,
     fallbackLng: 'en',
     supportedLngs: ['en', 'zhCN', 'fr', 'ru', 'ja', 'vi', 'zhTW'],
     load: 'currentOnly',
     nsSeparator: false, // Allow literal colons in keys (e.g., URLs, labels)
+    postProcess: ['userManagementErrors'],
     debug: import.meta.env.DEV,
     interpolation: {
       escapeValue: false, // not needed for react as it escapes by default

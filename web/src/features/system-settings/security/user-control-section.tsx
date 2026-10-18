@@ -17,25 +17,20 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { Loader2, Plus, RefreshCw, Trash2, Users } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState, useId } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
+import { Dialog as FormDialog } from '@/components/dialog'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import {
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
   SelectTrigger,
   SelectValue,
@@ -57,30 +52,24 @@ import {
   listPlanBindings,
   listPolicies,
   putPlanBinding,
-  simulate,
   updateControlList,
 } from '@/features/user-control/api'
+import { LimitsSummary } from '@/features/user-control/limits-summary'
 import { MembersDialog } from '@/features/user-control/members-dialog'
 import { OverrideDialog } from '@/features/user-control/override-dialog'
 import { PolicyEditorDialog } from '@/features/user-control/policy-editor'
+import { Simulator } from '@/features/user-control/simulator'
 import type {
   AuditLogItem,
   Capabilities,
   ControlList,
-  EffectiveView,
   PlanBinding,
   PolicyView,
   UserOverride,
 } from '@/features/user-control/types'
+import { UserPicker } from '@/features/user-control/user-picker'
+import { toIntlLocale } from '@/i18n/languages'
 import { handleServerError } from '@/lib/handle-server-error'
-
-function summarize(limits: object | undefined): string {
-  if (!limits) return '-'
-  const keys = Object.keys(limits).filter(
-    (key) => (limits as Record<string, unknown>)[key] !== undefined
-  )
-  return keys.length > 0 ? keys.join(', ') : '-'
-}
 
 function ListFormDialog({
   open,
@@ -96,6 +85,7 @@ function ListFormDialog({
   onSaved: () => void
 }) {
   const { t } = useTranslation()
+  const formId = useId()
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
   const [policyId, setPolicyId] = useState(0)
@@ -140,39 +130,78 @@ function ListFormDialog({
   }
 
   return (
-    <Dialog open={open} onOpenChange={(value) => !value && onClose()}>
-      <DialogContent className='sm:max-w-lg'>
-        <DialogHeader>
-          <DialogTitle>
-            {list ? t('Edit control list') : t('New control list')}
-          </DialogTitle>
-        </DialogHeader>
-        <div className='space-y-3'>
-          <div className='space-y-1'>
-            <Label>{t('Name')}</Label>
-            <Input
-              value={name}
-              onChange={(event) => setName(event.target.value)}
-            />
-          </div>
-          <div className='space-y-1'>
-            <Label>{t('Description')}</Label>
-            <Textarea
-              rows={2}
-              value={description}
-              onChange={(event) => setDescription(event.target.value)}
-            />
-          </div>
-          <div className='space-y-1'>
-            <Label>{t('Policy template')}</Label>
-            <Select
-              value={String(policyId)}
-              onValueChange={(value) => setPolicyId(Number(value))}
-            >
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
+    <FormDialog
+      open={open}
+      onOpenChange={(value) => {
+        if (!value && !saving) onClose()
+      }}
+      title={list ? t('Edit control list') : t('New control list')}
+      contentClassName='sm:max-w-lg'
+      showCloseButton={false}
+      footer={
+        <>
+          <Button
+            type='button'
+            variant='outline'
+            onClick={onClose}
+            disabled={saving}
+          >
+            {t('Cancel')}
+          </Button>
+          <Button type='submit' form={formId} disabled={saving}>
+            {saving && <Loader2 className='size-4 animate-spin' />}
+            {t('Save')}
+          </Button>
+        </>
+      }
+    >
+      <form
+        id={formId}
+        className='min-w-0 space-y-3'
+        inert={saving}
+        onSubmit={(event) => {
+          event.preventDefault()
+          void handleSave()
+        }}
+      >
+        <div className='space-y-1'>
+          <Label htmlFor={`${formId}-name`}>{t('Name')}</Label>
+          <Input
+            id={`${formId}-name`}
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+          />
+        </div>
+        <div className='space-y-1'>
+          <Label htmlFor={`${formId}-description`}>{t('Description')}</Label>
+          <Textarea
+            id={`${formId}-description`}
+            rows={2}
+            value={description}
+            onChange={(event) => setDescription(event.target.value)}
+          />
+        </div>
+        <div className='space-y-1'>
+          <Label htmlFor={`${formId}-policy`}>{t('Policy template')}</Label>
+          <Select
+            items={[
+              { value: '0', label: t('None') },
+              ...policies.map((item) => ({
+                value: String(item.policy.id),
+                label: item.policy.name,
+              })),
+            ]}
+            value={String(policyId)}
+            onValueChange={(value) => setPolicyId(Number(value))}
+          >
+            <SelectTrigger id={`${formId}-policy`} className='w-full min-w-0'>
+              <SelectValue>
+                {policies.find((item) => item.policy.id === policyId)?.policy
+                  .name ?? t('None')}
+              </SelectValue>
+            </SelectTrigger>
+            <SelectContent>
+              <SelectGroup>
                 <SelectItem value='0'>{t('None')}</SelectItem>
                 {policies.map((item) => (
                   <SelectItem
@@ -182,30 +211,23 @@ function ListFormDialog({
                     {item.policy.name}
                   </SelectItem>
                 ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <label className='flex items-center gap-2 text-sm'>
-            <Switch checked={enabled} onCheckedChange={setEnabled} />
-            {t('Enabled')}
-          </label>
+              </SelectGroup>
+            </SelectContent>
+          </Select>
         </div>
-        <DialogFooter>
-          <Button variant='outline' onClick={onClose} disabled={saving}>
-            {t('Cancel')}
-          </Button>
-          <Button onClick={() => void handleSave()} disabled={saving}>
-            {saving && <Loader2 className='size-4 animate-spin' />}
-            {t('Save')}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+        <label className='flex items-center gap-2 text-sm'>
+          <Switch checked={enabled} onCheckedChange={setEnabled} />
+          {t('Enabled')}
+        </label>
+      </form>
+    </FormDialog>
   )
 }
 
 export function UserControlSection() {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
+  const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
+  const [activeTab, setActiveTab] = useState('policies')
   const [capabilities, setCapabilities] = useState<Capabilities | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -227,12 +249,8 @@ export function UserControlSection() {
   const [editingOverride, setEditingOverride] = useState<UserOverride | null>(
     null
   )
-  const [newOverrideId, setNewOverrideId] = useState('')
-  const [simUserId, setSimUserId] = useState('')
-  const [simAt, setSimAt] = useState('')
-  const [simResult, setSimResult] = useState<EffectiveView | null>(null)
-  const [simLoading, setSimLoading] = useState(false)
-
+  const [overridePickerOpen, setOverridePickerOpen] = useState(false)
+  const [overrideSelection, setOverrideSelection] = useState<number[]>([])
   const loadAll = useCallback(async () => {
     setLoading(true)
     setError('')
@@ -257,10 +275,12 @@ export function UserControlSection() {
         ])
       if (policyRes.success && policyRes.data) setPolicies(policyRes.data.items)
       if (listRes.success && listRes.data) setLists(listRes.data.items)
-      if (overrideRes.success && overrideRes.data)
+      if (overrideRes.success && overrideRes.data) {
         setOverrides(overrideRes.data.items)
-      if (bindingRes.success && bindingRes.data)
+      }
+      if (bindingRes.success && bindingRes.data) {
         setBindings(bindingRes.data.items)
+      }
       if (planRes?.success && planRes.data) {
         setPlans(
           planRes.data.map((item) => ({
@@ -390,24 +410,6 @@ export function UserControlSection() {
     }
   }
 
-  const handleSimulate = async () => {
-    const userId = Number.parseInt(simUserId, 10)
-    if (!Number.isFinite(userId) || userId <= 0) {
-      toast.error(t('Enter a valid user ID'))
-      return
-    }
-    setSimLoading(true)
-    try {
-      const result = await simulate(userId, simAt || undefined)
-      if (result.success && result.data) setSimResult(result.data)
-      else handleServerError(result, t('Simulation failed'))
-    } catch (err) {
-      handleServerError(err, t('Simulation failed'))
-    } finally {
-      setSimLoading(false)
-    }
-  }
-
   if (loading) {
     return (
       <div className='flex min-h-40 items-center justify-center'>
@@ -444,7 +446,7 @@ export function UserControlSection() {
         </Button>
       </div>
 
-      <Tabs defaultValue='policies'>
+      <Tabs value={activeTab} onValueChange={setActiveTab}>
         <TabsList className='flex-wrap'>
           <TabsTrigger value='policies'>{t('Policies')}</TabsTrigger>
           <TabsTrigger value='lists'>{t('Lists')}</TabsTrigger>
@@ -519,7 +521,8 @@ export function UserControlSection() {
                   </p>
                 )}
                 <p className='text-muted-foreground text-xs'>
-                  {t('Base limits')}: {summarize(item.limits)}
+                  {t('Base limits')}:{' '}
+                  <LimitsSummary value={item.limits} compact />
                 </p>
                 <p className='text-muted-foreground text-xs'>
                   {t('Time windows')}: {item.schedule?.rules?.length ?? 0} ·{' '}
@@ -611,34 +614,19 @@ export function UserControlSection() {
         <TabsContent value='overrides' className='space-y-3'>
           <div className='flex flex-wrap items-end justify-end gap-2'>
             {capabilities.override_write && (
-              <>
-                <Input
-                  className='w-40'
-                  value={newOverrideId}
-                  onChange={(event) => setNewOverrideId(event.target.value)}
-                  placeholder={t('User ID')}
-                />
-                <Button
-                  size='sm'
-                  onClick={() => {
-                    const id = Number.parseInt(newOverrideId, 10)
-                    if (!Number.isFinite(id) || id <= 0) {
-                      toast.error(t('Enter a valid user ID'))
-                      return
-                    }
-                    const existing =
-                      overrides.find((item) => item.user_id === id) ?? null
-                    setEditingOverride(existing)
-                    setOverrideUserId(id)
-                  }}
-                >
-                  <Plus className='size-4' />
-                  {t('Override for user')}
-                </Button>
-              </>
+              <Button
+                size='sm'
+                onClick={() => {
+                  setOverrideSelection([])
+                  setOverridePickerOpen(true)
+                }}
+              >
+                <Plus className='size-4' />
+                {t('Override for user')}
+              </Button>
             )}
           </div>
-          <div className='rounded-md border'>
+          <div className='min-w-0 overflow-x-auto rounded-md border'>
             <table className='w-full text-sm'>
               <thead className='bg-muted/50 text-left'>
                 <tr>
@@ -659,13 +647,19 @@ export function UserControlSection() {
                     <td className='p-2'>
                       {policyName.get(item.policy_id) ?? t('None')}
                     </td>
-                    <td className='p-2'>{item.mode}</td>
+                    <td className='p-2'>
+                      {item.mode === 'replace'
+                        ? t('Replace (relax inherited limits)')
+                        : t('Merge (tighten only)')}
+                    </td>
                     <td className='text-muted-foreground p-2'>
-                      {summarize(item.limits_view)}
+                      <LimitsSummary value={item.limits_view} compact />
                     </td>
                     <td className='p-2'>
                       {item.expires_at
-                        ? new Date(item.expires_at * 1000).toLocaleString()
+                        ? new Date(item.expires_at * 1000).toLocaleString(
+                            locale
+                          )
                         : t('Never')}
                     </td>
                     <td className='p-2 text-right'>
@@ -714,7 +708,7 @@ export function UserControlSection() {
           <p className='text-muted-foreground text-sm'>
             {t('Assign a control policy to every active subscriber of a plan.')}
           </p>
-          <div className='rounded-md border'>
+          <div className='min-w-0 overflow-x-auto rounded-md border'>
             <table className='w-full text-sm'>
               <thead className='bg-muted/50 text-left'>
                 <tr>
@@ -734,25 +728,42 @@ export function UserControlSection() {
                       </td>
                       <td className='p-2'>
                         <Select
+                          items={[
+                            { value: '0', label: t('None') },
+                            ...policies.map((item) => ({
+                              value: String(item.policy.id),
+                              label: item.policy.name,
+                            })),
+                          ]}
                           value={String(binding?.policy_id ?? 0)}
                           onValueChange={(value) =>
                             void handleBind(plan.id, Number(value))
                           }
                           disabled={!capabilities.policy_write}
                         >
-                          <SelectTrigger className='w-64'>
-                            <SelectValue />
+                          <SelectTrigger
+                            aria-label={t('Policy for plan {{name}}', {
+                              name: plan.title,
+                            })}
+                            className='w-full max-w-64 min-w-40'
+                          >
+                            <SelectValue>
+                              {policyName.get(binding?.policy_id ?? 0) ??
+                                t('None')}
+                            </SelectValue>
                           </SelectTrigger>
                           <SelectContent>
-                            <SelectItem value='0'>{t('None')}</SelectItem>
-                            {policies.map((item) => (
-                              <SelectItem
-                                key={item.policy.id}
-                                value={String(item.policy.id)}
-                              >
-                                {item.policy.name}
-                              </SelectItem>
-                            ))}
+                            <SelectGroup>
+                              <SelectItem value='0'>{t('None')}</SelectItem>
+                              {policies.map((item) => (
+                                <SelectItem
+                                  key={item.policy.id}
+                                  value={String(item.policy.id)}
+                                >
+                                  {item.policy.name}
+                                </SelectItem>
+                              ))}
+                            </SelectGroup>
                           </SelectContent>
                         </Select>
                       </td>
@@ -774,66 +785,13 @@ export function UserControlSection() {
           </div>
         </TabsContent>
 
-        <TabsContent value='simulator' className='space-y-3'>
-          <div className='flex flex-wrap items-end gap-2'>
-            <div className='space-y-1'>
-              <Label>{t('User ID')}</Label>
-              <Input
-                className='w-40'
-                value={simUserId}
-                onChange={(event) => setSimUserId(event.target.value)}
-              />
-            </div>
-            <div className='space-y-1'>
-              <Label>{t('Evaluate at (optional)')}</Label>
-              <Input
-                type='datetime-local'
-                value={simAt}
-                onChange={(event) => setSimAt(event.target.value)}
-              />
-            </div>
-            <Button onClick={() => void handleSimulate()} disabled={simLoading}>
-              {simLoading && <Loader2 className='size-4 animate-spin' />}
-              {t('Simulate')}
-            </Button>
-          </div>
-          {simResult && (
-            <div className='space-y-2 rounded-lg border p-3'>
-              <div className='flex flex-wrap gap-2 text-sm'>
-                <Badge variant={simResult.has_policy ? 'default' : 'outline'}>
-                  {simResult.has_policy ? t('Policy active') : t('No policy')}
-                </Badge>
-                <Badge variant='outline'>{simResult.timezone}</Badge>
-                <span className='text-muted-foreground'>
-                  {simResult.resolved_at}
-                </span>
-              </div>
-              <p className='text-sm'>
-                {t('Sources')}: {simResult.sources.join(', ') || '-'}
-              </p>
-              <p className='text-sm'>
-                {t('Schedule hits')}:{' '}
-                {simResult.schedule_hits.join(', ') || '-'}
-              </p>
-              <pre className='bg-muted max-h-64 overflow-auto rounded-md p-2 text-xs'>
-                {JSON.stringify(simResult.limits, null, 2)}
-              </pre>
-              <div className='text-muted-foreground space-y-1 text-xs'>
-                {simResult.details.map((detail) => (
-                  <p key={`${detail.source}-${detail.source_id}`}>
-                    {detail.source} #{detail.source_id} · {detail.policy_name} ·
-                    priority {detail.priority} ·{' '}
-                    {detail.active ? t('Active') : t('Inactive')}
-                  </p>
-                ))}
-              </div>
-            </div>
-          )}
+        <TabsContent value='simulator' className='min-w-0 space-y-3'>
+          <Simulator />
         </TabsContent>
 
         {capabilities.audit_read && (
           <TabsContent value='audit' className='space-y-3'>
-            <div className='rounded-md border'>
+            <div className='min-w-0 overflow-x-auto rounded-md border'>
               <table className='w-full text-sm'>
                 <thead className='bg-muted/50 text-left'>
                   <tr>
@@ -848,13 +806,17 @@ export function UserControlSection() {
                     <tr key={item.event_id ?? index} className='border-t'>
                       <td className='p-2'>
                         {item.created_at
-                          ? new Date(item.created_at * 1000).toLocaleString()
+                          ? new Date(item.created_at * 1000).toLocaleString(
+                              locale
+                            )
                           : '-'}
                       </td>
                       <td className='p-2'>
                         {item.username || item.user_id || '-'}
                       </td>
-                      <td className='p-2'>{item.action || '-'}</td>
+                      <td className='p-2'>
+                        {item.action ? t(item.action) : '-'}
+                      </td>
                       <td className='p-2'>
                         {item.success === false ? t('Failed') : t('Success')}
                       </td>
@@ -898,6 +860,45 @@ export function UserControlSection() {
         )}
       </Tabs>
 
+      <FormDialog
+        open={overridePickerOpen}
+        onOpenChange={setOverridePickerOpen}
+        title={t('Select a user for override')}
+        showCloseButton={false}
+        footer={
+          <>
+            <Button
+              type='button'
+              variant='outline'
+              onClick={() => setOverridePickerOpen(false)}
+            >
+              {t('Cancel')}
+            </Button>
+            <Button
+              type='button'
+              disabled={overrideSelection.length !== 1}
+              onClick={() => {
+                const id = overrideSelection[0]
+                if (!id) return
+                setEditingOverride(
+                  overrides.find((item) => item.user_id === id) ?? null
+                )
+                setOverrideUserId(id)
+                setOverridePickerOpen(false)
+              }}
+            >
+              {t('Continue')}
+            </Button>
+          </>
+        }
+      >
+        {overridePickerOpen && (
+          <UserPicker
+            selected={overrideSelection}
+            onChange={setOverrideSelection}
+          />
+        )}
+      </FormDialog>
       <PolicyEditorDialog
         open={policyDialogOpen}
         policy={editingPolicy}
@@ -915,7 +916,10 @@ export function UserControlSection() {
       <MembersDialog
         list={membersList}
         canWrite={capabilities.list_write}
-        onClose={() => setMembersList(null)}
+        onClose={() => {
+          setMembersList(null)
+          void loadAll()
+        }}
       />
       <OverrideDialog
         userId={overrideUserId}
@@ -926,7 +930,7 @@ export function UserControlSection() {
         onClose={() => {
           setOverrideUserId(null)
           setEditingOverride(null)
-          setNewOverrideId('')
+          setOverrideSelection([])
         }}
         onSaved={() => void loadAll()}
       />

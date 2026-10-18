@@ -17,22 +17,14 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { Loader2 } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useId, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
+import { Dialog } from '@/components/dialog'
 import { Button } from '@/components/ui/button'
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { ScrollArea } from '@/components/ui/scroll-area'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { handleServerError } from '@/lib/handle-server-error'
@@ -56,6 +48,7 @@ export function PolicyEditorDialog({
   onSaved: () => void
 }) {
   const { t } = useTranslation()
+  const formId = useId()
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
   const [enabled, setEnabled] = useState(true)
@@ -96,15 +89,20 @@ export function PolicyEditorDialog({
     }
     setSaving(true)
     try {
-      const nextSchedule: Schedule | null = schedule
-        ? {
-            ...schedule,
-            timezone: schedule.timezone || defaultTimezone,
-            default: useDefault ? defaultLimits : undefined,
-          }
-        : useDefault
-          ? { timezone: defaultTimezone, rules: [], default: defaultLimits }
-          : null
+      let nextSchedule: Schedule | null = null
+      if (schedule) {
+        nextSchedule = {
+          ...schedule,
+          timezone: schedule.timezone || defaultTimezone,
+          default: useDefault ? defaultLimits : undefined,
+        }
+      } else if (useDefault) {
+        nextSchedule = {
+          timezone: defaultTimezone,
+          rules: [],
+          default: defaultLimits,
+        }
+      }
       const payload = {
         name: name.trim(),
         description,
@@ -131,96 +129,105 @@ export function PolicyEditorDialog({
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className='flex max-h-[92vh] flex-col sm:max-w-4xl'>
-        <DialogHeader>
-          <DialogTitle>
-            {policy ? t('Edit control policy') : t('New control policy')}
-          </DialogTitle>
-          <DialogDescription>
-            {t(
-              'Limits are enforced per user. Schedule windows can tighten them further; they never loosen the base limits.'
-            )}
-          </DialogDescription>
-        </DialogHeader>
-
-        <ScrollArea className='min-h-0 flex-1 pr-3'>
-          <div className='space-y-5 pb-4'>
-            <div className='grid gap-3 md:grid-cols-2'>
-              <div className='space-y-1'>
-                <Label>{t('Name')}</Label>
-                <Input
-                  value={name}
-                  onChange={(event) => setName(event.target.value)}
-                  maxLength={64}
-                />
-              </div>
-              <div className='space-y-1'>
-                <Label>{t('Priority')}</Label>
-                <Input
-                  type='number'
-                  value={priority}
-                  onChange={(event) =>
-                    setPriority(
-                      Number.parseInt(event.target.value || '0', 10) || 0
-                    )
-                  }
-                />
-              </div>
-              <div className='space-y-1 md:col-span-2'>
-                <Label>{t('Description')}</Label>
-                <Textarea
-                  rows={2}
-                  value={description}
-                  onChange={(event) => setDescription(event.target.value)}
-                  maxLength={255}
-                />
-              </div>
-              <label className='flex items-center gap-2 text-sm'>
-                <Switch checked={enabled} onCheckedChange={setEnabled} />
-                {t('Enabled')}
-              </label>
-            </div>
-
-            <section className='space-y-2 rounded-lg border p-3'>
-              <h3 className='text-sm font-semibold'>{t('Base limits')}</h3>
-              <LimitsEditor value={limits} onChange={setLimits} />
-            </section>
-
-            <section className='space-y-2 rounded-lg border p-3'>
-              <h3 className='text-sm font-semibold'>{t('Time windows')}</h3>
-              <ScheduleEditor value={schedule} onChange={setSchedule} />
-            </section>
-
-            <section className='space-y-2 rounded-lg border p-3'>
-              <label className='flex items-center gap-2 text-sm font-medium'>
-                <Switch checked={useDefault} onCheckedChange={setUseDefault} />
-                {t('Apply separate limits when no window matches')}
-              </label>
-              {useDefault && (
-                <LimitsEditor
-                  value={defaultLimits}
-                  onChange={setDefaultLimits}
-                />
-              )}
-            </section>
-          </div>
-        </ScrollArea>
-
-        <DialogFooter>
+    <Dialog
+      open={open}
+      onOpenChange={(nextOpen) => {
+        if (!saving) onOpenChange(nextOpen)
+      }}
+      title={policy ? t('Edit control policy') : t('New control policy')}
+      description={t(
+        'Limits are enforced per user. Schedule windows can tighten them further; they never loosen the base limits.'
+      )}
+      contentClassName='sm:max-w-4xl'
+      titleClassName='break-words pr-6'
+      showCloseButton={false}
+      footer={
+        <>
           <Button
+            type='button'
             variant='outline'
             onClick={() => onOpenChange(false)}
             disabled={saving}
           >
             {t('Cancel')}
           </Button>
-          <Button onClick={() => void handleSave()} disabled={saving}>
+          <Button type='submit' form={formId} disabled={saving}>
             {saving && <Loader2 className='size-4 animate-spin' />}
             {t('Save')}
           </Button>
-        </DialogFooter>
-      </DialogContent>
+        </>
+      }
+    >
+      <form
+        id={formId}
+        className='min-w-0 space-y-5'
+        inert={saving}
+        onSubmit={(event) => {
+          event.preventDefault()
+          void handleSave()
+        }}
+      >
+        <div className='grid min-w-0 gap-3 md:grid-cols-2'>
+          <div className='min-w-0 space-y-1'>
+            <Label htmlFor={`${formId}-name`}>{t('Name')}</Label>
+            <Input
+              id={`${formId}-name`}
+              value={name}
+              onChange={(event) => setName(event.target.value)}
+              maxLength={64}
+            />
+          </div>
+          <div className='min-w-0 space-y-1'>
+            <Label htmlFor={`${formId}-priority`}>{t('Priority')}</Label>
+            <Input
+              id={`${formId}-priority`}
+              type='number'
+              value={priority}
+              onChange={(event) =>
+                setPriority(Number.parseInt(event.target.value || '0', 10) || 0)
+              }
+            />
+          </div>
+          <div className='space-y-1 md:col-span-2'>
+            <Label htmlFor={`${formId}-description`}>{t('Description')}</Label>
+            <Textarea
+              id={`${formId}-description`}
+              rows={2}
+              value={description}
+              onChange={(event) => setDescription(event.target.value)}
+              maxLength={255}
+            />
+          </div>
+          <label className='flex items-center gap-2 text-sm'>
+            <Switch checked={enabled} onCheckedChange={setEnabled} />
+            {t('Enabled')}
+          </label>
+        </div>
+
+        <section className='space-y-2 rounded-lg border p-3'>
+          <h3 className='text-sm font-semibold'>{t('Base limits')}</h3>
+          <LimitsEditor value={limits} onChange={setLimits} />
+        </section>
+
+        <section className='space-y-2 rounded-lg border p-3'>
+          <h3 className='text-sm font-semibold'>{t('Time windows')}</h3>
+          <ScheduleEditor
+            value={schedule}
+            onChange={setSchedule}
+            defaultTimezone={defaultTimezone}
+          />
+        </section>
+
+        <section className='space-y-2 rounded-lg border p-3'>
+          <label className='flex items-center gap-2 text-sm font-medium'>
+            <Switch checked={useDefault} onCheckedChange={setUseDefault} />
+            {t('Apply separate limits when no window matches')}
+          </label>
+          {useDefault && (
+            <LimitsEditor value={defaultLimits} onChange={setDefaultLimits} />
+          )}
+        </section>
+      </form>
     </Dialog>
   )
 }

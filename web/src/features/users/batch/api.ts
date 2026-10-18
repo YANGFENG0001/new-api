@@ -72,7 +72,9 @@ export async function listBatchJobs(params: {
     page_size: number
   }>
 > {
-  const res = await api.get('/api/user/batch/jobs', { params })
+  const res = await api.get('/api/user/batch/jobs', {
+    params: { p: params.page, page_size: params.page_size },
+  })
   return res.data
 }
 
@@ -98,10 +100,16 @@ export async function listBatchJobItems(id: string): Promise<
 }
 
 export async function retryBatchJob(
-  id: string
+  id: string,
+  proofToken: string
 ): Promise<Envelope<BatchExecuteResult>> {
   const res = await api.post(
-    `/api/user/batch/jobs/${encodeURIComponent(id)}/retry`
+    `/api/user/batch/jobs/${encodeURIComponent(id)}/retry`,
+    {},
+    {
+      headers: { 'X-Security-Proof': proofToken },
+      singleUseAuthorization: true,
+    }
   )
   return res.data
 }

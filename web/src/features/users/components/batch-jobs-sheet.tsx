@@ -40,6 +40,7 @@ import {
   retryBatchJob,
 } from '../batch/api'
 import type { BatchJob, BatchJobItem } from '../batch/types'
+import { useUsers } from './users-provider'
 
 const PAGE_SIZE = 20
 
@@ -67,6 +68,7 @@ export function BatchJobsSheet({
   onOpenChange: (open: boolean) => void
 }) {
   const { t } = useTranslation()
+  const { requestVerification, verificationActive, triggerRefresh } = useUsers()
   const [jobs, setJobs] = useState<BatchJob[]>([])
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(1)
@@ -88,7 +90,7 @@ export function BatchJobsSheet({
           setTotal(result.data.total)
           setPage(result.data.page)
         } else if (result.message) {
-          toast.error(result.message)
+          toast.error(t(result.message))
         }
       } catch (err) {
         handleServerError(err, t('Failed to load batch jobs'))
@@ -112,6 +114,8 @@ export function BatchJobsSheet({
       if (result.success && result.data) {
         setActiveJob(result.data.job)
         setItems(result.data.items)
+      } else {
+        handleServerError(result, t('Failed to load batch job'))
       }
     } catch (err) {
       handleServerError(err, t('Failed to load batch job'))
@@ -121,9 +125,41 @@ export function BatchJobsSheet({
   const handleRetry = async (job: BatchJob) => {
     setBusyId(job.id)
     try {
-      const result = await retryBatchJob(job.id)
+      const detail = await getBatchJob(job.id)
+      if (!detail.success || !detail.data) {
+        handleServerError(detail, t('Failed to load batch job'))
+        return
+      }
+      const currentJob = detail.data.job
+      const failedIds = detail.data.items
+        .filter((item) => item.status === 'failed')
+        .map((item) => item.user_id)
+      if (
+        failedIds.length === 0 ||
+        ['pending', 'running'].includes(currentJob.status)
+      ) {
+        await load()
+        await openJob(currentJob)
+        return
+      }
+      const proof = await requestVerification({
+        scope: 'admin.user.batch',
+        context: {
+          action: currentJob.action,
+          user_ids: failedIds,
+          batch_hash: currentJob.batch_hash,
+        },
+        title: t('Verify to run bulk action'),
+        description: t(
+          'Confirm your identity before applying "{{action}}" to {{count}} users.',
+          { action: t(currentJob.action), count: failedIds.length }
+        ),
+      })
+      if (!proof) return
+      const result = await retryBatchJob(job.id, proof.proof_token)
       if (result.success) {
         toast.success(t('Retry started'))
+        triggerRefresh()
         await load()
         await openJob(job)
       } else {
@@ -156,7 +192,7 @@ export function BatchJobsSheet({
   const pages = Math.max(1, Math.ceil(total / PAGE_SIZE))
 
   return (
-    <Sheet open={open} onOpenChange={onOpenChange}>
+    <Sheet open={open && !verificationActive} onOpenChange={onOpenChange}>
       <SheetContent className='flex w-full flex-col sm:max-w-2xl'>
         <SheetHeader>
           <SheetTitle>{t('Bulk action jobs')}</SheetTitle>
@@ -197,9 +233,9 @@ export function BatchJobsSheet({
               <div key={job.id} className='space-y-2 p-3'>
                 <div className='flex flex-wrap items-center gap-2'>
                   <Badge variant={statusVariant(job.status)}>
-                    {job.status}
+                    {t(job.status)}
                   </Badge>
-                  <span className='font-medium'>{job.action}</span>
+                  <span className='font-medium'>{t(job.action)}</span>
                   <span className='text-muted-foreground text-xs'>
                     {job.id}
                   </span>
@@ -215,7 +251,8 @@ export function BatchJobsSheet({
                         {t('Cancel')}
                       </Button>
                     ) : null}
-                    {job.failed > 0 && job.status !== 'running' ? (
+                    {job.failed > 0 &&
+                    !['pending', 'running'].includes(job.status) ? (
                       <Button
                         variant='ghost'
                         size='sm'
@@ -262,12 +299,14 @@ export function BatchJobsSheet({
                       <ul className='space-y-1 text-xs'>
                         {items.map((item) => (
                           <li key={item.id} className='flex gap-2'>
-                            <span className='w-16 shrink-0'>{item.status}</span>
+                            <span className='w-16 shrink-0'>
+                              {t(item.status)}
+                            </span>
                             <span className='shrink-0'>
                               {item.username} #{item.user_id}
                             </span>
                             <span className='text-muted-foreground'>
-                              {item.error_message || ''}
+                              {item.error_message ? t(item.error_message) : ''}
                             </span>
                           </li>
                         ))}

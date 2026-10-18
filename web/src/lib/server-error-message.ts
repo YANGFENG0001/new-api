@@ -167,7 +167,8 @@ export function getServerMessage(value: unknown): string | undefined {
       isRecord(value.message_params) ? value.message_params : undefined
     )
   }
-  return messageText(value.message)
+  const message = messageText(value.message)
+  return message ? translateServerText(i18next.t, message) : undefined
 }
 
 /**
@@ -214,16 +215,19 @@ export function getServerErrorMessage(
       : messageText(source.error)
     const message =
       getServerMessage(source) || detail || messageText(source.title)
-    if (message) return message
+    if (message) return translateServerText(i18next.t, message)
   }
   const status = getServerErrorStatus(value)
   if (status === 304) return i18next.t('Content not modified!')
   if (status === 204) return i18next.t('Content not found.')
   for (const source of sources) {
     const message = messageText(source.message)
-    if (message) return message
+    if (message) return translateServerText(i18next.t, message)
   }
-  return messageText(value) || (fallback ?? i18next.t('Something went wrong!'))
+  const message = messageText(value)
+  return message
+    ? translateServerText(i18next.t, message)
+    : (fallback ?? i18next.t('Something went wrong!'))
 }
 
 /** Preserve the payload/cause so every layer can recognize the same failure. */

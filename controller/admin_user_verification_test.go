@@ -6,10 +6,12 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/service/userbatch"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -27,6 +29,117 @@ func setupAdminUserTest(t *testing.T) (*model.User, service.AuthIdentity, *model
 	target := &model.User{Username: "managed-user", Password: password, Role: common.RoleCommonUser, Status: common.UserStatusEnabled, Group: "default", AuthVersion: 1, AffCode: "managed-aff", GitHubId: "managed-github"}
 	require.NoError(t, model.DB.Create(target).Error)
 	return operator, identity, target
+}
+
+func setupUserBatchTest(t *testing.T) (service.AuthIdentity, *model.User) {
+	t.Helper()
+	_, identity, target := setupAdminUserTest(t)
+	// The shared enrollment fixture closes the main connection. Close its
+	// separate audit connection too so Windows can remove the temporary file.
+	logConnection, err := model.LOG_DB.DB()
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, logConnection.Close()) })
+	require.NoError(t, model.DB.AutoMigrate(&model.UserBatchJob{}, &model.UserBatchJobItem{}, &model.UserQuotaLedger{}, &model.Token{}))
+	return identity, target
+}
+
+func TestUserBatchExecuteBindsProofAndPreservesQuotaIdempotency(t *testing.T) {
+	identity, target := setupUserBatchTest(t)
+	req := userbatch.Request{Action: userbatch.ActionAddQuota, UserIDs: []int{target.Id}, Quota: 100, IdempotencyKey: "quota-regression"}
+	preview, err := userbatch.PreviewBatch(userbatch.Actor{UserID: identity.UserID, Role: common.RoleRootUser}, req)
+	require.NoError(t, err)
+	context, err := common.Marshal(service.AdminUserBatchContext{Action: req.Action, UserIDs: req.UserIDs, BatchHash: preview.BatchHash})
+	require.NoError(t, err)
+	operation := service.VerificationOperation{Scope: service.VerificationScopeAdminUserBatch, Context: context}
+	body, err := common.Marshal(userBatchExecuteRequest{Request: req, BatchHash: preview.BatchHash})
+	require.NoError(t, err)
+
+	response := adminUserRequest(http.MethodPost, "/api/user/batch/execute", string(body), "", identity, common.RoleRootUser, nil, ExecuteUserBatch)
+	assert.Equal(t, http.StatusForbidden, response.Code)
+	var count int64
+	require.NoError(t, model.DB.Model(&model.UserBatchJob{}).Count(&count).Error)
+	assert.Zero(t, count)
+
+	proof := issueSecurityEnrollmentProof(t, identity, operation, service.VerificationMethodPassword)
+	changedBody, err := common.Marshal(userBatchExecuteRequest{Request: userbatch.Request{Action: req.Action, UserIDs: req.UserIDs, Quota: 101}, BatchHash: preview.BatchHash})
+	require.NoError(t, err)
+	response = adminUserRequest(http.MethodPost, "/api/user/batch/execute", string(changedBody), proof, identity, common.RoleRootUser, nil, ExecuteUserBatch)
+	assert.Equal(t, http.StatusConflict, response.Code)
+
+	for range 2 {
+		response = adminUserRequest(http.MethodPost, "/api/user/batch/execute", string(body), proof, identity, common.RoleRootUser, nil, ExecuteUserBatch)
+		result := decodeSecurityEnrollmentResponse(t, response)
+		require.True(t, result.Success, response.Body.String())
+		var execution userbatch.ExecuteResult
+		require.NoError(t, common.Unmarshal(result.Data, &execution))
+		assert.Equal(t, 1, execution.Job.Succeeded)
+		stored, err := model.GetUserById(target.Id, false)
+		require.NoError(t, err)
+		assert.Equal(t, 100, stored.Quota)
+		// A new proof is needed even when replaying the same idempotency key.
+		response = adminUserRequest(http.MethodPost, "/api/user/batch/execute", string(body), proof, identity, common.RoleRootUser, nil, ExecuteUserBatch)
+		assert.Equal(t, "SECURITY_PROOF_CONSUMED", decodeSecurityEnrollmentResponse(t, response).Code)
+		proof = issueSecurityEnrollmentProof(t, identity, operation, service.VerificationMethodPassword)
+	}
+	require.NoError(t, model.DB.Model(&model.UserQuotaLedger{}).Count(&count).Error)
+	assert.EqualValues(t, 1, count)
+}
+
+func TestUserBatchRetryRequiresProofAndKeepsPreviousSuccesses(t *testing.T) {
+	identity, target := setupUserBatchTest(t)
+	req := userbatch.Request{Action: userbatch.ActionDisable, UserIDs: []int{target.Id, target.Id + 1}}
+	params, err := common.Marshal(req)
+	require.NoError(t, err)
+	job := &model.UserBatchJob{Id: "retry-regression", Action: req.Action, Params: string(params), Total: 2,
+		Succeeded: 1, Failed: 1, Status: "partial", CreatedBy: identity.UserID, OperatorRole: common.RoleRootUser,
+		IdempotencyKey: "retry-regression", BatchHash: userbatch.BatchHash(req)}
+	require.NoError(t, model.DB.Create(job).Error)
+	require.NoError(t, model.CreateUserBatchItems([]model.UserBatchJobItem{
+		{JobId: job.Id, UserId: target.Id, Status: "failed", ErrorCode: "database_error", ErrorMessage: "temporary failure"},
+		{JobId: job.Id, UserId: target.Id + 1, Status: "succeeded"},
+	}))
+	path := "/api/user/batch/jobs/" + job.Id + "/retry"
+	routeParams := gin.Params{{Key: "id", Value: job.Id}}
+	response := adminUserRequest(http.MethodPost, path, "", "", identity, common.RoleRootUser, routeParams, RetryUserBatchJob)
+	assert.Equal(t, http.StatusForbidden, response.Code)
+	items, err := model.ListUserBatchJobItems(job.Id)
+	require.NoError(t, err)
+	assert.Equal(t, "failed", items[0].Status)
+	stored, err := model.GetUserById(target.Id, false)
+	require.NoError(t, err)
+	assert.Equal(t, common.UserStatusEnabled, stored.Status)
+
+	context, err := common.Marshal(service.AdminUserBatchContext{Action: job.Action, UserIDs: []int{target.Id}, BatchHash: job.BatchHash})
+	require.NoError(t, err)
+	operation := service.VerificationOperation{Scope: service.VerificationScopeAdminUserBatch, Context: context}
+	proof := issueSecurityEnrollmentProof(t, identity, operation, service.VerificationMethodPassword)
+	// Proof expiry must be enforced by the server before changing any user.
+	require.NoError(t, model.DB.Model(&model.AuthFlow{}).Where("user_id = ?", identity.UserID).Update("expires_at", time.Now().Add(-time.Minute)).Error)
+	response = adminUserRequest(http.MethodPost, path, "", proof, identity, common.RoleRootUser, routeParams, RetryUserBatchJob)
+	assert.Equal(t, http.StatusForbidden, response.Code)
+	proof = issueSecurityEnrollmentProof(t, identity, operation, service.VerificationMethodPassword)
+	response = adminUserRequest(http.MethodPost, path, "", proof, identity, common.RoleRootUser, routeParams, RetryUserBatchJob)
+	result := decodeSecurityEnrollmentResponse(t, response)
+	require.True(t, result.Success, response.Body.String())
+	var execution userbatch.ExecuteResult
+	require.NoError(t, common.Unmarshal(result.Data, &execution))
+	assert.Equal(t, "completed", execution.Job.Status)
+	assert.Equal(t, 2, execution.Job.Succeeded)
+	assert.Zero(t, execution.Job.Failed)
+	stored, err = model.GetUserById(target.Id, false)
+	require.NoError(t, err)
+	assert.Equal(t, common.UserStatusDisabled, stored.Status)
+}
+
+func TestUserBatchPreviewCountsMissingAndDeletedUsersAsSkipped(t *testing.T) {
+	identity, target := setupUserBatchTest(t)
+	require.NoError(t, model.DB.Delete(target).Error)
+	preview, err := userbatch.PreviewBatch(userbatch.Actor{UserID: identity.UserID, Role: common.RoleRootUser},
+		userbatch.Request{Action: userbatch.ActionDisable, UserIDs: []int{target.Id, target.Id + 1}})
+	require.NoError(t, err)
+	assert.Equal(t, 2, preview.Total)
+	assert.Equal(t, 2, preview.Skipped)
+	assert.Zero(t, preview.Eligible)
 }
 
 // adminUserRequest drives an admin user-management handler with the operator

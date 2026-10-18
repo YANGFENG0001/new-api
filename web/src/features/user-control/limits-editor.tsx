@@ -16,12 +16,14 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { useId } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 
+import { DelimitedInput } from './delimited-input'
 import type { Limits } from './types'
 
 const QUOTA_UNIT = 500000
@@ -42,21 +44,10 @@ function quotaToUsd(value?: number): string {
   return value && value > 0 ? String(value / QUOTA_UNIT) : ''
 }
 
-function splitList(value?: string[]): string {
-  return (value ?? []).join(', ')
-}
-
-function parseList(value: string): string[] {
-  return value
-    .split(/[,\n]/)
-    .map((item) => item.trim())
-    .filter(Boolean)
-}
-
-function parseIdList(value: string): number[] {
-  return parseList(value)
-    .map((item) => Number.parseInt(item, 10))
-    .filter((item) => Number.isFinite(item) && item > 0)
+function parseIds(values: string[]): number[] {
+  return values
+    .map(Number)
+    .filter((item) => Number.isSafeInteger(item) && item > 0)
 }
 
 function NumberField({
@@ -72,18 +63,24 @@ function NumberField({
   placeholder?: string
   step?: string
 }) {
+  const { t } = useTranslation()
+  const fieldId = useId()
   return (
-    <div className='space-y-1'>
-      <Label className='text-muted-foreground text-xs font-normal'>
+    <div className='min-w-0 space-y-1'>
+      <Label
+        htmlFor={fieldId}
+        className='text-muted-foreground text-xs font-normal'
+      >
         {label}
       </Label>
       <Input
+        id={fieldId}
         type='number'
         min='0'
         step={step}
         value={value && value > 0 ? String(value) : ''}
         onChange={(event) => onChange(toInt(event.target.value))}
-        placeholder={placeholder ?? '0 = unlimited'}
+        placeholder={placeholder ?? t('0 = unlimited')}
       />
     </div>
   )
@@ -97,6 +94,7 @@ export function LimitsEditor({
   onChange: (next: Limits) => void
 }) {
   const { t } = useTranslation()
+  const editorId = useId()
   const set = (patch: Partial<Limits>) => onChange({ ...value, ...patch })
 
   return (
@@ -133,7 +131,7 @@ export function LimitsEditor({
 
       <section className='space-y-2'>
         <h4 className='text-sm font-medium'>{t('Rate limits')}</h4>
-        <div className='grid grid-cols-2 gap-3 md:grid-cols-4'>
+        <div className='grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4'>
           <NumberField
             label={t('Requests per minute')}
             value={value.rate?.rpm}
@@ -159,7 +157,7 @@ export function LimitsEditor({
 
       <section className='space-y-2'>
         <h4 className='text-sm font-medium'>{t('Request quotas')}</h4>
-        <div className='grid grid-cols-2 gap-3 md:grid-cols-4'>
+        <div className='grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4'>
           <NumberField
             label={t('Daily requests')}
             value={value.requests?.daily}
@@ -177,12 +175,16 @@ export function LimitsEditor({
 
       <section className='space-y-2'>
         <h4 className='text-sm font-medium'>{t('Usage quotas')}</h4>
-        <div className='grid grid-cols-2 gap-3 md:grid-cols-4'>
-          <div className='space-y-1'>
-            <Label className='text-muted-foreground text-xs font-normal'>
+        <div className='grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4'>
+          <div className='min-w-0 space-y-1'>
+            <Label
+              htmlFor={`${editorId}-field-0`}
+              className='text-muted-foreground text-xs font-normal'
+            >
               {t('Daily spend (USD)')}
             </Label>
             <Input
+              id={`${editorId}-field-0`}
               type='number'
               min='0'
               step='0.01'
@@ -195,14 +197,18 @@ export function LimitsEditor({
                   },
                 })
               }
-              placeholder='0 = unlimited'
+              placeholder={t('0 = unlimited')}
             />
           </div>
-          <div className='space-y-1'>
-            <Label className='text-muted-foreground text-xs font-normal'>
+          <div className='min-w-0 space-y-1'>
+            <Label
+              htmlFor={`${editorId}-field-1`}
+              className='text-muted-foreground text-xs font-normal'
+            >
               {t('Monthly spend (USD)')}
             </Label>
             <Input
+              id={`${editorId}-field-1`}
               type='number'
               min='0'
               step='0.01'
@@ -215,7 +221,7 @@ export function LimitsEditor({
                   },
                 })
               }
-              placeholder='0 = unlimited'
+              placeholder={t('0 = unlimited')}
             />
           </div>
           <NumberField
@@ -238,34 +244,42 @@ export function LimitsEditor({
       <section className='space-y-2'>
         <h4 className='text-sm font-medium'>{t('Model access')}</h4>
         <div className='grid gap-3 md:grid-cols-2'>
-          <div className='space-y-1'>
-            <Label className='text-muted-foreground text-xs font-normal'>
+          <div className='min-w-0 space-y-1'>
+            <Label
+              htmlFor={`${editorId}-field-2`}
+              className='text-muted-foreground text-xs font-normal'
+            >
               {t('Allowed models (comma separated)')}
             </Label>
-            <Input
-              value={splitList(value.models?.allow)}
-              onChange={(event) =>
+            <DelimitedInput
+              id={`${editorId}-field-2`}
+              value={value.models?.allow ?? []}
+              onChange={(items) =>
                 set({
                   models: {
                     ...value.models,
-                    allow: parseList(event.target.value),
+                    allow: items,
                   },
                 })
               }
               placeholder={t('Empty = all models')}
             />
           </div>
-          <div className='space-y-1'>
-            <Label className='text-muted-foreground text-xs font-normal'>
+          <div className='min-w-0 space-y-1'>
+            <Label
+              htmlFor={`${editorId}-field-3`}
+              className='text-muted-foreground text-xs font-normal'
+            >
               {t('Blocked models (comma separated)')}
             </Label>
-            <Input
-              value={splitList(value.models?.block)}
-              onChange={(event) =>
+            <DelimitedInput
+              id={`${editorId}-field-3`}
+              value={value.models?.block ?? []}
+              onChange={(items) =>
                 set({
                   models: {
                     ...value.models,
-                    block: parseList(event.target.value),
+                    block: items,
                   },
                 })
               }
@@ -277,81 +291,101 @@ export function LimitsEditor({
       <section className='space-y-2'>
         <h4 className='text-sm font-medium'>{t('Channel access')}</h4>
         <div className='grid gap-3 md:grid-cols-2'>
-          <div className='space-y-1'>
-            <Label className='text-muted-foreground text-xs font-normal'>
+          <div className='min-w-0 space-y-1'>
+            <Label
+              htmlFor={`${editorId}-field-4`}
+              className='text-muted-foreground text-xs font-normal'
+            >
               {t('Allowed channel IDs')}
             </Label>
-            <Input
-              value={splitList(value.channels?.allow_ids?.map(String))}
-              onChange={(event) =>
+            <DelimitedInput
+              id={`${editorId}-field-4`}
+              value={value.channels?.allow_ids?.map(String) ?? []}
+              onChange={(items) =>
                 set({
                   channels: {
                     ...value.channels,
-                    allow_ids: parseIdList(event.target.value),
+                    allow_ids: parseIds(items),
                   },
                 })
               }
             />
           </div>
-          <div className='space-y-1'>
-            <Label className='text-muted-foreground text-xs font-normal'>
+          <div className='min-w-0 space-y-1'>
+            <Label
+              htmlFor={`${editorId}-field-5`}
+              className='text-muted-foreground text-xs font-normal'
+            >
               {t('Blocked channel IDs')}
             </Label>
-            <Input
-              value={splitList(value.channels?.block_ids?.map(String))}
-              onChange={(event) =>
+            <DelimitedInput
+              id={`${editorId}-field-5`}
+              value={value.channels?.block_ids?.map(String) ?? []}
+              onChange={(items) =>
                 set({
                   channels: {
                     ...value.channels,
-                    block_ids: parseIdList(event.target.value),
+                    block_ids: parseIds(items),
                   },
                 })
               }
             />
           </div>
-          <div className='space-y-1'>
-            <Label className='text-muted-foreground text-xs font-normal'>
+          <div className='min-w-0 space-y-1'>
+            <Label
+              htmlFor={`${editorId}-field-6`}
+              className='text-muted-foreground text-xs font-normal'
+            >
               {t('Allowed channel types')}
             </Label>
-            <Input
-              value={splitList(value.channels?.allow_types?.map(String))}
-              onChange={(event) =>
+            <DelimitedInput
+              id={`${editorId}-field-6`}
+              value={value.channels?.allow_types?.map(String) ?? []}
+              onChange={(items) =>
                 set({
                   channels: {
                     ...value.channels,
-                    allow_types: parseIdList(event.target.value),
+                    allow_types: parseIds(items),
                   },
                 })
               }
             />
           </div>
-          <div className='space-y-1'>
-            <Label className='text-muted-foreground text-xs font-normal'>
+          <div className='min-w-0 space-y-1'>
+            <Label
+              htmlFor={`${editorId}-field-7`}
+              className='text-muted-foreground text-xs font-normal'
+            >
               {t('Blocked channel types')}
             </Label>
-            <Input
-              value={splitList(value.channels?.block_types?.map(String))}
-              onChange={(event) =>
+            <DelimitedInput
+              id={`${editorId}-field-7`}
+              value={value.channels?.block_types?.map(String) ?? []}
+              onChange={(items) =>
                 set({
                   channels: {
                     ...value.channels,
-                    block_types: parseIdList(event.target.value),
+                    block_types: parseIds(items),
                   },
                 })
               }
             />
           </div>
           <div className='space-y-1 md:col-span-2'>
-            <Label className='text-muted-foreground text-xs font-normal'>
+            <Label
+              htmlFor={`${editorId}-field-8`}
+              className='text-muted-foreground text-xs font-normal'
+            >
               {t('Allowed groups')}
             </Label>
-            <Input
-              value={splitList(value.channels?.allow_groups)}
-              onChange={(event) =>
+            <DelimitedInput
+              id={`${editorId}-field-8`}
+              value={value.channels?.allow_groups ?? []}
+              onChange={(items) =>
                 set({
                   channels: {
                     ...value.channels,
-                    allow_groups: parseList(event.target.value),
+                    allow_groups: items,
                   },
                 })
               }
@@ -362,7 +396,7 @@ export function LimitsEditor({
 
       <section className='space-y-2'>
         <h4 className='text-sm font-medium'>{t('API key limits')}</h4>
-        <div className='grid grid-cols-2 gap-3 md:grid-cols-4'>
+        <div className='grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4'>
           <NumberField
             label={t('Max active keys')}
             value={value.api_keys?.max_active}

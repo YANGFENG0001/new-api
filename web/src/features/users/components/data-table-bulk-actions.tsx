@@ -16,9 +16,9 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { type Table } from '@tanstack/react-table'
+import type { Table } from '@tanstack/react-table'
 import { ChevronDown, History } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { DataTableBulkActions as BulkActionsToolbar } from '@/components/data-table'
@@ -26,6 +26,7 @@ import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
@@ -34,7 +35,7 @@ import {
 
 import { getBatchActions } from '../batch/api'
 import type { BatchActionInfo } from '../batch/types'
-import { type User } from '../types'
+import type { User } from '../types'
 import { BatchActionDialog } from './batch-action-dialog'
 import { BatchJobsSheet } from './batch-jobs-sheet'
 import { useUsers } from './users-provider'
@@ -100,7 +101,7 @@ export function DataTableBulkActions({ table }: DataTableBulkActionsProps) {
 
   return (
     <>
-      <BulkActionsToolbar table={table} entityName='user'>
+      <BulkActionsToolbar table={table} entityName={t('User')}>
         <Button
           variant='outline'
           size='sm'
@@ -132,19 +133,21 @@ export function DataTableBulkActions({ table }: DataTableBulkActionsProps) {
                   )
                 if (items.length === 0) return null
                 return (
-                  <div key={group.key}>
+                  <Fragment key={group.key}>
                     {index > 0 && <DropdownMenuSeparator />}
-                    <DropdownMenuLabel>{t(group.key)}</DropdownMenuLabel>
-                    {items.map((item) => (
-                      <DropdownMenuItem
-                        key={item.action}
-                        variant={item.destructive ? 'destructive' : 'default'}
-                        onClick={() => setSelectedAction(item)}
-                      >
-                        {t(item.action)}
-                      </DropdownMenuItem>
-                    ))}
-                  </div>
+                    <DropdownMenuGroup>
+                      <DropdownMenuLabel>{t(group.key)}</DropdownMenuLabel>
+                      {items.map((item) => (
+                        <DropdownMenuItem
+                          key={item.action}
+                          variant={item.destructive ? 'destructive' : 'default'}
+                          onClick={() => setSelectedAction(item)}
+                        >
+                          {t(item.action)}
+                        </DropdownMenuItem>
+                      ))}
+                    </DropdownMenuGroup>
+                  </Fragment>
                 )
               })}
             </DropdownMenuContent>

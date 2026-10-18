@@ -17,6 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { ArrowDown, ArrowUp, Clock, Copy, Plus, Trash2 } from 'lucide-react'
+import { useId } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Badge } from '@/components/ui/badge'
@@ -26,6 +27,7 @@ import { Label } from '@/components/ui/label'
 import { Separator } from '@/components/ui/separator'
 import { Switch } from '@/components/ui/switch'
 
+import { DelimitedInput } from './delimited-input'
 import { LimitsEditor } from './limits-editor'
 import type { Schedule, ScheduleRule } from './types'
 
@@ -56,22 +58,23 @@ function newRule(index: number): ScheduleRule {
 export function ScheduleEditor({
   value,
   onChange,
+  defaultTimezone = 'Asia/Shanghai',
 }: {
+  defaultTimezone?: string
   value?: Schedule | null
   onChange: (next: Schedule | null) => void
 }) {
   const { t } = useTranslation()
+  const editorId = useId()
   const schedule: Schedule = value ?? {
-    timezone: 'Asia/Shanghai',
+    timezone: defaultTimezone,
     rules: [],
   }
   const rules = schedule.rules ?? []
 
   const update = (patch: Partial<Schedule>) => {
     const next: Schedule = { ...schedule, ...patch }
-    const hasRules = (next.rules?.length ?? 0) > 0
-    const hasDefault = next.default && Object.keys(next.default).length > 0
-    onChange(hasRules || hasDefault ? next : null)
+    onChange(next)
   }
 
   const setRule = (index: number, patch: Partial<ScheduleRule>) => {
@@ -98,10 +101,8 @@ export function ScheduleEditor({
     const copy: ScheduleRule = {
       ...source,
       id: `rule-${Date.now().toString(36)}-${index}`,
-      name: source.name ? `${source.name} (copy)` : '',
-      limits: JSON.parse(
-        JSON.stringify(source.limits)
-      ) as ScheduleRule['limits'],
+      name: source.name ? t('{{name}} (copy)', { name: source.name }) : '',
+      limits: structuredClone(source.limits),
     }
     const next = [...rules]
     next.splice(index + 1, 0, copy)
@@ -122,15 +123,19 @@ export function ScheduleEditor({
   return (
     <div className='space-y-3'>
       <div className='flex flex-wrap items-end justify-between gap-3'>
-        <div className='space-y-1'>
-          <Label className='text-muted-foreground text-xs font-normal'>
+        <div className='min-w-0 space-y-1'>
+          <Label
+            htmlFor={`${editorId}-timezone`}
+            className='text-muted-foreground text-xs font-normal'
+          >
             {t('Schedule timezone')}
           </Label>
           <Input
-            className='w-56'
-            value={schedule.timezone ?? 'Asia/Shanghai'}
+            id={`${editorId}-timezone`}
+            className='w-full min-w-0 sm:w-56'
+            value={schedule.timezone ?? defaultTimezone}
             onChange={(event) => update({ timezone: event.target.value })}
-            placeholder='Asia/Shanghai'
+            placeholder={t('e.g. Asia/Shanghai')}
           />
         </div>
         <Button
@@ -168,23 +173,29 @@ export function ScheduleEditor({
             >
               <div className='bg-muted/30 flex flex-wrap items-center gap-2 border-b p-2'>
                 <Switch
+                  aria-label={t('Enable time window')}
                   checked={enabled}
                   onCheckedChange={(checked) =>
                     setRule(index, { enabled: checked })
                   }
                 />
                 <Input
-                  className='h-8 w-44'
+                  className='h-8 w-full min-w-0 sm:w-44'
                   value={rule.name ?? ''}
                   onChange={(event) =>
                     setRule(index, { name: event.target.value })
                   }
+                  aria-label={t('Window name')}
                   placeholder={t('Window name')}
                 />
-                <Label className='text-muted-foreground text-xs'>
+                <Label
+                  htmlFor={`${editorId}-${index}-field-1`}
+                  className='text-muted-foreground text-xs'
+                >
                   {t('Priority')}
                 </Label>
                 <Input
+                  id={`${editorId}-${index}-field-1`}
                   className='h-8 w-20'
                   type='number'
                   value={rule.priority ?? 0}
@@ -264,6 +275,7 @@ export function ScheduleEditor({
                           type='button'
                           size='sm'
                           variant={active ? 'default' : 'outline'}
+                          aria-pressed={active}
                           onClick={() => toggleDay(index, day.value)}
                         >
                           {t(day.key)}
@@ -273,12 +285,16 @@ export function ScheduleEditor({
                   </div>
                 </div>
 
-                <div className='grid gap-3 md:grid-cols-4'>
-                  <div className='space-y-1'>
-                    <Label className='text-muted-foreground text-xs'>
+                <div className='grid min-w-0 gap-3 sm:grid-cols-2 lg:grid-cols-4'>
+                  <div className='min-w-0 space-y-1'>
+                    <Label
+                      htmlFor={`${editorId}-${index}-field-2`}
+                      className='text-muted-foreground text-xs'
+                    >
                       {t('Start time')}
                     </Label>
                     <Input
+                      id={`${editorId}-${index}-field-2`}
                       type='time'
                       value={rule.start ?? ''}
                       onChange={(event) =>
@@ -286,11 +302,15 @@ export function ScheduleEditor({
                       }
                     />
                   </div>
-                  <div className='space-y-1'>
-                    <Label className='text-muted-foreground text-xs'>
+                  <div className='min-w-0 space-y-1'>
+                    <Label
+                      htmlFor={`${editorId}-${index}-field-3`}
+                      className='text-muted-foreground text-xs'
+                    >
                       {t('End time')}
                     </Label>
                     <Input
+                      id={`${editorId}-${index}-field-3`}
                       type='time'
                       value={rule.end ?? ''}
                       onChange={(event) =>
@@ -298,11 +318,15 @@ export function ScheduleEditor({
                       }
                     />
                   </div>
-                  <div className='space-y-1'>
-                    <Label className='text-muted-foreground text-xs'>
+                  <div className='min-w-0 space-y-1'>
+                    <Label
+                      htmlFor={`${editorId}-${index}-field-4`}
+                      className='text-muted-foreground text-xs'
+                    >
                       {t('Start date')}
                     </Label>
                     <Input
+                      id={`${editorId}-${index}-field-4`}
                       type='date'
                       value={rule.start_date ?? ''}
                       onChange={(event) =>
@@ -310,11 +334,15 @@ export function ScheduleEditor({
                       }
                     />
                   </div>
-                  <div className='space-y-1'>
-                    <Label className='text-muted-foreground text-xs'>
+                  <div className='min-w-0 space-y-1'>
+                    <Label
+                      htmlFor={`${editorId}-${index}-field-5`}
+                      className='text-muted-foreground text-xs'
+                    >
                       {t('End date')}
                     </Label>
                     <Input
+                      id={`${editorId}-${index}-field-5`}
                       type='date'
                       value={rule.end_date ?? ''}
                       onChange={(event) =>
@@ -324,21 +352,18 @@ export function ScheduleEditor({
                   </div>
                 </div>
 
-                <div className='space-y-1'>
-                  <Label className='text-muted-foreground text-xs'>
+                <div className='min-w-0 space-y-1'>
+                  <Label
+                    htmlFor={`${editorId}-${index}-field-6`}
+                    className='text-muted-foreground text-xs'
+                  >
                     {t('Specific dates (YYYY-MM-DD, comma separated)')}
                   </Label>
-                  <Input
-                    value={(rule.dates ?? []).join(', ')}
-                    onChange={(event) =>
-                      setRule(index, {
-                        dates: event.target.value
-                          .split(/[,\n]/)
-                          .map((item) => item.trim())
-                          .filter(Boolean),
-                      })
-                    }
-                    placeholder='2026-10-01, 2026-10-02'
+                  <DelimitedInput
+                    id={`${editorId}-${index}-field-6`}
+                    value={rule.dates ?? []}
+                    onChange={(dates) => setRule(index, { dates })}
+                    placeholder={t('e.g. 2026-10-01, 2026-10-02')}
                   />
                 </div>
 

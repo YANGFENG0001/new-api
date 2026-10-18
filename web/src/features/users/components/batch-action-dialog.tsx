@@ -17,20 +17,14 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { AlertTriangle, CheckCircle2, Loader2, ShieldCheck } from 'lucide-react'
+import { nanoid } from 'nanoid'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
+import { Dialog } from '@/components/dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -40,8 +34,11 @@ import { parseQuotaFromDollars } from '@/lib/format'
 import { handleServerError } from '@/lib/handle-server-error'
 
 import { executeBatch, previewBatch } from '../batch/api'
-import type { BatchActionInfo } from '../batch/types'
-import type { BatchPreview, BatchRequest } from '../batch/types'
+import type {
+  BatchActionInfo,
+  BatchPreview,
+  BatchRequest,
+} from '../batch/types'
 import { useUsers } from './users-provider'
 
 interface BatchActionDialogProps {
@@ -73,12 +70,13 @@ export function BatchActionDialog({
   onCompleted,
 }: BatchActionDialogProps) {
   const { t } = useTranslation()
-  const { requestVerification, triggerRefresh } = useUsers()
+  const { requestVerification, verificationActive, triggerRefresh } = useUsers()
   const [group, setGroup] = useState('')
   const [quotaDollars, setQuotaDollars] = useState('')
   const [reason, setReason] = useState('')
   const [note, setNote] = useState('')
   const [preview, setPreview] = useState<BatchPreview | null>(null)
+  const [previewRequest, setPreviewRequest] = useState('')
   const [loading, setLoading] = useState(false)
   const [executing, setExecuting] = useState(false)
   const [error, setError] = useState('')
@@ -98,7 +96,10 @@ export function BatchActionDialog({
     if (!Number.isFinite(parsed) || parsed < 0) return null
     // Only override_quota accepts zero, which resets the balance to empty.
     if (action?.action !== 'override_quota' && parsed <= 0) return null
-    return parseQuotaFromDollars(parsed)
+    const quota = parseQuotaFromDollars(parsed)
+    if (!Number.isSafeInteger(quota)) return null
+    if (action?.action !== 'override_quota' && quota <= 0) return null
+    return quota
   }, [action?.action, quotaDollars])
 
   const buildRequest = useCallback((): BatchRequest | null => {
@@ -130,18 +131,23 @@ export function BatchActionDialog({
     return true
   }, [action, group, parseQuotaInput, userIds.length])
 
+  const previewCurrent =
+    preview !== null && previewRequest === JSON.stringify(buildRequest())
+
   const handlePreview = async () => {
     const request = buildRequest()
     if (!request) return
     setLoading(true)
+    setPreview(null)
     setError('')
     try {
       const result = await previewBatch(request)
       if (!result.success || !result.data) {
-        setError(result.message || t('Preview failed'))
+        setError(t(result.message || 'Preview failed'))
         return
       }
       setPreview(result.data)
+      setPreviewRequest(JSON.stringify(request))
     } catch (err) {
       handleServerError(err, t('Preview failed'))
     } finally {
@@ -150,7 +156,7 @@ export function BatchActionDialog({
   }
 
   const handleExecute = async () => {
-    if (!preview || !action) return
+    if (!preview || !previewCurrent || !action) return
     const request = buildRequest()
     if (!request) return
     const eligibleIds = preview.items
@@ -174,7 +180,7 @@ export function BatchActionDialog({
       })
       if (!proof) return
       const result = await executeBatch(
-        { ...request, idempotency_key: crypto.randomUUID() },
+        { ...request, idempotency_key: nanoid() },
         preview.batch_hash,
         proof.proof_token
       )
@@ -184,14 +190,16 @@ export function BatchActionDialog({
       }
       const job = result.data.job
       toast.success(
-        t(
-          'Bulk action finished: {{succeeded}} succeeded, {{failed}} failed, {{skipped}} skipped',
-          {
-            succeeded: job.succeeded,
-            failed: job.failed,
-            skipped: job.skipped,
-          }
-        )
+        ['pending', 'running'].includes(job.status)
+          ? t('Bulk action started')
+          : t(
+              'Bulk action finished: {{succeeded}} succeeded, {{failed}} failed, {{skipped}} skipped',
+              {
+                succeeded: job.succeeded,
+                failed: job.failed,
+                skipped: job.skipped,
+              }
+            )
       )
       triggerRefresh()
       onCompleted()
@@ -206,151 +214,35 @@ export function BatchActionDialog({
   const title = action ? t('Bulk {{action}}', { action: t(action.action) }) : ''
 
   return (
-    <Dialog open={action !== null} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className='flex max-h-[90vh] flex-col sm:max-w-3xl'>
-        <DialogHeader>
-          <DialogTitle className='flex items-center gap-2'>
-            {action?.destructive ? (
-              <AlertTriangle className='text-destructive size-5' />
-            ) : (
-              <ShieldCheck className='size-5' />
-            )}
-            {title}
-          </DialogTitle>
-          <DialogDescription>
-            {t(
-              '{{count}} users selected. Preview the eligible set before executing.',
-              {
-                count: userIds.length,
-              }
-            )}
-          </DialogDescription>
-        </DialogHeader>
-
-        <div className='min-h-0 flex-1 space-y-4 overflow-y-auto pr-1'>
-          {action?.action === 'group' && (
-            <div className='space-y-2'>
-              <Label>{t('Target group')}</Label>
-              <Input
-                value={group}
-                onChange={(event) => setGroup(event.target.value)}
-                placeholder={t('Group name')}
-              />
-            </div>
+    <Dialog
+      open={action !== null && !verificationActive}
+      onOpenChange={(open) => !open && !executing && onClose()}
+      contentClassName='max-h-[90vh] sm:max-w-3xl'
+      bodyClassName='space-y-4'
+      titleClassName='flex items-center gap-2'
+      showCloseButton={!executing}
+      title={
+        <>
+          {action?.destructive ? (
+            <AlertTriangle className='text-destructive size-5' />
+          ) : (
+            <ShieldCheck className='size-5' />
           )}
-
-          {action?.quota && (
-            <div className='space-y-2'>
-              <Label>
-                {action.action === 'override_quota'
-                  ? t('Quota to set (USD)')
-                  : t('Quota amount (USD)')}
-              </Label>
-              <Input
-                type='number'
-                min='0'
-                step='0.01'
-                value={quotaDollars}
-                onChange={(event) => setQuotaDollars(event.target.value)}
-                placeholder='1.00'
-              />
-            </div>
+          {title}
+        </>
+      }
+      description={
+        <>
+          {t(
+            '{{count}} users selected. Preview the eligible set before executing.',
+            {
+              count: userIds.length,
+            }
           )}
-
-          {action && REASON_ACTIONS.has(action.action) && (
-            <div className='space-y-2'>
-              <Label>{t('Reason (recorded in the audit log)')}</Label>
-              <Textarea
-                value={reason}
-                onChange={(event) => setReason(event.target.value)}
-                rows={2}
-                maxLength={200}
-              />
-            </div>
-          )}
-
-          <div className='space-y-2'>
-            <Label>{t('Internal note (optional)')}</Label>
-            <Input
-              value={note}
-              onChange={(event) => setNote(event.target.value)}
-              maxLength={200}
-            />
-          </div>
-
-          {error && (
-            <p className='text-destructive text-sm' role='alert'>
-              {error}
-            </p>
-          )}
-
-          {preview && (
-            <>
-              <Separator />
-              <div className='flex flex-wrap items-center gap-2 text-sm'>
-                <Badge variant='secondary'>
-                  {t('{{count}} eligible', { count: preview.eligible })}
-                </Badge>
-                <Badge variant='outline'>
-                  {t('{{count}} skipped', { count: preview.skipped })}
-                </Badge>
-                <span className='text-muted-foreground'>
-                  {t('Preview hash')}: {preview.batch_hash.slice(0, 12)}
-                </span>
-              </div>
-              {(preview.warnings ?? []).length > 0 && (
-                <ul className='list-disc space-y-1 pl-5 text-sm text-amber-600'>
-                  {preview.warnings?.map((warning) => (
-                    <li key={warning}>{warning}</li>
-                  ))}
-                </ul>
-              )}
-              <ScrollArea className='h-64 rounded-md border'>
-                <table className='w-full text-sm'>
-                  <thead className='bg-muted/80 sticky top-0 text-left'>
-                    <tr>
-                      <th className='p-2'>{t('User')}</th>
-                      <th className='p-2'>{t('Status')}</th>
-                      <th className='p-2'>{t('Details')}</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {preview.items.map((item) => (
-                      <tr key={item.user_id} className='border-t'>
-                        <td className='p-2'>
-                          {item.username}
-                          <span className='text-muted-foreground'>
-                            {' '}
-                            #{item.user_id}
-                          </span>
-                        </td>
-                        <td className='p-2'>
-                          {item.eligible ? (
-                            <span className='inline-flex items-center gap-1 text-emerald-600'>
-                              <CheckCircle2 className='size-4' />
-                              {t('Eligible')}
-                            </span>
-                          ) : (
-                            <span className='text-muted-foreground'>
-                              {t('Skipped')}
-                            </span>
-                          )}
-                        </td>
-                        <td className='text-muted-foreground p-2'>
-                          {item.eligible
-                            ? (item.warnings ?? []).join('; ') || '-'
-                            : item.skip_reason || '-'}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </ScrollArea>
-            </>
-          )}
-        </div>
-
-        <DialogFooter className='gap-2'>
+        </>
+      }
+      footer={
+        <>
           <Button variant='outline' onClick={onClose} disabled={executing}>
             {t('Cancel')}
           </Button>
@@ -365,13 +257,146 @@ export function BatchActionDialog({
           <Button
             variant={action?.destructive ? 'destructive' : 'default'}
             onClick={handleExecute}
-            disabled={!preview || preview.eligible === 0 || executing}
+            disabled={
+              !previewCurrent ||
+              !preview ||
+              preview.eligible === 0 ||
+              loading ||
+              executing
+            }
           >
             {executing && <Loader2 className='size-4 animate-spin' />}
             {t('Verify and execute')}
           </Button>
-        </DialogFooter>
-      </DialogContent>
+        </>
+      }
+    >
+      {action?.action === 'group' && (
+        <div className='space-y-2'>
+          <Label>{t('Target group')}</Label>
+          <Input
+            disabled={executing}
+            value={group}
+            onChange={(event) => setGroup(event.target.value)}
+            placeholder={t('Group name')}
+          />
+        </div>
+      )}
+
+      {action?.quota && (
+        <div className='space-y-2'>
+          <Label>
+            {action.action === 'override_quota'
+              ? t('Quota to set (USD)')
+              : t('Quota amount (USD)')}
+          </Label>
+          <Input
+            disabled={executing}
+            type='number'
+            min='0'
+            step='0.01'
+            value={quotaDollars}
+            onChange={(event) => setQuotaDollars(event.target.value)}
+            placeholder='1.00'
+          />
+        </div>
+      )}
+
+      {action && REASON_ACTIONS.has(action.action) && (
+        <div className='space-y-2'>
+          <Label>{t('Reason (recorded in the audit log)')}</Label>
+          <Textarea
+            disabled={executing}
+            value={reason}
+            onChange={(event) => setReason(event.target.value)}
+            rows={2}
+            maxLength={200}
+          />
+        </div>
+      )}
+
+      <div className='space-y-2'>
+        <Label>{t('Internal note (optional)')}</Label>
+        <Input
+          disabled={executing}
+          value={note}
+          onChange={(event) => setNote(event.target.value)}
+          maxLength={200}
+        />
+      </div>
+
+      {error && (
+        <p className='text-destructive text-sm' role='alert'>
+          {error}
+        </p>
+      )}
+
+      {preview && (
+        <>
+          <Separator />
+          <div className='flex flex-wrap items-center gap-2 text-sm'>
+            <Badge variant='secondary'>
+              {t('{{count}} eligible', { count: preview.eligible })}
+            </Badge>
+            <Badge variant='outline'>
+              {t('{{count}} skipped', { count: preview.skipped })}
+            </Badge>
+            <span className='text-muted-foreground'>
+              {t('Preview hash')}: {preview.batch_hash.slice(0, 12)}
+            </span>
+          </div>
+          {(preview.warnings ?? []).length > 0 && (
+            <ul className='list-disc space-y-1 pl-5 text-sm text-amber-600'>
+              {preview.warnings?.map((warning) => (
+                <li key={warning}>{t(warning)}</li>
+              ))}
+            </ul>
+          )}
+          <ScrollArea className='h-64 rounded-md border'>
+            <table className='w-full text-sm'>
+              <thead className='bg-muted/80 sticky top-0 text-left'>
+                <tr>
+                  <th className='p-2'>{t('User')}</th>
+                  <th className='p-2'>{t('Status')}</th>
+                  <th className='p-2'>{t('Details')}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {preview.items.map((item) => (
+                  <tr key={item.user_id} className='border-t'>
+                    <td className='p-2'>
+                      {item.username}
+                      <span className='text-muted-foreground'>
+                        {' '}
+                        #{item.user_id}
+                      </span>
+                    </td>
+                    <td className='p-2'>
+                      {item.eligible ? (
+                        <span className='inline-flex items-center gap-1 text-emerald-600'>
+                          <CheckCircle2 className='size-4' />
+                          {t('Eligible')}
+                        </span>
+                      ) : (
+                        <span className='text-muted-foreground'>
+                          {t('Skipped')}
+                        </span>
+                      )}
+                    </td>
+                    <td className='text-muted-foreground p-2'>
+                      {item.eligible
+                        ? (item.warnings ?? [])
+                            .map((warning) => t(warning))
+                            .join('; ') || '-'
+                        : t(item.skip_reason || '-')}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </ScrollArea>
+        </>
+      )}
     </Dialog>
   )
 }
