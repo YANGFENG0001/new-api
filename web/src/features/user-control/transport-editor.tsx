@@ -33,7 +33,6 @@ export function TransportEditor(props: {
         <TransportRange
           min={props.value.delay.min_ms}
           max={props.value.delay.max_ms}
-          ceiling={120000}
           minLabel={t('Minimum delay (ms)')}
           maxLabel={t('Maximum delay (ms)')}
           onChange={(min, max) =>
@@ -61,7 +60,6 @@ export function TransportEditor(props: {
             min={props.value.delivery.min_cps}
             max={props.value.delivery.max_cps}
             floor={1}
-            ceiling={1000}
             minLabel={t('Minimum characters per second')}
             maxLabel={t('Maximum characters per second')}
             onChange={(min, max) =>
@@ -75,6 +73,11 @@ export function TransportEditor(props: {
           </p>
         </>
       )}
+      <p className='text-muted-foreground text-xs'>
+        {t(
+          'Delay may be zero; delivery rate must be positive. Use integers with maximum not less than minimum. No configured upper cap; request timeouts still apply.'
+        )}
+      </p>
     </div>
   )
 }
@@ -84,7 +87,7 @@ export function TransportRange(props: {
   min: number
   max: number
   floor?: number
-  ceiling: number
+  ceiling?: number
   minLabel: string
   maxLabel: string
   onChange: (min: number, max: number) => void
@@ -92,11 +95,11 @@ export function TransportRange(props: {
   const { t } = useTranslation()
   const id = useId()
   const invalid =
-    !Number.isInteger(props.min) ||
-    !Number.isInteger(props.max) ||
+    !Number.isSafeInteger(props.min) ||
+    !Number.isSafeInteger(props.max) ||
     props.min < (props.floor ?? 0) ||
     props.max < props.min ||
-    props.max > props.ceiling
+    (props.ceiling !== undefined && props.max > props.ceiling)
   return (
     <div className='grid min-w-0 gap-3 sm:grid-cols-2'>
       <Field data-invalid={invalid}>

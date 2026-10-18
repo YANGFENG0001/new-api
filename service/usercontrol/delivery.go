@@ -28,6 +28,7 @@ type DelayAction struct {
 }
 
 // CPS is Unicode code points per second, not tokenizer-specific tokens.
+// Configured rates must be positive; replay rejects invalid ranges as well.
 type DeliveryAction struct {
 	MinCPS int `json:"min_cps"`
 	MaxCPS int `json:"max_cps"`
@@ -39,7 +40,9 @@ const maxDeliveryEventBytes = 1 << 20
 var deliverySlots = make(chan struct{}, 32)
 
 func randomRange(low, high int) int {
-	v, err := rand.Int(rand.Reader, big.NewInt(int64(high-low+1)))
+	width := new(big.Int).Sub(big.NewInt(int64(high)), big.NewInt(int64(low)))
+	width.Add(width, big.NewInt(1))
+	v, err := rand.Int(rand.Reader, width)
 	if err != nil {
 		return low
 	}
@@ -57,6 +60,20 @@ func waitDelivery(ctx context.Context, duration time.Duration) error {
 	}
 }
 
+// Chunk long administrator-configured delays so converting milliseconds to a
+// nanosecond Duration cannot overflow or turn a large wait into an instant one.
+func waitUpstreamDelay(ctx context.Context, milliseconds int, wait func(context.Context, time.Duration) error) error {
+	const maxChunkMS = int64((1<<63 - 1) / time.Millisecond)
+	for remaining := int64(milliseconds); remaining > 0; {
+		chunk := min(remaining, maxChunkMS)
+		if err := wait(ctx, time.Duration(chunk)*time.Millisecond); err != nil {
+			return err
+		}
+		remaining -= chunk
+	}
+	return ctx.Err()
+}
+
 // Deliver runs after final channel selection and before the relay. No network
 // output escapes during capture; temporary bodies are private and always removed.
 func Deliver(c *gin.Context) {
@@ -70,13 +87,43 @@ func Deliver(c *gin.Context) {
 		c.Next()
 		return
 	}
+	requestCtx, cancelRequest := context.WithCancel(c.Request.Context())
+	defer cancelRequest()
+	c.Request = c.Request.WithContext(requestCtx)
+	// Existing concurrency buckets expire after 10m. Keep their leases alive
+	// throughout upstream waiting and replay rather than silently freeing a slot.
+	keys := []string{ConcurrencyKey(c.GetInt("id"))}
+	if effective, ok := FromContext(c); ok {
+		for _, rule := range effective.Limits.ScopedRules {
+			keys = append(keys, rule.Bucket(c.GetInt("id"))+":concurrent")
+		}
+	}
+	leaseCtx, stopLease := context.WithCancel(requestCtx)
+	leaseDone := make(chan struct{})
+	go func() {
+		defer close(leaseDone)
+		ticker := time.NewTicker(time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-leaseCtx.Done():
+				return
+			case <-ticker.C:
+				if err := renewConcurrencyLeases(keys); err != nil {
+					cancelRequest()
+					return
+				}
+			}
+		}
+	}()
+	defer func() { stopLease(); <-leaseDone }()
 	started := time.Now()
 	delayMS := 0
 	if s.Delay != nil {
 		delayMS = randomRange(s.Delay.MinMS, s.Delay.MaxMS)
 	}
 	if delayMS > 0 {
-		if err := waitDelivery(c.Request.Context(), time.Duration(delayMS)*time.Millisecond); err != nil {
+		if err := waitUpstreamDelay(c.Request.Context(), delayMS, waitDelivery); err != nil {
 			c.Set("user_control_runtime_failed", true)
 			c.Abort()
 			return
@@ -126,33 +173,6 @@ func Deliver(c *gin.Context) {
 	}
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Minute)
 	defer cancel()
-	// Existing concurrency buckets expire after 10m. Keep their leases alive
-	// during a deliberately slow delivery rather than silently freeing a slot.
-	keys := []string{ConcurrencyKey(c.GetInt("id"))}
-	if effective, ok := FromContext(c); ok {
-		for _, rule := range effective.Limits.ScopedRules {
-			keys = append(keys, rule.Bucket(c.GetInt("id"))+":concurrent")
-		}
-	}
-	leaseCtx, stopLease := context.WithCancel(ctx)
-	leaseDone := make(chan struct{})
-	go func() {
-		defer close(leaseDone)
-		ticker := time.NewTicker(time.Minute)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-leaseCtx.Done():
-				return
-			case <-ticker.C:
-				if err := renewConcurrencyLeases(keys); err != nil {
-					cancel()
-					return
-				}
-			}
-		}
-	}()
-	defer func() { stopLease(); <-leaseDone }()
 	c.Request = c.Request.WithContext(ctx)
 	original := c.Writer
 	capture := &deliveryWriter{ResponseWriter: original, file: file, header: original.Header().Clone(), status: http.StatusOK, size: -1, cancel: cancel}
@@ -321,6 +341,9 @@ func (w *deliveryWriter) Pusher() http.Pusher { return nil }
 // reasoning content, signatures, tool calls, usage and end events, are retained.
 // A nil emit performs a validation-only pass, with no waits or allocation per rune.
 func replaySSE(ctx context.Context, reader io.Reader, emit func([]byte) error, rate *DeliveryAction, wait func(context.Context, time.Duration) error) error {
+	if err := normalizeActions(&Actions{Delivery: rate}); err != nil {
+		return err
+	}
 	scanner := bufio.NewScanner(reader)
 	scanner.Buffer(make([]byte, 4096), maxDeliveryEventBytes+1)
 	var lines []string
@@ -434,9 +457,12 @@ func replaySSE(ctx context.Context, reader io.Reader, emit func([]byte) error, r
 				part = continuation
 			}
 			if len(runes) > 0 {
-				if wait != nil {
-					if err := wait(ctx, time.Second/time.Duration(randomRange(rate.MinCPS, rate.MaxCPS))); err != nil {
-						return err
+				if wait != nil && rate != nil {
+					cps := randomRange(rate.MinCPS, rate.MaxCPS)
+					if duration := time.Second / time.Duration(cps); duration > 0 {
+						if err := wait(ctx, duration); err != nil {
+							return err
+						}
 					}
 				}
 				var err error

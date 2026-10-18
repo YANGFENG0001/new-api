@@ -76,6 +76,36 @@ func TestUserControlDeliveryMiddlewareCapturesAndRejectsNonstreamFallback(t *tes
 	}
 }
 
+func TestUserControlDelayOnlyAllowsZeroAndAbortsCanceledLongWaitBeforeUpstream(t *testing.T) {
+	for _, canceled := range []bool{false, true} {
+		t.Run(fmt.Sprint(canceled), func(t *testing.T) {
+			router := gin.New()
+			router.Use(func(c *gin.Context) {
+				milliseconds := 0
+				if canceled {
+					milliseconds = int(^uint(0) >> 1)
+				}
+				state(c).Delay = &DelayAction{MinMS: milliseconds, MaxMS: milliseconds}
+				Deliver(c)
+				assert.Equal(t, canceled, c.GetBool("user_control_runtime_failed"))
+			})
+			called := false
+			router.POST("/v1/chat/completions", func(c *gin.Context) {
+				called = true
+				c.Status(204)
+			})
+			request := httptest.NewRequest("POST", "/v1/chat/completions", nil)
+			if canceled {
+				ctx, cancel := context.WithCancel(request.Context())
+				cancel()
+				request = request.WithContext(ctx)
+			}
+			router.ServeHTTP(httptest.NewRecorder(), request)
+			assert.Equal(t, !canceled, called)
+		})
+	}
+}
+
 func TestUserControlDeliveryLeaseRenewalKeepsRedisConcurrentSlotUntilRelease(t *testing.T) {
 	server := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
@@ -125,7 +155,9 @@ func TestUserControlRandomWindowContinuousAndOvernightAnchor(t *testing.T) {
 func TestUserControlTransportAndRandomValidation(t *testing.T) {
 	for _, raw := range []string{
 		`{"scoped_rules":[{"id":"x","limits":{},"actions":{"delay":{"min_ms":10,"max_ms":9}}}]}`,
+		`{"scoped_rules":[{"id":"x","limits":{},"actions":{"delivery":{"min_cps":-1,"max_cps":9}}}]}`,
 		`{"scoped_rules":[{"id":"x","limits":{},"actions":{"delivery":{"min_cps":0,"max_cps":9}}}]}`,
+		`{"scoped_rules":[{"id":"x","limits":{},"actions":{"delivery":{"min_cps":10,"max_cps":9}}}]}`,
 		`{"random_pool":{"policy_ids":[],"hold_min":1,"hold_max":2}}`,
 		`{"random_pool":{"policy_ids":[1],"hold_min":1441,"hold_max":1441}}`,
 	} {
@@ -137,6 +169,60 @@ func TestUserControlTransportAndRandomValidation(t *testing.T) {
 	s, _, err := ParseScheduleJSON([]byte(`{"rules":[{"limits":{},"random":{"enabled":true,"active_min":1,"active_max":2,"idle_min":1,"idle_max":2}}]}`))
 	require.NoError(t, err)
 	assert.NotEmpty(t, s.Rules[0].Random.Seed)
+}
+
+func TestUserControlTransportAcceptsZeroDelayPositiveRatesAndRangesBeyondPreviousCaps(t *testing.T) {
+	maxInt := int(^uint(0) >> 1)
+	for _, values := range []struct{ low, high int }{{0, 0}, {0, 2000000}, {2000000, 2000000}, {0, maxInt}, {maxInt, maxInt}} {
+		t.Run(fmt.Sprintf("%d-%d", values.low, values.high), func(t *testing.T) {
+			require.NoError(t, normalizeActions(&Actions{
+				Delay:    &DelayAction{MinMS: values.low, MaxMS: values.high},
+				Delivery: &DeliveryAction{MinCPS: max(values.low, 1), MaxCPS: max(values.high, 1)},
+			}))
+			actual := randomRange(values.low, values.high)
+			assert.GreaterOrEqual(t, actual, values.low)
+			assert.LessOrEqual(t, actual, values.high)
+		})
+	}
+}
+
+func TestUserControlLongUpstreamDelayDoesNotOverflowAndRemainsCancelable(t *testing.T) {
+	maxInt := int(^uint(0) >> 1)
+	errCanceled := errors.New("request canceled while waiting")
+	err := waitUpstreamDelay(context.Background(), maxInt, func(_ context.Context, duration time.Duration) error {
+		assert.Positive(t, duration)
+		assert.Equal(t, time.Duration(min(int64(maxInt), int64((1<<63-1)/time.Millisecond)))*time.Millisecond, duration)
+		return errCanceled
+	})
+	require.ErrorIs(t, err, errCanceled)
+	require.NoError(t, waitUpstreamDelay(context.Background(), 0, func(context.Context, time.Duration) error {
+		t.Fatal("zero delay must not wait")
+		return nil
+	}))
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	require.ErrorIs(t, waitUpstreamDelay(ctx, maxInt, waitDelivery), context.Canceled)
+}
+
+func TestUserControlReplayRejectsZeroRateAndPreservesTextAtLargeRates(t *testing.T) {
+	input := "data: " + `{"choices":[{"delta":{"content":"中🙂"}}]}` + "\n\ndata: [DONE]\n\n"
+	require.Error(t, replaySSE(context.Background(), strings.NewReader(input), nil, &DeliveryAction{}, nil))
+	for _, cps := range []int{2000000, int(^uint(0) >> 1)} {
+		t.Run(fmt.Sprint(cps), func(t *testing.T) {
+			var output strings.Builder
+			err := replaySSE(context.Background(), strings.NewReader(input), func(packet []byte) error {
+				output.Write(packet)
+				return nil
+			}, &DeliveryAction{MinCPS: cps, MaxCPS: cps}, func(_ context.Context, duration time.Duration) error {
+				assert.Positive(t, duration)
+				return nil
+			})
+			require.NoError(t, err)
+			assert.Contains(t, output.String(), "中")
+			assert.Contains(t, output.String(), "🙂")
+			assert.Contains(t, output.String(), "[DONE]")
+		})
+	}
 }
 
 func TestUserControlReplaySplitsUnicodeAndPreservesToolCallsUsageAndOpaqueContent(t *testing.T) {

@@ -130,11 +130,11 @@ func normalizeScopedRules(rules []ScopedRule) error {
 }
 
 func normalizeActions(a *Actions) error {
-	if d := a.Delay; d != nil && (d.MinMS < 0 || d.MaxMS < d.MinMS || d.MaxMS > 120000) {
-		return fmt.Errorf("%w: delay must be between 0 and 120000 ms", ErrInvalidInput)
+	if d := a.Delay; d != nil && (d.MinMS < 0 || d.MaxMS < d.MinMS) {
+		return fmt.Errorf("%w: delay must be a non-negative ordered integer range", ErrInvalidInput)
 	}
-	if d := a.Delivery; d != nil && (d.MinCPS < 1 || d.MaxCPS < d.MinCPS || d.MaxCPS > 1000) {
-		return fmt.Errorf("%w: delivery rate must be between 1 and 1000 characters/s", ErrInvalidInput)
+	if d := a.Delivery; d != nil && (d.MinCPS <= 0 || d.MaxCPS < d.MinCPS) {
+		return fmt.Errorf("%w: delivery rate must be a positive ordered integer range", ErrInvalidInput)
 	}
 	if a.RequestMode != "" && a.RequestMode != "merge" && a.RequestMode != "replace" {
 		return fmt.Errorf("%w: invalid request replacement mode", ErrInvalidInput)
