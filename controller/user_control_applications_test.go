@@ -68,6 +68,21 @@ func TestUserControlV2SchedulingBindingsAndMigration(t *testing.T) {
 	require.NoError(t, model.CreateUserControlList(list))
 	_, err = model.AddUserControlListMembers(list.Id, []int{target.Id}, "", operator.Id)
 	require.NoError(t, err)
+	legacyEffective, err := usercontrol.ResolveAt(target.Id, target.Role, time.Now())
+	require.NoError(t, err)
+	require.Len(t, legacyEffective.Limits.ScopedRules, 1)
+	legacyRule := legacyEffective.Limits.ScopedRules[0]
+	oldBucketRule := legacyRule
+	oldBucketRule.Namespace = fmt.Sprintf("list:%d:%d", p.Id, p.Id)
+	require.Equal(t, oldBucketRule.Bucket(target.Id), legacyRule.Bucket(target.Id), "upgrade without migration must retain the existing scoped quota bucket")
+	mixedApplication := model.UserControlApplication{OwnerKind: "user", OwnerId: target.Id, Targets: fmt.Sprintf(`[{"kind":"policy","id":%d}]`, p.Id), Mode: "merge"}
+	require.NoError(t, model.SaveUserControlApplicationVersion(&mixedApplication, 0))
+	mixed, err := usercontrol.ResolveAt(target.Id, target.Role, time.Now())
+	require.NoError(t, err)
+	require.Len(t, mixed.Limits.ScopedRules, 1, "a new reference must not duplicate an existing legacy policy")
+	require.Equal(t, legacyRule.Bucket(target.Id), mixed.Limits.ScopedRules[0].Bucket(target.Id))
+	require.NoError(t, model.DB.Delete(&mixedApplication).Error)
+
 	body := fmt.Sprintf(`{"targets":[{"kind":"pool","id":%d}],"mode":"merge","version":0}`, pool.Id)
 	require.Equal(t, 409, put("list", list.Id, body).Code, "legacy replacement must be acknowledged")
 	body = strings.TrimSuffix(body, "}") + `,"confirm_legacy":true}`

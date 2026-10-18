@@ -3,6 +3,7 @@ package usercontrol
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -89,6 +90,16 @@ func resolveAt(userID int, role int, now time.Time) (*Effective, error) {
 
 	effective := &Effective{Timezone: DefaultTimezone, ResolvedAt: now}
 	var merged Limits
+	// Legacy buckets must survive a code-only upgrade. New bindings reuse an
+	// existing legacy bucket for the same policy during a gradual migration.
+	legacyNamespaces := map[int]string{}
+	for _, source := range sources {
+		if source.Policy.Id > 0 && !strings.HasPrefix(source.Source, "application_") && BehaviorOnly(source.Policy) {
+			if _, exists := legacyNamespaces[source.Policy.Id]; !exists {
+				legacyNamespaces[source.Policy.Id] = fmt.Sprintf("%s:%d:%d", source.Source, source.SourceId, source.Policy.Id)
+			}
+		}
+	}
 	for _, source := range sources {
 		active, hits, timezone, selectedID, policy, err := resolveSource(source, userID, now)
 		if err != nil {
@@ -125,8 +136,11 @@ func resolveAt(userID int, role int, now time.Time) (*Effective, error) {
 		}
 		for i := range active.ScopedRules {
 			active.ScopedRules[i].Namespace = fmt.Sprintf("%s:%d:%d", source.Source, source.SourceId, policy.Id)
-			if BehaviorOnly(policy) && policy.Id > 0 {
-				active.ScopedRules[i].Namespace = fmt.Sprintf("policy:%d", policy.Id)
+			if BehaviorOnly(policy) && policy.Id > 0 && (source.Pool != nil || strings.HasPrefix(source.Source, "application_")) {
+				active.ScopedRules[i].Namespace = legacyNamespaces[policy.Id]
+				if active.ScopedRules[i].Namespace == "" {
+					active.ScopedRules[i].Namespace = fmt.Sprintf("policy:%d", policy.Id)
+				}
 			}
 			active.ScopedRules[i].PolicyPriority = policy.Priority
 			if source.Pool != nil {
