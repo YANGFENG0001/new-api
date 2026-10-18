@@ -76,7 +76,7 @@ test('continuous random windows expose separate active and rest ranges and retai
   ).toHaveValue(8)
 })
 
-test('transport accepts zero delay and uncapped positive rates but rejects invalid ranges', async () => {
+test('transport accepts zero and uncapped ranges but rejects invalid values', async () => {
   render(<ActionsFixture />)
   for (const label of [
     'Random upstream delay',
@@ -86,7 +86,7 @@ test('transport accepts zero delay and uncapped positive rates but rejects inval
   }
   for (const [minLabel, maxLabel, floor] of [
     ['Minimum delay (ms)', 'Maximum delay (ms)', '0'],
-    ['Minimum characters per second', 'Maximum characters per second', '1'],
+    ['Minimum characters per second', 'Maximum characters per second', '0'],
   ]) {
     const minimum = screen.getByLabelText(minLabel)
     const maximum = screen.getByLabelText(maxLabel)
@@ -97,11 +97,6 @@ test('transport accepts zero delay and uncapped positive rates but rejects inval
     fireEvent.change(maximum, { target: { value: floor } })
     expect(minimum).toHaveAttribute('aria-invalid', 'false')
     expect(maximum).toHaveValue(Number(floor))
-    if (floor === '1') {
-      fireEvent.change(minimum, { target: { value: '0' } })
-      expect(minimum).toHaveAttribute('aria-invalid', 'true')
-      fireEvent.change(minimum, { target: { value: floor } })
-    }
     fireEvent.change(maximum, { target: { value: '2000000' } })
     expect(maximum).toHaveAttribute('aria-invalid', 'false')
     fireEvent.change(minimum, { target: { value: '-1' } })

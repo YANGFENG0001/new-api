@@ -156,7 +156,6 @@ func TestUserControlTransportAndRandomValidation(t *testing.T) {
 	for _, raw := range []string{
 		`{"scoped_rules":[{"id":"x","limits":{},"actions":{"delay":{"min_ms":10,"max_ms":9}}}]}`,
 		`{"scoped_rules":[{"id":"x","limits":{},"actions":{"delivery":{"min_cps":-1,"max_cps":9}}}]}`,
-		`{"scoped_rules":[{"id":"x","limits":{},"actions":{"delivery":{"min_cps":0,"max_cps":9}}}]}`,
 		`{"scoped_rules":[{"id":"x","limits":{},"actions":{"delivery":{"min_cps":10,"max_cps":9}}}]}`,
 		`{"random_pool":{"policy_ids":[],"hold_min":1,"hold_max":2}}`,
 		`{"random_pool":{"policy_ids":[1],"hold_min":1441,"hold_max":1441}}`,
@@ -171,13 +170,13 @@ func TestUserControlTransportAndRandomValidation(t *testing.T) {
 	assert.NotEmpty(t, s.Rules[0].Random.Seed)
 }
 
-func TestUserControlTransportAcceptsZeroDelayPositiveRatesAndRangesBeyondPreviousCaps(t *testing.T) {
+func TestUserControlTransportAcceptsZeroAndRangesBeyondPreviousCaps(t *testing.T) {
 	maxInt := int(^uint(0) >> 1)
 	for _, values := range []struct{ low, high int }{{0, 0}, {0, 2000000}, {2000000, 2000000}, {0, maxInt}, {maxInt, maxInt}} {
 		t.Run(fmt.Sprintf("%d-%d", values.low, values.high), func(t *testing.T) {
 			require.NoError(t, normalizeActions(&Actions{
 				Delay:    &DelayAction{MinMS: values.low, MaxMS: values.high},
-				Delivery: &DeliveryAction{MinCPS: max(values.low, 1), MaxCPS: max(values.high, 1)},
+				Delivery: &DeliveryAction{MinCPS: values.low, MaxCPS: values.high},
 			}))
 			actual := randomRange(values.low, values.high)
 			assert.GreaterOrEqual(t, actual, values.low)
@@ -204,16 +203,16 @@ func TestUserControlLongUpstreamDelayDoesNotOverflowAndRemainsCancelable(t *test
 	require.ErrorIs(t, waitUpstreamDelay(ctx, maxInt, waitDelivery), context.Canceled)
 }
 
-func TestUserControlReplayRejectsZeroRateAndPreservesTextAtLargeRates(t *testing.T) {
+func TestUserControlReplayPreservesTextWithoutWaitingAtZeroAndAtLargeRates(t *testing.T) {
 	input := "data: " + `{"choices":[{"delta":{"content":"中🙂"}}]}` + "\n\ndata: [DONE]\n\n"
-	require.Error(t, replaySSE(context.Background(), strings.NewReader(input), nil, &DeliveryAction{}, nil))
-	for _, cps := range []int{2000000, int(^uint(0) >> 1)} {
+	for _, cps := range []int{0, 2000000, int(^uint(0) >> 1)} {
 		t.Run(fmt.Sprint(cps), func(t *testing.T) {
 			var output strings.Builder
 			err := replaySSE(context.Background(), strings.NewReader(input), func(packet []byte) error {
 				output.Write(packet)
 				return nil
 			}, &DeliveryAction{MinCPS: cps, MaxCPS: cps}, func(_ context.Context, duration time.Duration) error {
+				assert.NotZero(t, cps, "a sampled zero must not wait")
 				assert.Positive(t, duration)
 				return nil
 			})

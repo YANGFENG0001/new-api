@@ -26,7 +26,7 @@ func TestUserControlTransportRangesPersistWithoutPreviousBusinessCaps(t *testing
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = connection.Close(); usercontrol.Invalidate() })
 	require.NoError(t, model.DB.AutoMigrate(&model.UserControlPolicy{}))
-	raw := []byte(`{"scoped_rules":[{"id":"large-range","limits":{},"actions":{"delay":{"min_ms":0,"max_ms":2000000},"delivery":{"min_cps":1,"max_cps":2000000}}}]}`)
+	raw := []byte(`{"scoped_rules":[{"id":"large-range","limits":{},"actions":{"delay":{"min_ms":0,"max_ms":2000000},"delivery":{"min_cps":0,"max_cps":2000000}}}]}`)
 	policy, err := usercontrol.BuildPolicy(usercontrol.PolicyPayload{Name: "transport-large-range", Limits: raw}, identity.UserID)
 	require.NoError(t, err)
 	require.NoError(t, model.CreateUserControlPolicy(policy))
@@ -38,7 +38,7 @@ func TestUserControlTransportRangesPersistWithoutPreviousBusinessCaps(t *testing
 	actions := view.Limits.ScopedRules[0].Actions
 	require.NotNil(t, actions)
 	assert.Equal(t, &usercontrol.DelayAction{MinMS: 0, MaxMS: 2000000}, actions.Delay)
-	assert.Equal(t, &usercontrol.DeliveryAction{MinCPS: 1, MaxCPS: 2000000}, actions.Delivery)
+	assert.Equal(t, &usercontrol.DeliveryAction{MinCPS: 0, MaxCPS: 2000000}, actions.Delivery)
 }
 
 func TestUserControlPoolPersistenceSelectionAndReferenceGuards(t *testing.T) {

@@ -59,7 +59,6 @@ export function TransportEditor(props: {
           <TransportRange
             min={props.value.delivery.min_cps}
             max={props.value.delivery.max_cps}
-            floor={1}
             minLabel={t('Minimum characters per second')}
             maxLabel={t('Maximum characters per second')}
             onChange={(min, max) =>
@@ -75,7 +74,7 @@ export function TransportEditor(props: {
       )}
       <p className='text-muted-foreground text-xs'>
         {t(
-          'Delay may be zero; delivery rate must be positive. Use integers with maximum not less than minimum. No configured upper cap; request timeouts still apply.'
+          'Delay and delivery rate may be zero. Use non-negative integers with maximum not less than minimum. A sampled zero delivery rate skips the additional pacing wait. No configured upper cap; request timeouts still apply.'
         )}
       </p>
     </div>

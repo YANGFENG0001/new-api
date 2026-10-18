@@ -28,7 +28,7 @@ type DelayAction struct {
 }
 
 // CPS is Unicode code points per second, not tokenizer-specific tokens.
-// Configured rates must be positive; replay rejects invalid ranges as well.
+// A sampled zero skips the additional pacing wait; it never blocks forever.
 type DeliveryAction struct {
 	MinCPS int `json:"min_cps"`
 	MaxCPS int `json:"max_cps"`
@@ -459,7 +459,11 @@ func replaySSE(ctx context.Context, reader io.Reader, emit func([]byte) error, r
 			if len(runes) > 0 {
 				if wait != nil && rate != nil {
 					cps := randomRange(rate.MinCPS, rate.MaxCPS)
-					if duration := time.Second / time.Duration(cps); duration > 0 {
+					var duration time.Duration
+					if cps > 0 {
+						duration = time.Second / time.Duration(cps)
+					}
+					if duration > 0 {
 						if err := wait(ctx, duration); err != nil {
 							return err
 						}
