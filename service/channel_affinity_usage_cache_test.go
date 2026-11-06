@@ -3,7 +3,6 @@ package service
 import (
 	"fmt"
 	"net/http/httptest"
-	"strconv"
 	"sync/atomic"
 	"testing"
 
@@ -13,10 +12,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-var channelAffinityTestSeq atomic.Uint64
+var channelAffinityTestSeq atomic.Int64
 
-func channelAffinityTestToken() string {
-	return strconv.FormatUint(channelAffinityTestSeq.Add(1), 36)
+func affinityTestKeys(t *testing.T) (string, string) {
+	t.Helper()
+	key := fmt.Sprintf("%s:%d", t.Name(), channelAffinityTestSeq.Add(1))
+	return key, key
 }
 
 func buildChannelAffinityStatsContextForTest(ruleName, usingGroup, keyFP string) *gin.Context {
@@ -33,9 +34,8 @@ func buildChannelAffinityStatsContextForTest(ruleName, usingGroup, keyFP string)
 }
 
 func TestObserveChannelAffinityUsageCacheByRelayFormat_ClaudeMode(t *testing.T) {
-	ruleName := "rule_" + channelAffinityTestToken()
+	ruleName, keyFP := affinityTestKeys(t)
 	usingGroup := "default"
-	keyFP := "fp_" + channelAffinityTestToken()
 	ctx := buildChannelAffinityStatsContextForTest(ruleName, usingGroup, keyFP)
 
 	usage := &dto.Usage{
@@ -60,9 +60,8 @@ func TestObserveChannelAffinityUsageCacheByRelayFormat_ClaudeMode(t *testing.T) 
 }
 
 func TestObserveChannelAffinityUsageCacheByRelayFormat_MixedMode(t *testing.T) {
-	ruleName := "rule_" + channelAffinityTestToken()
+	ruleName, keyFP := affinityTestKeys(t)
 	usingGroup := "default"
-	keyFP := "fp_" + channelAffinityTestToken()
 	ctx := buildChannelAffinityStatsContextForTest(ruleName, usingGroup, keyFP)
 
 	openAIUsage := &dto.Usage{
@@ -90,9 +89,8 @@ func TestObserveChannelAffinityUsageCacheByRelayFormat_MixedMode(t *testing.T) {
 }
 
 func TestObserveChannelAffinityUsageCacheByRelayFormat_UnsupportedModeKeepsEmpty(t *testing.T) {
-	ruleName := "rule_" + channelAffinityTestToken()
+	ruleName, keyFP := affinityTestKeys(t)
 	usingGroup := "default"
-	keyFP := "fp_" + channelAffinityTestToken()
 	ctx := buildChannelAffinityStatsContextForTest(ruleName, usingGroup, keyFP)
 
 	usage := &dto.Usage{
