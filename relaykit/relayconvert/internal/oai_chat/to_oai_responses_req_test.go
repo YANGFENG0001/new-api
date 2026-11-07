@@ -139,6 +139,69 @@ func TestChatCompletionsRequestToResponsesRequestPreservesQwenThinkingBudget(t *
 	}
 }
 
+func TestChatCompletionsRequestToResponsesRequestGPTThinkingCompatibility(t *testing.T) {
+	for _, thinking := range []string{"true", "false"} {
+		for _, effort := range []string{"", "high"} {
+			t.Run(thinking+"/"+effort, func(t *testing.T) {
+				req := &dto.GeneralOpenAIRequest{
+					Model:           "gpt-6.1-sol",
+					Messages:        []dto.Message{{Role: "user", Content: "hello"}},
+					EnableThinking:  json.RawMessage(thinking),
+					ReasoningEffort: effort,
+				}
+				got, err := ChatCompletionsRequestToResponsesRequest(context.Background(), req)
+				require.NoError(t, err)
+				encoded, err := kitutil.Marshal(got)
+				require.NoError(t, err)
+				assert.False(t, ojson.GetBytes(encoded, "enable_thinking").Exists())
+				assert.Equal(t, effort, ojson.GetBytes(encoded, "reasoning.effort").String())
+				assert.Equal(t, json.RawMessage(thinking), req.EnableThinking, "conversion must not mutate the input")
+			})
+		}
+	}
+}
+
+func TestChatCompletionsRequestToResponsesRequestOutputBudgetCompatibility(t *testing.T) {
+	tests := []struct {
+		name       string
+		model      string
+		maxTokens  *uint
+		completion *uint
+		want       *uint
+	}{
+		{name: "absent stays absent", model: "gpt-6.1-sol"},
+		{name: "explicit zero is preserved", model: "gpt-6.1-sol", maxTokens: lo.ToPtr(uint(0)), want: lo.ToPtr(uint(0))},
+		{name: "minimum positive budget", model: "gpt-6.1-sol", maxTokens: lo.ToPtr(uint(1)), want: lo.ToPtr(uint(16))},
+		{name: "client probe budget", model: "gpt-6.1-sol", maxTokens: lo.ToPtr(uint(5)), want: lo.ToPtr(uint(16))},
+		{name: "below minimum", model: "gpt-6.1-sol", maxTokens: lo.ToPtr(uint(15)), want: lo.ToPtr(uint(16))},
+		{name: "at minimum", model: "gpt-6.1-sol", maxTokens: lo.ToPtr(uint(16)), want: lo.ToPtr(uint(16))},
+		{name: "larger budget unchanged", model: "gpt-6.1-sol", maxTokens: lo.ToPtr(uint(64)), want: lo.ToPtr(uint(64))},
+		{name: "completion takes precedence", model: "gpt-6.1-sol", maxTokens: lo.ToPtr(uint(64)), completion: lo.ToPtr(uint(5)), want: lo.ToPtr(uint(16))},
+		{name: "completion zero is preserved", model: "gpt-6.1-sol", maxTokens: lo.ToPtr(uint(64)), completion: lo.ToPtr(uint(0)), want: lo.ToPtr(uint(0))},
+		{name: "completion larger budget unchanged", model: "gpt-6.1-sol", maxTokens: lo.ToPtr(uint(5)), completion: lo.ToPtr(uint(64)), want: lo.ToPtr(uint(64))},
+		{name: "other provider unchanged", model: "qwen-plus", maxTokens: lo.ToPtr(uint(5)), want: lo.ToPtr(uint(5))},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := ChatCompletionsRequestToResponsesRequest(context.Background(), &dto.GeneralOpenAIRequest{
+				Model:               tt.model,
+				Messages:            []dto.Message{{Role: "user", Content: "hello"}},
+				MaxTokens:           tt.maxTokens,
+				MaxCompletionTokens: tt.completion,
+			})
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got.MaxOutputTokens)
+			encoded, err := kitutil.Marshal(got)
+			require.NoError(t, err)
+			value := ojson.GetBytes(encoded, "max_output_tokens")
+			assert.Equal(t, tt.want != nil, value.Exists())
+			if tt.want != nil {
+				assert.Equal(t, uint64(*tt.want), value.Uint())
+			}
+		})
+	}
+}
+
 func TestChatCompletionsRequestToResponsesRequestRejectsMultipleChoices(t *testing.T) {
 	_, err := ChatCompletionsRequestToResponsesRequest(context.Background(), &dto.GeneralOpenAIRequest{
 		Model: "gpt-test",

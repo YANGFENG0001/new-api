@@ -17,6 +17,31 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  validate_relaykit:
+    name: Validate relaykit conversions
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: relaykit
+    env:
+      GOWORK: 'off'
+    steps:
+      - name: Check out
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: relaykit/go.sum
+
+      - name: Vet, build, and test independent module
+        run: |
+          go vet ./...
+          go build ./...
+          go test ./...
+
   prepare:
     name: Prepare image tags
     runs-on: ubuntu-latest
@@ -50,7 +75,7 @@ jobs:
 
   build_single_arch:
     name: Build & push (${{ matrix.arch }})
-    needs: [prepare]
+    needs: [prepare, validate_relaykit]
     strategy:
       fail-fast: false
       matrix:

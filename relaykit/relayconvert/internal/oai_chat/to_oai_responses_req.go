@@ -383,10 +383,12 @@ func ChatCompletionsRequestToResponsesRequest(ctx context.Context, req *dto.Gene
 	if req.MaxCompletionTokens != nil {
 		maxOutputTokens = *req.MaxCompletionTokens
 	}
-	// OpenAI Responses API rejects max_output_tokens < 16 when explicitly provided.
-	//if maxOutputTokens > 0 && maxOutputTokens < 16 {
-	//	maxOutputTokens = 16
-	//}
+	isGPT := strings.HasPrefix(req.Model, "gpt-")
+	// GPT Responses endpoints require a positive output budget of at least 16.
+	// Keep absent/explicit-zero budgets and other providers' limits unchanged.
+	if isGPT && maxOutputTokens > 0 && maxOutputTokens < 16 {
+		maxOutputTokens = 16
+	}
 
 	var topP *float64
 	if req.TopP != nil {
@@ -428,6 +430,12 @@ func ChatCompletionsRequestToResponsesRequest(ctx context.Context, req *dto.Gene
 		PromptCacheKey:    promptCacheKeyRaw,
 		EnableThinking:    req.EnableThinking,
 		ThinkingBudget:    req.ThinkingBudget,
+	}
+	// enable_thinking is a provider extension, not a GPT Responses parameter.
+	// Do not infer a reasoning effort from it; standard reasoning controls below
+	// remain authoritative, and Qwen-compatible targets retain the extension.
+	if isGPT {
+		out.EnableThinking = nil
 	}
 	if req.MaxTokens != nil || req.MaxCompletionTokens != nil {
 		out.MaxOutputTokens = lo.ToPtr(maxOutputTokens)
