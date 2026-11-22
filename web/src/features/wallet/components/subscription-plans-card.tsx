@@ -16,6 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Crown, RefreshCw, Sparkles, Check } from 'lucide-react'
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -52,6 +53,8 @@ import {
 } from '@/features/subscriptions/api'
 import { SubscriptionPurchaseDialog } from '@/features/subscriptions/components/dialogs/subscription-purchase-dialog'
 import { formatDuration, formatResetPeriod } from '@/features/subscriptions/lib'
+import { poolAPI } from '@/features/subscriptions/pools/api'
+import { SelfAlignedUsage } from '@/features/subscriptions/pools/self-usage'
 import type {
   PlanRecord,
   UserSubscriptionRecord,
@@ -101,6 +104,12 @@ export function SubscriptionPlansCard({
   onPurchaseSuccess,
 }: SubscriptionPlansCardProps) {
   const { t } = useTranslation()
+  const client = useQueryClient()
+  const alignedUsage = useQuery({
+    queryKey: ['subscription-pools', 'self-usage'],
+    queryFn: poolAPI.usage,
+    refetchInterval: 30000,
+  })
 
   const [plans, setPlans] = useState<PlanRecord[]>([])
   const [activeSubscriptions, setActiveSubscriptions] = useState<
@@ -166,6 +175,7 @@ export function SubscriptionPlansCard({
     setRefreshing(true)
     try {
       await fetchSelfSubscription()
+      await client.invalidateQueries({ queryKey: ['subscription-pools'] })
     } finally {
       setRefreshing(false)
     }
@@ -268,6 +278,7 @@ export function SubscriptionPlansCard({
         disableHoverEffect
         contentClassName='space-y-4 sm:space-y-5'
       >
+        <SelfAlignedUsage />
         {/* My subscriptions & billing preference */}
         <div className='rounded-xl border p-3 sm:p-4'>
           <div className='flex flex-wrap items-center justify-between gap-2.5 sm:gap-3'>
@@ -398,119 +409,132 @@ export function SubscriptionPlansCard({
             <>
               <Separator className='my-3' />
               <div className='max-h-64 space-y-3 overflow-y-auto pr-1'>
-                {allSubscriptions.map((sub) => {
-                  const subscription = sub.subscription
-                  const totalAmount = Number(subscription?.amount_total || 0)
-                  const usedAmount = Number(subscription?.amount_used || 0)
-                  const remainAmount =
-                    totalAmount > 0 ? Math.max(0, totalAmount - usedAmount) : 0
-                  const planTitle =
-                    planTitleMap.get(subscription?.plan_id) || ''
-                  const remainDays = getRemainingDays(sub)
-                  const usagePercent = getUsagePercent(sub)
-                  const now = Date.now() / 1000
-                  const isExpired = (subscription?.end_time || 0) < now
-                  const isCancelled = subscription?.status === 'cancelled'
-                  const isActive =
-                    subscription?.status === 'active' && !isExpired
-                  const nextResetTime = subscription?.next_reset_time ?? 0
-                  let statusBadge = (
-                    <StatusBadge
-                      label={t('Expired')}
-                      variant='neutral'
-                      copyable={false}
-                    />
+                {allSubscriptions
+                  .filter(
+                    (sub) =>
+                      !alignedUsage.data?.subscriptions.some(
+                        (s) =>
+                          s.managed && s.subscription_id === sub.subscription.id
+                      )
                   )
-                  if (isActive) {
-                    statusBadge = (
+                  .map((sub) => {
+                    const subscription = sub.subscription
+                    const totalAmount = Number(subscription?.amount_total || 0)
+                    const usedAmount = Number(subscription?.amount_used || 0)
+                    const remainAmount =
+                      totalAmount > 0
+                        ? Math.max(0, totalAmount - usedAmount)
+                        : 0
+                    const planTitle =
+                      planTitleMap.get(subscription?.plan_id) || ''
+                    const remainDays = getRemainingDays(sub)
+                    const usagePercent = getUsagePercent(sub)
+                    const now = Date.now() / 1000
+                    const isExpired = (subscription?.end_time || 0) < now
+                    const isCancelled = subscription?.status === 'cancelled'
+                    const isActive =
+                      subscription?.status === 'active' && !isExpired
+                    const nextResetTime = subscription?.next_reset_time ?? 0
+                    let statusBadge = (
                       <StatusBadge
-                        label={t('Active')}
-                        variant='success'
-                        copyable={false}
-                      />
-                    )
-                  } else if (isCancelled) {
-                    statusBadge = (
-                      <StatusBadge
-                        label={t('Cancelled')}
+                        label={t('Expired')}
                         variant='neutral'
                         copyable={false}
                       />
                     )
-                  }
+                    if (isActive) {
+                      statusBadge = (
+                        <StatusBadge
+                          label={t('Active')}
+                          variant='success'
+                          copyable={false}
+                        />
+                      )
+                    } else if (isCancelled) {
+                      statusBadge = (
+                        <StatusBadge
+                          label={t('Cancelled')}
+                          variant='neutral'
+                          copyable={false}
+                        />
+                      )
+                    }
 
-                  let endTimeLabel = t('Expired at')
-                  if (isActive) {
-                    endTimeLabel = t('Until')
-                  } else if (isCancelled) {
-                    endTimeLabel = t('Cancelled at')
-                  }
+                    let endTimeLabel = t('Expired at')
+                    if (isActive) {
+                      endTimeLabel = t('Until')
+                    } else if (isCancelled) {
+                      endTimeLabel = t('Cancelled at')
+                    }
 
-                  return (
-                    <div
-                      key={subscription?.id}
-                      className='bg-background rounded-md border p-3 text-xs'
-                    >
-                      <div className='flex items-center justify-between'>
-                        <div className='flex items-center gap-2'>
-                          <span className='font-medium'>
-                            {planTitle
-                              ? `${planTitle} · ${t('Subscription')} #${subscription?.id}`
-                              : `${t('Subscription')} #${subscription?.id}`}
-                          </span>
-                          {statusBadge}
+                    return (
+                      <div
+                        key={subscription?.id}
+                        className='bg-background rounded-md border p-3 text-xs'
+                      >
+                        <div className='flex items-center justify-between'>
+                          <div className='flex items-center gap-2'>
+                            <span className='font-medium'>
+                              {planTitle
+                                ? `${planTitle} · ${t('Subscription')} #${subscription?.id}`
+                                : `${t('Subscription')} #${subscription?.id}`}
+                            </span>
+                            {statusBadge}
+                          </div>
+                          {isActive && (
+                            <span className='text-muted-foreground'>
+                              {t('{{count}} days remaining', {
+                                count: remainDays,
+                              })}
+                            </span>
+                          )}
                         </div>
-                        {isActive && (
-                          <span className='text-muted-foreground'>
-                            {t('{{count}} days remaining', {
-                              count: remainDays,
-                            })}
-                          </span>
+                        <div className='text-muted-foreground mt-1.5'>
+                          {endTimeLabel}{' '}
+                          {new Date(
+                            (subscription?.end_time || 0) * 1000
+                          ).toLocaleString()}
+                        </div>
+                        {isActive && nextResetTime > 0 && (
+                          <div className='text-muted-foreground mt-1'>
+                            {t('Next reset')}:{' '}
+                            {new Date(nextResetTime * 1000).toLocaleString()}
+                          </div>
                         )}
-                      </div>
-                      <div className='text-muted-foreground mt-1.5'>
-                        {endTimeLabel}{' '}
-                        {new Date(
-                          (subscription?.end_time || 0) * 1000
-                        ).toLocaleString()}
-                      </div>
-                      {isActive && nextResetTime > 0 && (
                         <div className='text-muted-foreground mt-1'>
-                          {t('Next reset')}:{' '}
-                          {new Date(nextResetTime * 1000).toLocaleString()}
+                          {t('Total Quota')}:{' '}
+                          {totalAmount > 0 ? (
+                            <Tooltip>
+                              <TooltipTrigger
+                                render={<span className='cursor-help' />}
+                              >
+                                {formatQuota(usedAmount)}/
+                                {formatQuota(totalAmount)} · {t('Remaining')}{' '}
+                                {formatQuota(remainAmount)}
+                              </TooltipTrigger>
+                              <TooltipContent>
+                                {t('Raw Quota')}: {usedAmount}/{totalAmount} ·{' '}
+                                {t('Remaining')} {remainAmount}
+                              </TooltipContent>
+                            </Tooltip>
+                          ) : (
+                            t('Unlimited')
+                          )}
+                          {totalAmount > 0 && (
+                            <span className='ml-2'>
+                              {t('Used')} {usagePercent}%
+                            </span>
+                          )}
                         </div>
-                      )}
-                      <div className='text-muted-foreground mt-1'>
-                        {t('Total Quota')}:{' '}
-                        {totalAmount > 0 ? (
-                          <Tooltip>
-                            <TooltipTrigger
-                              render={<span className='cursor-help' />}
-                            >
-                              {formatQuota(usedAmount)}/
-                              {formatQuota(totalAmount)} · {t('Remaining')}{' '}
-                              {formatQuota(remainAmount)}
-                            </TooltipTrigger>
-                            <TooltipContent>
-                              {t('Raw Quota')}: {usedAmount}/{totalAmount} ·{' '}
-                              {t('Remaining')} {remainAmount}
-                            </TooltipContent>
-                          </Tooltip>
-                        ) : (
-                          t('Unlimited')
-                        )}
-                        {totalAmount > 0 && (
-                          <span className='ml-2'>
-                            {t('Used')} {usagePercent}%
-                          </span>
+                        {totalAmount > 0 && isActive && (
+                          <Progress
+                            value={usagePercent}
+                            className='mt-2 h-1.5'
+                          />
                         )}
                       </div>
-                      {totalAmount > 0 && isActive && (
-                        <Progress value={usagePercent} className='mt-2 h-1.5' />
-                      )}
-                    </div>
-                  )
-                })}
+                    )
+                  })}
               </div>
             </>
           )}

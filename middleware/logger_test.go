@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"strings"
 	"testing"
 
@@ -61,10 +62,21 @@ func TestSetUpLoggerMasksQueryCredentials(t *testing.T) {
 }
 
 func TestAccessAndPanicLogsFollowLogRotation(t *testing.T) {
+	// The logger owns its descriptor for the process lifetime. Run rotation in
+	// a child process so the descriptor closes before TempDir cleanup on Windows.
+	logDir := os.Getenv("NEW_API_TEST_LOG_ROTATION_DIR")
+	if logDir == "" {
+		command := exec.Command(os.Args[0], "-test.run=^TestAccessAndPanicLogsFollowLogRotation$", "-test.count=1")
+		command.Env = append(os.Environ(), "NEW_API_TEST_LOG_ROTATION_DIR="+t.TempDir())
+		output, err := command.CombinedOutput()
+		require.NoError(t, err, "%s", output)
+		return
+	}
+
 	previousMode, previousWriter, previousErrorWriter := gin.Mode(), gin.DefaultWriter, gin.DefaultErrorWriter
 	previousLogDir := *common.LogDir
 	gin.SetMode(gin.TestMode)
-	*common.LogDir = t.TempDir()
+	*common.LogDir = logDir
 	t.Cleanup(func() {
 		gin.SetMode(previousMode)
 		gin.DefaultWriter, gin.DefaultErrorWriter = previousWriter, previousErrorWriter

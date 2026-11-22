@@ -64,6 +64,12 @@ func TestMain(m *testing.M) {
 		panic("failed to migrate: " + err.Error())
 	}
 
+	if err := db.AutoMigrate(SubscriptionPoolModels()...); err != nil {
+		panic(err)
+	}
+	if err := db.AutoMigrate(&SubscriptionPreConsumeRecord{}); err != nil {
+		panic(err)
+	}
 	os.Exit(m.Run())
 }
 

@@ -16,11 +16,13 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { useQuery } from '@tanstack/react-query'
 import { Info } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 import { SectionPageLayout } from '@/components/layout'
 import { Alert, AlertDescription } from '@/components/ui/alert'
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 
 import { SubscriptionsDialogs } from './components/subscriptions-dialogs'
 import { SubscriptionsPrimaryButtons } from './components/subscriptions-primary-buttons'
@@ -29,10 +31,17 @@ import {
   useSubscriptions,
 } from './components/subscriptions-provider'
 import { SubscriptionsTable } from './components/subscriptions-table'
+import { poolAPI } from './pools/api'
+import { PoolPanel } from './pools/pool-panel'
+import { SyncSourcesPanel } from './pools/sync-sources-panel'
 
 function SubscriptionsContent() {
   const { t } = useTranslation()
   const { complianceConfirmed } = useSubscriptions()
+  const caps = useQuery({
+    queryKey: ['subscription-pools', 'capabilities'],
+    queryFn: poolAPI.capabilities,
+  })
 
   return (
     <>
@@ -64,9 +73,36 @@ function SubscriptionsContent() {
                 </AlertDescription>
               </Alert>
             ) : null}
-            <div className='min-h-0 flex-1'>
-              <SubscriptionsTable />
-            </div>
+            <Tabs defaultValue='plans' className='min-h-0 flex-1'>
+              <TabsList className='max-w-full overflow-x-auto'>
+                <TabsTrigger value='plans'>
+                  {t('Subscription Plans')}
+                </TabsTrigger>
+                {caps.data?.sync_read && (
+                  <TabsTrigger value='sync'>
+                    {t('Upstream synchronization sources')}
+                  </TabsTrigger>
+                )}
+                {caps.data?.read && (
+                  <TabsTrigger value='pools'>
+                    {t('Upstream carpool pools')}
+                  </TabsTrigger>
+                )}
+              </TabsList>
+              {caps.data?.sync_read && (
+                <TabsContent value='sync' className='min-h-0 flex-1'>
+                  <SyncSourcesPanel caps={caps.data} />
+                </TabsContent>
+              )}
+              <TabsContent value='plans' className='min-h-0 flex-1'>
+                <SubscriptionsTable />
+              </TabsContent>
+              {caps.data?.read && (
+                <TabsContent value='pools' className='min-h-0 flex-1'>
+                  <PoolPanel caps={caps.data} />
+                </TabsContent>
+              )}
+            </Tabs>
           </div>
         </SectionPageLayout.Content>
       </SectionPageLayout>

@@ -81,6 +81,8 @@ func (w *WalletFunding) Refund() error {
 type SubscriptionFunding struct {
 	requestId      string
 	userId         int
+	channelID      int
+	managed        bool
 	modelName      string
 	amount         int64 // 预扣的订阅额度（subConsume）
 	subscriptionId int
@@ -96,14 +98,21 @@ func (s *SubscriptionFunding) Source() string { return BillingSourceSubscription
 
 func (s *SubscriptionFunding) PreConsume(_ int) error {
 	// amount 参数被忽略，使用内部 s.amount（已在构造时根据 preConsumedQuota 计算）
-	res, err := model.PreConsumeUserSubscription(s.requestId, s.userId, s.modelName, 0, s.amount)
+	res, err := model.PreConsumeUserSubscriptionForChannel(s.requestId, s.userId, s.modelName, 0, s.amount, s.channelID)
 	if err != nil {
 		return err
 	}
+	s.managed = res.Managed
 	s.subscriptionId = res.UserSubscriptionId
 	s.preConsumed = res.PreConsumed
 	s.AmountTotal = res.AmountTotal
 	s.AmountUsedAfter = res.AmountUsedAfter
+	if s.managed {
+		// Multiple cycle limits cannot truthfully be flattened into a single
+		// legacy "subscription remaining" number for logs or notifications.
+		s.AmountTotal = 0
+		s.AmountUsedAfter = 0
+	}
 	// 获取订阅计划信息
 	if planInfo, err := model.GetSubscriptionPlanInfoByUserSubscriptionId(res.UserSubscriptionId); err == nil && planInfo != nil {
 		s.PlanId = planInfo.PlanId
@@ -113,10 +122,7 @@ func (s *SubscriptionFunding) PreConsume(_ int) error {
 }
 
 func (s *SubscriptionFunding) Settle(delta int) error {
-	if delta == 0 {
-		return nil
-	}
-	return model.PostConsumeUserSubscriptionDelta(s.subscriptionId, int64(delta))
+	return model.SettleSubscriptionRequest(s.requestId, s.subscriptionId, int64(delta))
 }
 
 func (s *SubscriptionFunding) Refund() error {

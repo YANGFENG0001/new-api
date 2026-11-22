@@ -172,6 +172,7 @@ func TestUserControlDistributorRoutesBothStagesAndChecksFinalChannelLimit(t *tes
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = logConnection.Close() })
 	require.NoError(t, model.DB.AutoMigrate(&model.Channel{}, &model.Ability{}))
+	require.NoError(t, model.DB.AutoMigrate(model.SubscriptionPoolModels()...))
 	previousCache, previousRedis := common.MemoryCacheEnabled, common.RedisEnabled
 	common.MemoryCacheEnabled, common.RedisEnabled = true, false
 	t.Cleanup(func() {

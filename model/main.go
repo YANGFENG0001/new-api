@@ -390,6 +390,9 @@ func migrateDB() error {
 	if err != nil {
 		return err
 	}
+	if err := MigrateSubscriptionPools(); err != nil {
+		return err
+	}
 	if _, err := RecoverStaleUserBatchJobs(common.GetTimestamp() - 2*3600); err != nil {
 		return fmt.Errorf("recover interrupted user batch jobs: %w", err)
 	}

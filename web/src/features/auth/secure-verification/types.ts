@@ -47,11 +47,21 @@ export type SecurityProofScope =
   | 'admin.user.2fa.disable'
   | 'admin.user.binding.clear'
   | 'admin.user.batch'
+  | 'subscription.sync.credentials'
 
 /** ManageUser actions that change a user's status or role and need step-up. */
 export type AdminUserManageAction = 'disable' | 'enable' | 'promote' | 'demote'
 
 export type VerificationOperation =
+  | {
+      scope: 'subscription.sync.credentials'
+      context: {
+        source_id: number
+        action: 'save' | 'check' | 'refresh' | 'replace'
+        version: number
+        credential_revision: number
+      }
+    }
   | { scope: 'channel.key.read'; context: { channel_id: number } }
   | {
       scope: 'account.binding.bind'
@@ -100,6 +110,7 @@ export type VerificationOperation =
   | {
       scope: Exclude<
         SecurityProofScope,
+        | 'subscription.sync.credentials'
         | 'channel.key.read'
         | 'account.binding.bind'
         | 'account.binding.unbind'

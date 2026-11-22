@@ -189,6 +189,8 @@ func SetApiRouter(router *gin.Engine) {
 		{
 			subscriptionRoute.GET("/plans", controller.GetSubscriptionPlans)
 			subscriptionRoute.GET("/self", controller.GetSubscriptionSelf)
+			subscriptionRoute.GET("/self/usage", controller.GetSubscriptionSelfUsage)
+			subscriptionRoute.GET("/self/pools", controller.GetSubscriptionSelfPools)
 			subscriptionRoute.PUT("/self/preference", controller.UpdateSubscriptionPreference)
 			subscriptionRoute.POST("/balance/pay", middleware.CriticalRateLimit(), controller.SubscriptionRequestBalancePay)
 			subscriptionRoute.POST("/epay/pay", middleware.CriticalRateLimit(), controller.SubscriptionRequestEpay)
@@ -199,6 +201,30 @@ func SetApiRouter(router *gin.Engine) {
 		subscriptionAdminRoute := apiRouter.Group("/subscription/admin")
 		subscriptionAdminRoute.Use(middleware.AdminAuth())
 		{
+			subscriptionAdminRoute.GET("/sync-sources", controller.ListSubscriptionSyncSources)
+			subscriptionAdminRoute.POST("/sync-sources", controller.SaveSubscriptionSyncSource)
+			subscriptionAdminRoute.PUT("/sync-sources/:id", controller.SaveSubscriptionSyncSource)
+			subscriptionAdminRoute.POST("/sync-sources/:id/run", middleware.CriticalRateLimit(), controller.RunSubscriptionSync)
+			subscriptionAdminRoute.POST("/sync-sources/:id/auth", middleware.CriticalRateLimit(), controller.ManageSubscriptionSyncAuthentication)
+			subscriptionAdminRoute.GET("/sync-sources/:id/state", controller.GetSubscriptionSyncSourceState)
+			subscriptionAdminRoute.GET("/pools/:id/sync", controller.GetSubscriptionSyncBinding)
+			subscriptionAdminRoute.PUT("/pools/:id/sync", controller.SaveSubscriptionSyncBinding)
+			subscriptionAdminRoute.POST("/pools/:id/sync/unbind", controller.UnbindSubscriptionSyncPool)
+			subscriptionAdminRoute.POST("/pools/:id/sync/confirm-reset", controller.ConfirmSubscriptionSyncReset)
+			subscriptionAdminRoute.GET("/pool-capabilities", controller.GetSubscriptionPoolCapabilities)
+			subscriptionAdminRoute.GET("/pool-catalog", controller.SubscriptionPoolCatalog)
+			subscriptionAdminRoute.GET("/pools", controller.ListSubscriptionPools)
+			subscriptionAdminRoute.POST("/pools", controller.SaveSubscriptionPool)
+			subscriptionAdminRoute.PUT("/pools/:id", controller.SaveSubscriptionPool)
+			subscriptionAdminRoute.GET("/pools/:id", controller.GetSubscriptionPoolDetail)
+			subscriptionAdminRoute.POST("/pools/:id/snapshots", controller.IngestSubscriptionPoolSnapshot)
+			subscriptionAdminRoute.POST("/pools/:id/reset", controller.ResetSubscriptionPoolCycle)
+			subscriptionAdminRoute.GET("/plans/:id/allocation", controller.GetSubscriptionPlanAllocation)
+			subscriptionAdminRoute.PUT("/plans/:id/allocation", controller.PutSubscriptionPlanAllocation)
+			subscriptionAdminRoute.GET("/users/:id/allocations", controller.GetUserSubscriptionAllocations)
+			subscriptionAdminRoute.POST("/pool-assignment", controller.AssignUserSubscriptionPool)
+			subscriptionAdminRoute.POST("/pool-assignment/batch", controller.BatchAssignSubscriptionPool)
+			subscriptionAdminRoute.POST("/user_subscriptions/:id/cycle-reset", controller.ResetIndependentSubscriptionCycle)
 			subscriptionAdminRoute.GET("/plans", controller.AdminListSubscriptionPlans)
 			subscriptionAdminRoute.POST("/plans", controller.AdminCreateSubscriptionPlan)
 			subscriptionAdminRoute.PUT("/plans/:id", controller.AdminUpdateSubscriptionPlan)
@@ -352,6 +378,7 @@ func SetApiRouter(router *gin.Engine) {
 			tokenUsageRoute.Use(middleware.TokenAuthReadOnly())
 			{
 				tokenUsageRoute.GET("/", controller.GetTokenUsage)
+				tokenUsageRoute.GET("/subscriptions", controller.GetTokenSubscriptionUsage)
 			}
 		}
 

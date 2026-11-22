@@ -42,7 +42,7 @@ function renderJobs() {
           data: {
             items: [job],
             total: 40,
-            page: config?.params?.p ?? 1,
+            page: (config?.params as { p?: number } | undefined)?.p ?? 1,
             page_size: 20,
           },
         },

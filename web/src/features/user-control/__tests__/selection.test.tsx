@@ -73,7 +73,10 @@ test('searching from page two resets pagination and retains selections across pa
       return envelope({ items: [carol], total: 1 })
     }
     return envelope({
-      items: config?.params.p === 2 ? [bob] : [alice],
+      items:
+        (config?.params as { p?: number } | undefined)?.p === 2
+          ? [bob]
+          : [alice],
       total: 11,
     })
   })
@@ -211,7 +214,7 @@ test('removing the last member on page two returns to the last valid member page
   let removed = false
   const get = vi.spyOn(api, 'get').mockImplementation(async (url, config) => {
     if (!url.includes('/members')) return envelope({ items: [], total: 0 })
-    const page = config?.params.p
+    const page = (config?.params as { p?: number } | undefined)?.p
     const items =
       page === 2 && removed
         ? []
@@ -250,7 +253,9 @@ test('removing the last member on page two returns to the last valid member page
   await waitFor(() => expect(within(members).getByText('1 / 1')).toBeVisible())
   expect(
     get.mock.calls.filter(
-      ([url, config]) => url.includes('/members') && config?.params.p === 1
+      ([url, config]) =>
+        url.includes('/members') &&
+        (config?.params as { p?: number } | undefined)?.p === 1
     ).length
   ).toBeGreaterThan(1)
 })
@@ -259,7 +264,10 @@ test('when the user result count shrinks while on page two the picker returns to
   let shrunk = false
   vi.spyOn(api, 'get').mockImplementation(async (_url, config) =>
     envelope({
-      items: shrunk && config?.params.p === 2 ? [] : [alice],
+      items:
+        shrunk && (config?.params as { p?: number } | undefined)?.p === 2
+          ? []
+          : [alice],
       total: shrunk ? 1 : 11,
     })
   )

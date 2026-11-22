@@ -69,6 +69,7 @@ var accessTokenExemptRoutes = []string{
 
 	// API key authentication (TokenAuthReadOnly).
 	"GET /api/usage/token/",
+	"GET /api/usage/token/subscriptions",
 	"GET /api/log/token",
 }
 

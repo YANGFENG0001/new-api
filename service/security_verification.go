@@ -38,15 +38,16 @@ const (
 	VerificationScopeAccountDelete       = "account.delete"
 	// Administrative step-up scopes bind the managed user into the proof so a
 	// proof issued for one account cannot be replayed against another.
-	VerificationScopeAdminUserCreate       = "admin.user.create"
-	VerificationScopeAdminUserUpdate       = "admin.user.update"
-	VerificationScopeAdminUserDelete       = "admin.user.delete"
-	VerificationScopeAdminUserManage       = "admin.user.manage"
-	VerificationScopeAdminUserPasskeyReset = "admin.user.passkey.reset"
-	VerificationScopeAdminUserTwoFADisable = "admin.user.2fa.disable"
-	VerificationScopeAdminUserBindingClear = "admin.user.binding.clear"
-	VerificationScopeAdminUserBatch        = "admin.user.batch"
-	verificationScopeAdminUserPrefix       = "admin.user."
+	VerificationScopeAdminUserCreate             = "admin.user.create"
+	VerificationScopeAdminUserUpdate             = "admin.user.update"
+	VerificationScopeAdminUserDelete             = "admin.user.delete"
+	VerificationScopeAdminUserManage             = "admin.user.manage"
+	VerificationScopeAdminUserPasskeyReset       = "admin.user.passkey.reset"
+	VerificationScopeAdminUserTwoFADisable       = "admin.user.2fa.disable"
+	VerificationScopeAdminUserBindingClear       = "admin.user.binding.clear"
+	VerificationScopeAdminUserBatch              = "admin.user.batch"
+	VerificationScopeSubscriptionSyncCredentials = "subscription.sync.credentials"
+	verificationScopeAdminUserPrefix             = "admin.user."
 )
 
 // adminUserManageActions are the ManageUser actions that change a user's
@@ -97,6 +98,13 @@ var (
 type VerificationOperation struct {
 	Scope   string          `json:"scope"`
 	Context json.RawMessage `json:"context,omitempty"`
+}
+
+type SubscriptionSyncCredentialContext struct {
+	SourceID int    `json:"source_id"`
+	Action   string `json:"action"`
+	Version  int64  `json:"version"`
+	Revision int64  `json:"credential_revision"`
 }
 
 type ChannelKeyReadContext struct {
@@ -201,6 +209,12 @@ func BindVerificationOperation(operation VerificationOperation) (VerificationBin
 	}
 	var normalized any
 	switch operation.Scope {
+	case VerificationScopeSubscriptionSyncCredentials:
+		var context SubscriptionSyncCredentialContext
+		if len(fields) != 4 || common.Unmarshal(operation.Context, &context) != nil || context.SourceID < 0 || context.Version < 0 || context.Revision < 0 || !slices.Contains([]string{"save", "check", "refresh", "replace"}, context.Action) || (context.SourceID == 0 && context.Action != "save") {
+			return VerificationBinding{}, ErrVerificationContextInvalid
+		}
+		normalized = context
 	case VerificationScopeChannelKeyRead:
 		var context ChannelKeyReadContext
 		if len(fields) != 1 || common.Unmarshal(fields["channel_id"], &context.ChannelID) != nil || context.ChannelID <= 0 {
@@ -384,7 +398,7 @@ func securityVerificationPolicy(scope string, state model.UserVerificationState)
 		VerificationScopePasswordSet, VerificationScopePasswordChange, VerificationScopeAccountDelete,
 		VerificationScopeAdminUserCreate, VerificationScopeAdminUserUpdate, VerificationScopeAdminUserDelete,
 		VerificationScopeAdminUserManage, VerificationScopeAdminUserPasskeyReset,
-		VerificationScopeAdminUserTwoFADisable, VerificationScopeAdminUserBindingClear, VerificationScopeAdminUserBatch:
+		VerificationScopeAdminUserTwoFADisable, VerificationScopeAdminUserBindingClear, VerificationScopeAdminUserBatch, VerificationScopeSubscriptionSyncCredentials:
 		if scope == VerificationScopeAccountDelete && state.Role == common.RoleRootUser {
 			return nil, ErrVerificationForbidden
 		}
@@ -432,7 +446,7 @@ func GetVerificationRequirements(identity AuthIdentity, scope string) (*Verifica
 	if scope == VerificationScopeChannelKeyRead && state.Role != common.RoleRootUser {
 		return nil, ErrVerificationForbidden
 	}
-	if strings.HasPrefix(scope, verificationScopeAdminUserPrefix) && state.Role < common.RoleAdminUser {
+	if (scope == VerificationScopeSubscriptionSyncCredentials || strings.HasPrefix(scope, verificationScopeAdminUserPrefix)) && state.Role < common.RoleAdminUser {
 		return nil, ErrVerificationForbidden
 	}
 	if err := requireAccessTokenVerificationScope(identity, scope); err != nil {
@@ -449,7 +463,7 @@ func GetVerificationRequirements(identity AuthIdentity, scope string) (*Verifica
 			case VerificationScopeAccountBind, VerificationScopeAccountUnbind, VerificationScopePasswordSet, VerificationScopePasswordChange, VerificationScopeAccountDelete,
 				VerificationScopeAdminUserCreate, VerificationScopeAdminUserUpdate, VerificationScopeAdminUserDelete,
 				VerificationScopeAdminUserManage, VerificationScopeAdminUserPasskeyReset,
-				VerificationScopeAdminUserTwoFADisable, VerificationScopeAdminUserBindingClear, VerificationScopeAdminUserBatch:
+				VerificationScopeAdminUserTwoFADisable, VerificationScopeAdminUserBindingClear, VerificationScopeAdminUserBatch, VerificationScopeSubscriptionSyncCredentials:
 				methods[i].Available, methods[i].Reason = false, "Password authentication is disabled."
 			}
 		}

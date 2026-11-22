@@ -14,6 +14,7 @@ var filterEvalOrder = []dto.ChannelFilterKind{
 	dto.FilterTaskPluginIdentity,
 	dto.FilterResponsesWebSocket,
 	dto.FilterUserControl,
+	dto.FilterSubscriptionPool,
 }
 
 // ChannelSatisfiesFilters reports whether ch passes every filter.
@@ -124,6 +125,8 @@ func channelMatchesFilter(ch *Channel, modelName string, filter dto.ChannelFilte
 		// group, priority, weight, affinity, and pin rules. Unrelated type-61
 		// plugins cannot execute this endpoint.
 		return ch.Type != constant.ChannelTypeTaskPlugin || pluginChannel
+	case dto.FilterSubscriptionPool:
+		return !slices.Contains(filter.PoolBlockIDs, ch.Id) && (!filter.PoolOnly || slices.Contains(filter.PoolAllowIDs, ch.Id))
 	case dto.FilterUserControl:
 		return channelMatchesUserControl(ch, filter)
 	case dto.FilterResponsesWebSocket:

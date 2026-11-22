@@ -6,7 +6,9 @@ import (
 	"net/http"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/logger"
+	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/gin-gonic/gin"
@@ -39,6 +41,9 @@ func PreConsumeBilling(c *gin.Context, preConsumedQuota int, relayInfo *relaycom
 		)
 	}
 	if relayInfo != nil && relayInfo.Billing != nil {
+		if err := model.ValidateSubscriptionRetry(relayInfo.RequestId, relayInfo.GetChannelID(), relayInfo.BillingSource == BillingSourceWallet); err != nil {
+			return types.NewErrorWithStatusCode(err, types.ErrorCodeInsufficientUserQuota, http.StatusForbidden, types.ErrOptionWithSkipRetry())
+		}
 		if err := relayInfo.Billing.ReserveBeforeSubmit(preConsumedQuota); err != nil {
 			var apiErr *types.NewAPIError
 			if errors.As(err, &apiErr) {
@@ -52,6 +57,12 @@ func PreConsumeBilling(c *gin.Context, preConsumedQuota int, relayInfo *relaycom
 	if apiErr != nil {
 		return apiErr
 	}
+	allowed, blocked, pooled, err := model.SubscriptionPinnedChannels(relayInfo.GetChannelID())
+	if err != nil {
+		session.Refund(c)
+		return types.NewError(err, types.ErrorCodeQueryDataError, types.ErrOptionWithSkipRetry())
+	}
+	GetChannelConstraints(c).AddFilter(dto.ChannelFilter{Kind: dto.FilterSubscriptionPool, PoolOnly: pooled, PoolAllowIDs: allowed, PoolBlockIDs: blocked})
 	relayInfo.Billing = session
 	return nil
 }
@@ -102,7 +113,7 @@ func SettleBilling(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, actualQuo
 
 	// 回退：无 BillingSession 时使用旧路径
 	quotaDelta := actualQuota - relayInfo.FinalPreConsumedQuota
-	if quotaDelta != 0 {
+	if quotaDelta != 0 || relayInfo.BillingSource == BillingSourceSubscription {
 		return PostConsumeQuota(relayInfo, quotaDelta, relayInfo.FinalPreConsumedQuota, true)
 	}
 	return nil

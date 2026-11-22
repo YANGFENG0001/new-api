@@ -41,6 +41,18 @@ func Distribute() func(c *gin.Context) {
 			}
 		}()
 		constraints := service.GetChannelConstraints(c)
+		if c.GetInt("id") > 0 {
+			userSetting, _ := common.GetContextKeyType[dto.UserSetting](c, constant.ContextKeyUserSetting)
+			blocked, poolErr := model.SubscriptionBlockedChannels(c.GetInt("id"), common.NormalizeBillingPreference(userSetting.BillingPreference) == "wallet_only")
+			if poolErr != nil {
+				abortWithOpenAiMessage(c, http.StatusServiceUnavailable, i18n.T(c, i18n.MsgDatabaseError))
+				return
+			}
+			if len(blocked) > 0 {
+				constraints.AddFilter(taskdto.ChannelFilter{Kind: taskdto.FilterSubscriptionPool, PoolBlockIDs: blocked})
+			}
+		}
+
 		constraints.AddFilter(taskdto.ChannelFilter{
 			Kind:        taskdto.FilterRequestPath,
 			RequestPath: c.Request.URL.Path,

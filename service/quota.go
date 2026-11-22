@@ -443,12 +443,12 @@ func postConsumeQuotaWithResult(relayInfo *relaycommon.RelayInfo, quota int, pre
 			return result, errors.New("subscription id is missing")
 		}
 		delta := int64(quota)
-		if delta != 0 {
-			if err := model.PostConsumeUserSubscriptionDelta(relayInfo.SubscriptionId, delta); err != nil {
-				return result, err
-			}
-			relayInfo.SubscriptionPostDelta += delta
+		// An exact-price request still finalizes the immutable reservation. Skipping
+		// zero deltas leaves it refundable and bypasses managed provenance checks.
+		if err := model.SettleSubscriptionRequest(relayInfo.RequestId, relayInfo.SubscriptionId, delta); err != nil {
+			return result, err
 		}
+		relayInfo.SubscriptionPostDelta += delta
 	} else {
 		// Wallet
 		if quota > 0 {

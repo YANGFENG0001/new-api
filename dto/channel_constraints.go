@@ -40,10 +40,14 @@ const (
 	FilterTaskPluginEndpoint ChannelFilterKind = "task_plugin_endpoint"
 	FilterTaskPluginIdentity ChannelFilterKind = "task_plugin_identity"
 	FilterResponsesWebSocket ChannelFilterKind = "responses_websocket"
+	FilterSubscriptionPool   ChannelFilterKind = "subscription_pool"
 	FilterUserControl        ChannelFilterKind = "user_control"
 )
 
 type ChannelFilter struct {
+	PoolBlockIDs           []int
+	PoolAllowIDs           []int
+	PoolOnly               bool
 	Kind                   ChannelFilterKind
 	RequestPath            string
 	TaskPluginKey          string
