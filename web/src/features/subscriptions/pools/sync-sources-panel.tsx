@@ -24,14 +24,15 @@ import { ConfirmDialog } from '@/components/confirm-dialog'
 import { StaticDataTable } from '@/components/data-table'
 import { ErrorState } from '@/components/error-state'
 import { LoadingState } from '@/components/loading-state'
+import { StatusBadge } from '@/components/status-badge'
 import { Button } from '@/components/ui/button'
 import { toIntlLocale } from '@/i18n/languages'
-import { formatNumber } from '@/lib/format'
 
 import type { Capabilities } from './api'
 import { syncAPI, type SyncSource } from './sync-api'
 import { SyncChangeTable } from './sync-change-table'
 import { SyncSourceEditor } from './sync-source-editor'
+import { SyncAccounts, SyncHealth, SyncTimestamp } from './sync-usage'
 
 export function SyncSourcesPanel(props: { caps: Capabilities }) {
   const { t, i18n } = useTranslation()
@@ -46,10 +47,12 @@ export function SyncSourcesPanel(props: { caps: Capabilities }) {
   const [active, setActive] = useState(0)
   const [expandedEvent, setExpandedEvent] = useState(0)
   const [confirm, setConfirm] = useState(false)
+  const activeSource = list.data?.sources.find((s) => s.id === active)
   const state = useQuery({
     queryKey: ['subscription-sync', 'state', active],
     queryFn: () => syncAPI.state(active),
     enabled: active > 0,
+    refetchInterval: 30000,
   })
   const run = useMutation({
     mutationFn: (preview: boolean) => syncAPI.run(active, preview),
@@ -108,33 +111,48 @@ export function SyncSourcesPanel(props: { caps: Capabilities }) {
           {
             id: 'status',
             header: t('Automatic synchronization'),
-            cell: (s) => (s.enabled ? t('Enabled') : t('Disabled')),
+            cell: (s) => (
+              <StatusBadge
+                copyable={false}
+                variant={s.enabled ? 'success' : 'neutral'}
+                label={s.enabled ? t('Enabled') : t('Disabled')}
+              />
+            ),
           },
           {
             id: 'fetch',
             header: t('Last fetch'),
-            cell: (s) =>
-              s.last_fetch
-                ? new Date(s.last_fetch * 1000).toLocaleString(locale)
-                : t('Never'),
+            cell: (s) => (
+              <SyncTimestamp value={s.last_fetch} fallback='Never' relative />
+            ),
           },
           {
             id: 'observation',
             header: t('Observation time'),
-            cell: (s) =>
-              s.observed_at
-                ? new Date(s.observed_at * 1000).toLocaleString(locale)
-                : t('Unknown'),
+            cell: (s) => (
+              <SyncTimestamp
+                value={s.observed_at}
+                fallback='Not reported'
+                relative
+              />
+            ),
           },
           {
             id: 'error',
             header: t('Status'),
-            cell: (s) =>
-              t(
-                s.last_error ||
+            cell: (s) => (
+              <SyncHealth
+                message={
+                  s.last_error ||
                   s.observation_status ||
                   'No upstream observation'
-              ),
+                }
+                healthy={
+                  !s.last_error &&
+                  s.observation_status === 'Upstream observations are current'
+                }
+              />
+            ),
           },
           {
             id: 'edit',
@@ -148,8 +166,62 @@ export function SyncSourcesPanel(props: { caps: Capabilities }) {
         ]}
       />
       {active > 0 && (
-        <section className='space-y-4 rounded-lg border p-4'>
-          <h3>{list.data.sources.find((s) => s.id === active)?.name}</h3>
+        <section className='min-w-0 space-y-4 rounded-xl border p-4'>
+          <div className='flex flex-wrap items-center justify-between gap-3'>
+            <h3 className='text-base font-semibold break-words'>
+              {list.data.sources.find((s) => s.id === active)?.name}
+            </h3>
+            {run.data?.preview && (
+              <div className='flex flex-wrap items-center gap-2'>
+                <StatusBadge
+                  copyable={false}
+                  variant='info'
+                  label={t('Preview data')}
+                />
+                <Button variant='ghost' onClick={() => run.reset()}>
+                  {t('Show saved observations')}
+                </Button>
+              </div>
+            )}
+          </div>
+          <dl className='bg-muted/40 grid gap-4 rounded-lg p-3 text-xs sm:grid-cols-3'>
+            <div className='space-y-1'>
+              <dt className='text-muted-foreground'>{t('Last fetch')}</dt>
+              <dd>
+                <SyncTimestamp
+                  value={activeSource?.last_fetch}
+                  fallback='Never'
+                  relative
+                />
+              </dd>
+            </div>
+            <div className='space-y-1'>
+              <dt className='text-muted-foreground'>{t('Observation time')}</dt>
+              <dd>
+                <SyncTimestamp
+                  value={activeSource?.observed_at}
+                  fallback='Not reported'
+                  relative
+                />
+              </dd>
+            </div>
+            <div className='space-y-1'>
+              <dt className='text-muted-foreground'>
+                {t('Next synchronization')}
+              </dt>
+              <dd>
+                {activeSource?.enabled ? (
+                  <SyncTimestamp
+                    value={activeSource.next_run}
+                    fallback='Awaiting observation'
+                    relative
+                  />
+                ) : (
+                  t('Disabled')
+                )}
+              </dd>
+            </div>
+          </dl>
           <div className='flex flex-wrap gap-2'>
             {props.caps.sync_run && (
               <Button
@@ -175,36 +247,21 @@ export function SyncSourcesPanel(props: { caps: Capabilities }) {
             )}
           </p>
           {run.isPending && <LoadingState inline message={t('Loading...')} />}
+          {run.isError && (
+            <ErrorState onRetry={() => run.mutate(run.variables ?? true)} />
+          )}
           {state.isError && <ErrorState onRetry={() => void state.refetch()} />}
-          <StaticDataTable
-            data={run.data?.accounts ?? state.data?.accounts ?? []}
-            getRowKey={(a) => a.id}
-            emptyContent={t('No data')}
-            columns={[
-              {
-                id: 'account',
-                header: t('Account'),
-                cell: (a) => a.name || a.id,
-              },
-              {
-                id: 'cycles',
-                header: t('Cycles'),
-                cell: (a) => (
-                  <div className='space-y-1'>
-                    {a.cycles.map((c) => (
-                      <p key={c.key} className='break-words'>
-                        {c.name}:{' '}
-                        {c.utilization == null
-                          ? t('Unknown')
-                          : `${formatNumber(c.utilization * 100, locale)}%`}{' '}
-                        {c.error && t(c.error)}
-                      </p>
-                    ))}
-                  </div>
-                ),
-              },
-            ]}
-          />
+          {state.isLoading && <LoadingState inline />}
+          {!state.isLoading && (
+            <SyncAccounts
+              accounts={
+                run.data?.preview || state.dataUpdatedAt < run.submittedAt
+                  ? (run.data?.accounts ?? state.data?.accounts ?? [])
+                  : (state.data?.accounts ?? [])
+              }
+              staleSeconds={activeSource?.stale_seconds ?? 300}
+            />
+          )}
           {run.data && <SyncChangeTable changes={run.data.changes} />}
           <details>
             <summary>{t('Synchronization history')}</summary>

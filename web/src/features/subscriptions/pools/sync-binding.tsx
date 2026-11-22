@@ -25,6 +25,8 @@ import { useTranslation } from 'react-i18next'
 import { ConfirmDialog } from '@/components/confirm-dialog'
 import { ErrorState } from '@/components/error-state'
 import { LoadingState } from '@/components/loading-state'
+import { StatusBadge } from '@/components/status-badge'
+import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Combobox } from '@/components/ui/combobox'
 import { Input } from '@/components/ui/input'
@@ -40,6 +42,7 @@ import {
   type SyncObservation,
 } from './sync-api'
 import { SyncObservations } from './sync-observations'
+import { SyncAccounts, SyncHealth } from './sync-usage'
 
 export function PoolSyncBinding(props: { pool: Pool; caps: Capabilities }) {
   const source = useQuery({
@@ -97,6 +100,7 @@ function BindingEditor(props: {
     queryKey: ['subscription-sync', 'state', values.source_id],
     queryFn: () => syncAPI.state(values.source_id),
     enabled: values.source_id > 0,
+    refetchInterval: 30000,
   })
   const read = useMutation({
     mutationFn: () => syncAPI.run(values.source_id, true),
@@ -160,13 +164,44 @@ function BindingEditor(props: {
   }
   return (
     <div className='space-y-4'>
-      <p className='text-muted-foreground text-sm'>
-        {t(
-          'Bind an actual upstream account, not a subscription plan. Independent and shared cycle settings remain unchanged.'
-        )}
-      </p>
+      <Alert>
+        <AlertTitle>{t('Automatic synchronization')}</AlertTitle>
+        <AlertDescription>
+          {t(
+            'Bind an actual upstream account, not a subscription plan. Independent and shared cycle settings remain unchanged.'
+          )}
+        </AlertDescription>
+      </Alert>
+      {source && (
+        <div className='flex flex-wrap items-center gap-3 rounded-lg border p-3 text-sm'>
+          <span className='font-medium'>{source.name}</span>
+          <StatusBadge
+            copyable={false}
+            label={
+              source.enabled
+                ? t('Automatic synchronization enabled')
+                : t('Automatic synchronization disabled')
+            }
+            variant={source.enabled ? 'success' : 'neutral'}
+          />
+          <SyncHealth
+            healthy={
+              !source.last_error &&
+              source.observation_status === 'Upstream observations are current'
+            }
+            message={source.last_error || source.observation_status}
+          />
+          {!source.enabled && (
+            <p className='text-muted-foreground w-full text-xs'>
+              {t(
+                'Enable automatic synchronization in the source settings to refresh this binding on schedule.'
+              )}
+            </p>
+          )}
+        </div>
+      )}
       <form
-        className='space-y-4'
+        className='max-w-5xl space-y-4 rounded-xl border p-4'
         onSubmit={form.handleSubmit((data) => setConfirm(data))}
       >
         <fieldset
@@ -374,6 +409,14 @@ function BindingEditor(props: {
           </Button>
         </fieldset>
       </form>
+      {read.isError && <ErrorState onRetry={() => read.mutate()} />}
+      {state.isError && <ErrorState onRetry={() => void state.refetch()} />}
+      {!props.observations.length && values.account_id && (
+        <SyncAccounts
+          accounts={accounts.filter((a) => a.id === values.account_id)}
+          staleSeconds={source?.stale_seconds ?? 300}
+        />
+      )}
       {props.initial.last_error && (
         <p role='alert' className='text-destructive'>
           {t(props.initial.last_error)}

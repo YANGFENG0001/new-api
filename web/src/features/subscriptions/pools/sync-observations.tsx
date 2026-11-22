@@ -16,58 +16,23 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useTranslation } from 'react-i18next'
-
-import { Progress } from '@/components/ui/progress'
-import { toIntlLocale } from '@/i18n/languages'
-import { formatNumber } from '@/lib/format'
-
 import type { SyncObservation } from './sync-api'
+import { SyncUsageCard } from './sync-usage'
 
 export function SyncObservations(props: { observations: SyncObservation[] }) {
-  const { t, i18n } = useTranslation()
-  const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
   return (
-    <div className='space-y-3'>
+    <div className='grid min-w-0 gap-3 md:grid-cols-2 2xl:grid-cols-3'>
       {props.observations.map((o) => (
-        <section
+        <SyncUsageCard
           key={o.key}
-          className='space-y-2 rounded-lg border p-3'
-          aria-label={o.name}
-        >
-          <div className='flex flex-wrap justify-between gap-2'>
-            <span>
-              {t('Upstream observation')} · {o.name}
-            </span>
-            <span>
-              {o.utilization == null
-                ? t('Unknown')
-                : `${formatNumber(o.utilization * 100, locale)}%`}
-            </span>
-          </div>
-          <Progress
-            aria-label={o.name}
-            value={
-              o.utilization == null ? null : Math.min(100, o.utilization * 100)
-            }
-          />
-          <p className='text-muted-foreground text-xs'>
-            {t('Observation time')}:{' '}
-            {new Date(o.sampled_at * 1000).toLocaleString(locale)} ·{' '}
-            {t('Next reset time')}:{' '}
-            {new Date(o.window_end * 1000).toLocaleString(locale)}
-          </p>
-          {o.stale && (
-            <p role='status' className='text-destructive text-xs'>
-              {t('Upstream observation is stale')}
-            </p>
-          )}
-          {o.pending && (
-            <p role='status' className='text-destructive text-xs'>
-              {t(o.pending)}
-            </p>
-          )}
-        </section>
+          name={o.name}
+          utilization={o.utilization}
+          windowEnd={o.window_end}
+          sampledAt={o.sampled_at}
+          fetchedAt={o.fetched_at}
+          stale={o.stale}
+          issue={o.pending}
+        />
       ))}
     </div>
   )

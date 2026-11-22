@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import { useForm } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import type { z } from 'zod'
@@ -41,7 +41,13 @@ import { CycleProgress } from './cycle-progress'
 import { snapshotSchema } from './schema'
 import { PoolSyncBinding } from './sync-binding'
 
-export function PoolDetail(props: { pool: Pool; caps: Capabilities }) {
+export function PoolDetail(props: {
+  pool: Pool
+  caps: Capabilities
+  tab?: string
+  onTabChange?: (value: string) => void
+  settings?: ReactNode
+}) {
   const { t, i18n } = useTranslation()
   const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
   const client = useQueryClient()
@@ -70,33 +76,47 @@ export function PoolDetail(props: { pool: Pool; caps: Capabilities }) {
     cancelled: t('Cancelled'),
     expired: t('Expired'),
   }
-  if (detail.isLoading) return <LoadingState />
-  if (detail.isError) {
-    return <ErrorState onRetry={() => void detail.refetch()} />
-  }
   return (
     <div className='space-y-4 pb-5'>
-      <Tabs defaultValue='overview'>
-        <TabsList>
+      <Tabs
+        defaultValue='overview'
+        value={props.tab}
+        onValueChange={(value) => props.onTabChange?.(String(value))}
+      >
+        <TabsList className='max-w-full justify-start overflow-x-auto'>
           {props.caps.sync_read && (
             <TabsTrigger value='sync'>
               {t('Automatic synchronization')}
             </TabsTrigger>
           )}
           <TabsTrigger value='overview'>{t('Overview')}</TabsTrigger>
+          {props.settings && (
+            <TabsTrigger value='settings'>{t('Settings')}</TabsTrigger>
+          )}
           <TabsTrigger value='members'>{t('Members')}</TabsTrigger>
           <TabsTrigger value='operations'>{t('Operation records')}</TabsTrigger>
           <TabsTrigger value='upstream'>{t('Manual calibration')}</TabsTrigger>
         </TabsList>
+        {props.settings && (
+          <TabsContent value='settings'>{props.settings}</TabsContent>
+        )}
         {props.caps.sync_read && (
           <TabsContent value='sync'>
             <PoolSyncBinding pool={props.pool} caps={props.caps} />
           </TabsContent>
         )}
         <TabsContent value='overview'>
+          {detail.isLoading && <LoadingState />}
+          {detail.isError && (
+            <ErrorState onRetry={() => void detail.refetch()} />
+          )}
           <CycleProgress cycles={detail.data?.cycles ?? []} />
         </TabsContent>
         <TabsContent value='members'>
+          {detail.isLoading && <LoadingState />}
+          {detail.isError && (
+            <ErrorState onRetry={() => void detail.refetch()} />
+          )}
           <StaticDataTable
             data={detail.data?.members ?? []}
             getRowKey={(m) => m.subscription_id}
@@ -125,6 +145,10 @@ export function PoolDetail(props: { pool: Pool; caps: Capabilities }) {
           />
         </TabsContent>
         <TabsContent value='operations'>
+          {detail.isLoading && <LoadingState />}
+          {detail.isError && (
+            <ErrorState onRetry={() => void detail.refetch()} />
+          )}
           <StaticDataTable
             data={detail.data?.events ?? []}
             getRowKey={(e) => e.id}

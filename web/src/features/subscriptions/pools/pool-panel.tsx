@@ -37,22 +37,52 @@ export function PoolPanel(props: { caps: Capabilities }) {
     queryFn: poolAPI.list,
   })
   const [selected, setSelected] = useState<Pool | 'new' | null>(null)
+  const [tab, setTab] = useState('overview')
   const [search, setSearch] = useState('')
+  function saved(pool: Pool) {
+    setSelected(pool)
+    if (props.caps.sync_read) setTab('sync')
+  }
   if (selected) {
+    if (selected === 'new') {
+      return (
+        <div className='h-full overflow-y-auto px-1'>
+          <PoolEditor
+            canManage={props.caps.manage}
+            onClose={() => setSelected(null)}
+            onSaved={props.caps.sync_read ? saved : undefined}
+          />
+        </div>
+      )
+    }
+    const cached = query.data?.find((p) => p.id === selected.id)
+    const pool =
+      cached && cached.version >= selected.version ? cached : selected
     return (
       <div className='h-full space-y-5 overflow-y-auto px-1'>
-        <PoolEditor
-          key={selected === 'new' ? 'new' : selected.id}
-          pool={selected === 'new' ? undefined : selected}
-          canManage={props.caps.manage}
-          onClose={() => setSelected(null)}
+        <div className='flex flex-wrap items-center justify-between gap-3'>
+          <h2 className='text-lg font-semibold break-words'>{pool.name}</h2>
+          <Button variant='outline' onClick={() => setSelected(null)}>
+            {t('Back')}
+          </Button>
+        </div>
+        <PoolDetail
+          key={pool.id}
+          pool={pool}
+          caps={props.caps}
+          tab={tab}
+          onTabChange={setTab}
+          settings={
+            <PoolEditor
+              key={`${pool.id}-${pool.version}`}
+              pool={pool}
+              embedded
+              canManage={props.caps.manage}
+              onClose={() => setSelected(null)}
+              onSaved={(result) => setSelected(result)}
+            />
+          }
         />
-        {selected !== 'new' && (
-          <PoolDetail
-            pool={query.data?.find((p) => p.id === selected.id) ?? selected}
-            caps={props.caps}
-          />
-        )}
       </div>
     )
   }
@@ -90,7 +120,13 @@ export function PoolPanel(props: { caps: Capabilities }) {
               id: 'name',
               header: t('Name'),
               cell: (p) => (
-                <Button variant='link' onClick={() => setSelected(p)}>
+                <Button
+                  variant='link'
+                  onClick={() => {
+                    setSelected(p)
+                    setTab('overview')
+                  }}
+                >
                   {p.name}
                 </Button>
               ),
@@ -105,6 +141,24 @@ export function PoolPanel(props: { caps: Capabilities }) {
                       `${c.name} · ${c.shared ? t('Shared') : t('Independent')}`
                   )
                   .join(' / '),
+            },
+            {
+              id: 'sync',
+              header: t('Automatic synchronization'),
+              cell: (p) =>
+                props.caps.sync_read ? (
+                  <Button
+                    variant='outline'
+                    onClick={() => {
+                      setSelected(p)
+                      setTab('sync')
+                    }}
+                  >
+                    {t('Automatic synchronization')}
+                  </Button>
+                ) : (
+                  '—'
+                ),
             },
             {
               id: 'end',

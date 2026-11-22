@@ -24,6 +24,7 @@ import { toast } from 'sonner'
 
 import { DateTimePicker } from '@/components/datetime-picker'
 import { MultiSelect } from '@/components/multi-select'
+import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -38,6 +39,8 @@ export function PoolEditor(props: {
   pool?: Pool
   onClose: () => void
   canManage: boolean
+  onSaved?: (pool: Pool) => void
+  embedded?: boolean
 }) {
   const { t } = useTranslation()
   const client = useQueryClient()
@@ -52,10 +55,11 @@ export function PoolEditor(props: {
   const save = useMutation({
     mutationFn: (data: Pool) =>
       data.id ? poolAPI.save(data) : poolAPI.create(data),
-    onSuccess: () => {
+    onSuccess: (pool) => {
       void client.invalidateQueries({ queryKey: ['subscription-pools'] })
       toast.success(t('Saved successfully'))
-      props.onClose()
+      if (props.onSaved) props.onSaved(pool)
+      else props.onClose()
     },
   })
   const values = form.watch()
@@ -65,14 +69,26 @@ export function PoolEditor(props: {
       className='space-y-5 pb-6'
       onSubmit={form.handleSubmit((data) => save.mutate(data))}
     >
-      <div className='flex flex-wrap items-center justify-between gap-3'>
-        <h2 className='text-lg font-semibold'>
-          {props.pool ? t('Edit upstream pool') : t('Create upstream pool')}
-        </h2>
-        <Button type='button' variant='outline' onClick={props.onClose}>
-          {t('Back')}
-        </Button>
-      </div>
+      {!props.embedded && (
+        <div className='flex flex-wrap items-center justify-between gap-3'>
+          <h2 className='text-lg font-semibold'>
+            {props.pool ? t('Edit upstream pool') : t('Create upstream pool')}
+          </h2>
+          <Button type='button' variant='outline' onClick={props.onClose}>
+            {t('Back')}
+          </Button>
+        </div>
+      )}
+      {!props.pool && props.onSaved && (
+        <Alert>
+          <AlertTitle>{t('Automatic synchronization')}</AlertTitle>
+          <AlertDescription>
+            {t(
+              'Save this pool to select a synchronization source and upstream account. The synchronization tab opens next.'
+            )}
+          </AlertDescription>
+        </Alert>
+      )}
       <p className='text-muted-foreground text-sm'>
         {t(
           'Times are shown in your browser time zone. Fixed durations do not drift after restarts.'
@@ -170,7 +186,13 @@ export function PoolEditor(props: {
           )}
         </p>
         <Button type='submit' disabled={save.isPending}>
-          {save.isPending ? t('Saving...') : t('Save')}
+          {save.isPending
+            ? t('Saving...')
+            : t(
+                !props.pool && props.onSaved
+                  ? 'Save and configure synchronization'
+                  : 'Save'
+              )}
         </Button>
       </fieldset>
     </form>

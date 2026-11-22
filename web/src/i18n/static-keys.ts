@@ -1164,4 +1164,11 @@ export const STATIC_I18N_KEYS = [
   'invalid user control input: at most 128 time windows',
   'request template cannot set {{value}}',
   'user_control.runtime.delivery.settled',
+  'Not reported',
+  'Up to date',
+  'Needs attention',
+  'Awaiting observation',
+  'Stale data',
+  'Reset time unavailable',
+  'Save and configure synchronization',
 ] as const

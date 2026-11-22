@@ -49,6 +49,21 @@ function Fixture() {
 }
 
 describe('searchable single selection', () => {
+  it('keeps the dropdown trigger a native non-submit button inside a form', async () => {
+    const submit = vi.fn((event) => event.preventDefault())
+    render(
+      <form onSubmit={submit}>
+        <Fixture />
+      </form>
+    )
+    const trigger = screen.getByRole('button', { name: 'Provider' })
+    expect(trigger).toHaveAttribute('type', 'button')
+    expect(trigger).not.toHaveAttribute('role')
+    await userEvent.click(trigger)
+    expect(await screen.findByRole('option', { name: 'Google' })).toBeVisible()
+    expect(submit).not.toHaveBeenCalled()
+  })
+
   it.each(['dialog', 'sheet'] as const)(
     'keeps the options closed when a %s autofocuses the input, then opens on click',
     async (container) => {

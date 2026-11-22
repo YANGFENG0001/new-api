@@ -27,6 +27,7 @@ import { api } from '@/lib/api'
 import type { Assignment } from '../api'
 import { InstanceAllocations } from '../instance-allocation'
 import { PlanAllocationSettings } from '../plan-allocation'
+import { PoolPanel } from '../pool-panel'
 import { newCycle } from '../schema'
 
 const clients: QueryClient[] = []
@@ -58,6 +59,98 @@ function mount(children: ReactNode) {
 }
 afterEach(() => {
   clients.splice(0).forEach((client) => client.clear())
+})
+
+test('a saved pool exposes synchronization directly from the list and keeps settings in a separate tab', async () => {
+  vi.spyOn(api, 'request').mockImplementation(async (config) => {
+    if (config.url?.endsWith('/pools')) return envelope([pool])
+    if (config.url?.endsWith('/sync-sources')) {
+      return envelope({ sources: [], template: {}, privileged: true })
+    }
+    if (config.url?.endsWith('/sync')) {
+      return envelope({
+        binding: { pool_id: 7, version: 0, cycles: [] },
+        observations: [],
+      })
+    }
+    return envelope({ cycles: [], members: [], events: [] })
+  })
+  mount(
+    <PoolPanel
+      caps={
+        { ...caps, sync_read: true } as Parameters<typeof PoolPanel>[0]['caps']
+      }
+    />
+  )
+  await userEvent.click(
+    await screen.findByRole('button', { name: 'Automatic synchronization' })
+  )
+  expect(
+    screen.getByRole('tab', { name: 'Automatic synchronization' })
+  ).toHaveAttribute('aria-selected', 'true')
+  expect(screen.getByRole('tab', { name: 'Settings' })).toBeVisible()
+  expect(
+    screen.queryByRole('textbox', { name: 'Name' })
+  ).not.toBeInTheDocument()
+})
+
+test('creating a pool explains synchronization before save and opens the saved pool synchronization tab automatically', async () => {
+  let created = false
+  vi.spyOn(api, 'request').mockImplementation(async (config) => {
+    if (config.url?.endsWith('/pools') && config.method === 'post') {
+      created = true
+      return envelope({
+        ...(config.data as Record<string, unknown>),
+        id: 7,
+        version: 1,
+      })
+    }
+    if (config.url?.endsWith('/pools')) return envelope(created ? [pool] : [])
+    if (config.url?.endsWith('/pool-catalog')) return envelope([])
+    if (config.url?.endsWith('/sync-sources')) {
+      return envelope({ sources: [], template: {}, privileged: true })
+    }
+    if (config.url?.endsWith('/sync')) {
+      return envelope({
+        binding: { pool_id: 7, version: 0, cycles: [] },
+        observations: [],
+      })
+    }
+    return envelope({ cycles: [], members: [], events: [] })
+  })
+  mount(
+    <PoolPanel
+      caps={
+        { ...caps, sync_read: true } as Parameters<typeof PoolPanel>[0]['caps']
+      }
+    />
+  )
+  await userEvent.click(
+    await screen.findByRole('button', { name: 'Create upstream pool' })
+  )
+  expect(screen.getByRole('alert')).toHaveTextContent(
+    'The synchronization tab opens next.'
+  )
+  await userEvent.type(
+    screen.getByRole('textbox', { name: 'Name' }),
+    'New pool'
+  )
+  await userEvent.click(screen.getByRole('button', { name: 'Add cycle' }))
+  await userEvent.click(
+    screen.getByRole('button', { name: 'Save and configure synchronization' })
+  )
+  expect(
+    await screen.findByRole('tab', { name: 'Automatic synchronization' })
+  ).toHaveAttribute('aria-selected', 'true')
+})
+
+test('a user without synchronization permission does not receive a synchronization shortcut', async () => {
+  vi.spyOn(api, 'request').mockResolvedValue(envelope([pool]))
+  mount(<PoolPanel caps={caps as Parameters<typeof PoolPanel>[0]['caps']} />)
+  await screen.findByRole('button', { name: 'Pool A' })
+  expect(
+    screen.queryByRole('button', { name: 'Automatic synchronization' })
+  ).not.toBeInTheDocument()
 })
 
 test('saving allocation from the plan dialog does not submit its parent plan form', async () => {
