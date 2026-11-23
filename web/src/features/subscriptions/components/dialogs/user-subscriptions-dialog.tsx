@@ -280,7 +280,10 @@ export function UserSubscriptionsDialog(props: Props) {
             {props.user && (
               <InstanceAllocations
                 userId={props.user.id}
-                subscriptions={subs.map((s) => s.subscription)}
+                subscriptions={subs.map((s) => ({
+                  ...s.subscription,
+                  plan_title: planTitleMap.get(s.subscription.plan_id),
+                }))}
               />
             )}
             <StaticDataTable

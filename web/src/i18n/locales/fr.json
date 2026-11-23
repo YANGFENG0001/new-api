@@ -8346,6 +8346,13 @@
     "Zhipu": "Zhipu",
     "Zhipu GLM": "Zhipu GLM",
     "Zhipu V4": "Zhipu V4",
-    "Zoom": "Zoom"
+    "Zoom": "Zoom",
+    "Input unit": "Unité de saisie",
+    "USD ($)": "USD ($)",
+    "CNY (￥)": "CNY (￥)",
+    "Currency inputs use the site exchange rate and are saved as quota units. Upstream percentages do not define a monetary capacity.": "Les montants sont convertis au taux du site et enregistrés en unités de quota. Les pourcentages en amont ne définissent pas une capacité monétaire.",
+    "Enter a positive local quota to replace the unlimited setting. Upstream synchronization will not overwrite this limit.": "Saisissez un quota local positif pour remplacer le mode illimité. La synchronisation en amont ne remplace pas cette limite.",
+    "Upstream total usage": "Utilisation totale en amont",
+    "Source polling only reads the upstream cache. This account has an old observation; another poll does not make it fresh. Check the upstream cache updater or per-cycle observation time mapping.": "Le sondage lit uniquement le cache en amont. L’observation de ce compte est ancienne ; un nouveau sondage ne la rafraîchit pas. Vérifiez la mise à jour du cache ou le mappage temporel de chaque fenêtre."
   }
 }

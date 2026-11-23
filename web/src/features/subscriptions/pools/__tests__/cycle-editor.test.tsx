@@ -21,9 +21,12 @@ import userEvent from '@testing-library/user-event'
 import { createInstance } from 'i18next'
 import { useState } from 'react'
 import { I18nextProvider } from 'react-i18next'
-import { expect, test } from 'vitest'
+import { expect, test, vi } from 'vitest'
+
+import { useSystemConfigStore } from '@/stores/system-config-store'
 
 import { CycleEditor } from '../cycle-editor'
+import { QuotaAmountInput } from '../quota-amount-input'
 import { newCycle } from '../schema'
 
 function Editor(props: { pooled?: boolean; disabled?: boolean }) {
@@ -107,4 +110,71 @@ test('date clear controls follow the selected interface language', async () => {
     await i18n.changeLanguage('en')
   })
   expect(screen.getAllByRole('button', { name: 'Clear' })).toHaveLength(2)
+})
+
+test('an imported unlimited cycle accepts a local monetary limit without an upstream capacity', async () => {
+  const change = vi.fn()
+  const rule = { ...newCycle('Imported'), limit: 0, unlimited: true }
+  render(<CycleEditor value={[rule]} onChange={change} pooled />)
+  const amount = screen.getByLabelText('Quota units')
+  expect(amount).toBeEnabled()
+  await userEvent.click(
+    screen.getByRole('combobox', { name: 'Quota units · Input unit' })
+  )
+  await userEvent.click(await screen.findByRole('option', { name: 'USD ($)' }))
+  await userEvent.clear(amount)
+  await userEvent.type(amount, '2.50')
+  expect(change.mock.lastCall?.[0][0]).toMatchObject({
+    limit: 1250000,
+    unlimited: false,
+  })
+})
+
+test('changing the input currency preserves stored quota and CNY uses the configured exchange rate', async () => {
+  const original = useSystemConfigStore.getState().config.currency
+  useSystemConfigStore.getState().setConfig({
+    currency: { ...original, quotaPerUnit: 500000, usdExchangeRate: 7 },
+  })
+  try {
+    const change = vi.fn()
+    render(
+      <CycleEditor
+        value={[{ ...newCycle('Local'), limit: 1250000 }]}
+        onChange={change}
+      />
+    )
+    const amount = screen.getByLabelText('Quota units')
+    await userEvent.click(
+      screen.getByRole('combobox', { name: 'Quota units · Input unit' })
+    )
+    await userEvent.click(
+      await screen.findByRole('option', { name: 'CNY (￥)' })
+    )
+    expect(amount).toHaveValue(17.5)
+    expect(change).not.toHaveBeenCalled()
+    await userEvent.clear(amount)
+    await userEvent.type(amount, '21')
+    expect(change.mock.lastCall?.[0][0].limit).toBe(1500000)
+  } finally {
+    useSystemConfigStore.getState().setConfig({ currency: original })
+  }
+})
+
+test('invalid or unsafe quota amounts cannot be turned into valid saved integers', async () => {
+  const change = vi.fn()
+  render(
+    <QuotaAmountInput
+      id='test-amount'
+      label='Capacity'
+      value={0}
+      onChange={change}
+    />
+  )
+  const input = screen.getByLabelText('Capacity')
+  await userEvent.clear(input)
+  await userEvent.type(input, '9007199254740992')
+  expect(change.mock.lastCall?.[0]).toBeNaN()
+  await userEvent.clear(input)
+  await userEvent.type(input, '1.5')
+  expect(change.mock.lastCall?.[0]).toBeNaN()
 })

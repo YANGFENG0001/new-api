@@ -418,7 +418,16 @@ export function SubscriptionPlansCard({
           {hasAny && alignedUsage.data && !alignedUsage.isError && (
             <>
               <Separator className='my-3' />
-              <div className='max-h-64 space-y-3 overflow-y-auto pr-1'>
+              <div className='space-y-3'>
+                <SelfAlignedUsage
+                  subscriptions={alignedUsage.data.subscriptions.filter(
+                    (usage) =>
+                      allSubscriptions.some(
+                        (sub) => sub.subscription.id === usage.subscription_id
+                      )
+                  )}
+                  planTitles={planTitleMap}
+                />
                 {allSubscriptions.map((sub) => {
                   const subscription = sub.subscription
                   const usage = alignedUsage.data.subscriptions.find(
@@ -433,13 +442,7 @@ export function SubscriptionPlansCard({
                     )
                   }
                   if (usage.managed) {
-                    return (
-                      <SelfAlignedUsage
-                        key={subscription.id}
-                        subscription={usage}
-                        title={planTitleMap.get(subscription.plan_id)}
-                      />
-                    )
+                    return null
                   }
                   const totalAmount = Number(subscription?.amount_total || 0)
                   const usedAmount = Number(subscription?.amount_used || 0)

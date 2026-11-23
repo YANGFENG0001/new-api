@@ -1746,6 +1746,36 @@ func TestSubscriptionPoolSyncFiltersNoiseAndKeepsAccountFreshnessSeparate(t *tes
 	assert.Equal(t, []string{"vm-02"}, result.Data.Sources[0].StaleAccounts)
 }
 
+func TestSubscriptionPoolSyncHidesPlaceholderZeroCatalogsWithoutDiscardingRealZero(t *testing.T) {
+	_, _, now := setupSubscriptionPoolTest(t)
+	zero := 0.0
+	accounts := []model.SubscriptionSyncAccount{
+		{ID: "shell", Name: "vm-shell", Cycles: []model.SubscriptionSyncCycle{{Key: "short", Utilization: &zero}}},
+		{ID: "null", Cycles: []model.SubscriptionSyncCycle{{Key: "short"}}},
+		{ID: "real", Name: "vm-02", Cycles: []model.SubscriptionSyncCycle{{Key: "short", Utilization: &zero, SampledAt: now - 400, WindowEnd: now + 1000}}},
+	}
+	raw, err := common.Marshal(accounts)
+	require.NoError(t, err)
+	source := model.SubscriptionSyncSource{Name: "cached", CatalogJSON: string(raw)}
+	require.NoError(t, model.DB.Create(&source).Error)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Set("id", 1)
+	c.Set("role", common.RoleRootUser)
+	c.Params = gin.Params{{Key: "id", Value: fmt.Sprintf("%d", source.Id)}}
+	GetSubscriptionSyncSourceState(c)
+	var result struct {
+		Data struct {
+			Accounts []model.SubscriptionSyncAccount `json:"accounts"`
+		} `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(w.Body.Bytes(), &result))
+	require.Len(t, result.Data.Accounts, 1)
+	assert.Equal(t, "real", result.Data.Accounts[0].ID)
+	assert.Zero(t, *result.Data.Accounts[0].Cycles[0].Utilization)
+	assert.Equal(t, now-400, result.Data.Accounts[0].Cycles[0].SampledAt, "a stale real account remains visible with its true observation time")
+}
+
 func TestSubscriptionPoolSyncBindingImmediatelyFeedsPurchasedMemberViews(t *testing.T) {
 	user, plan, now := setupSubscriptionPoolTest(t)
 	ratio := 0.37

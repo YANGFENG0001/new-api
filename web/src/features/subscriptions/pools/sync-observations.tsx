@@ -19,7 +19,10 @@ For commercial licensing, please contact support@quantumnous.com
 import { syncCycleName, type SyncObservation } from './sync-api'
 import { SyncUsageCard } from './sync-usage'
 
-export function SyncObservations(props: { observations: SyncObservation[] }) {
+export function SyncObservations(props: {
+  observations: SyncObservation[]
+  scope?: 'Shared' | 'Independent'
+}) {
   return (
     <div className='grid min-w-0 gap-3'>
       {props.observations.map((o) => (
@@ -34,6 +37,7 @@ export function SyncObservations(props: { observations: SyncObservation[] }) {
           issue={o.pending}
           estimatedUtilization={o.estimated_utilization}
           localDelta={o.local_delta}
+          scope={props.scope}
         />
       ))}
     </div>

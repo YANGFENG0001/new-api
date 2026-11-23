@@ -27,6 +27,7 @@ import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 
 import type { CycleRule } from './api'
+import { QuotaAmountInput } from './quota-amount-input'
 import { newCycle } from './schema'
 import { syncCycleName } from './sync-api'
 
@@ -142,15 +143,24 @@ export function CycleEditor(props: {
             </div>
             <div>
               <Label htmlFor={`${rule.key}-quota`}>{t('Quota units')}</Label>
-              <Input
+              <QuotaAmountInput
                 id={`${rule.key}-quota`}
-                type='number'
-                min={1}
-                step={1}
-                disabled={rule.unlimited}
+                label={t('Quota units')}
                 value={rule.limit}
-                onChange={(e) => update(i, { limit: Number(e.target.value) })}
+                onChange={(limit) =>
+                  update(i, {
+                    limit,
+                    unlimited: limit > 0 ? false : rule.unlimited,
+                  })
+                }
               />
+              {rule.unlimited && (
+                <p className='text-muted-foreground mt-2 text-xs'>
+                  {t(
+                    'Enter a positive local quota to replace the unlimited setting. Upstream synchronization will not overwrite this limit.'
+                  )}
+                </p>
+              )}
             </div>
           </div>
           <div className='flex flex-wrap gap-5'>
@@ -188,14 +198,11 @@ export function CycleEditor(props: {
               <Label htmlFor={`${rule.key}-upstream`}>
                 {t('Upstream total quota (0 means unknown)')}
               </Label>
-              <Input
+              <QuotaAmountInput
                 id={`${rule.key}-upstream`}
-                type='number'
-                min={0}
+                label={t('Upstream total quota (0 means unknown)')}
                 value={rule.upstream_limit}
-                onChange={(e) =>
-                  update(i, { upstream_limit: Number(e.target.value) })
-                }
+                onChange={(upstream_limit) => update(i, { upstream_limit })}
               />
               <Label>
                 <Switch

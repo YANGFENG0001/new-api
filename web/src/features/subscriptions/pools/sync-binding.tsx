@@ -40,6 +40,7 @@ import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 
 import type { Pool, Capabilities } from './api'
+import { QuotaAmountInput } from './quota-amount-input'
 import { SyncAccountPicker } from './sync-account-picker'
 import {
   syncAPI,
@@ -400,22 +401,19 @@ function BindingEditor(props: {
                                   'Quota units per full upstream window (optional)'
                                 )}
                               </Label>
-                              <Input
+                              <QuotaAmountInput
                                 id={`capacity-${local.key}`}
-                                type='number'
-                                min={0}
-                                step={1}
-                                max={Number.MAX_SAFE_INTEGER}
+                                label={t(
+                                  'Quota units per full upstream window (optional)'
+                                )}
                                 disabled={
                                   !props.caps.sync_binding ||
                                   !props.caps.sync_apply
                                 }
                                 value={mapping.quota_per_full_window ?? 0}
-                                onChange={(e) =>
+                                onChange={(quota_per_full_window) =>
                                   updateCycle(local.key, {
-                                    quota_per_full_window: Number(
-                                      e.target.value
-                                    ),
+                                    quota_per_full_window,
                                   })
                                 }
                               />

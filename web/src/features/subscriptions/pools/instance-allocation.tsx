@@ -42,7 +42,12 @@ import { SyncTimestamp } from './sync-usage'
 
 export function InstanceAllocations(props: {
   userId: number
-  subscriptions: { id: number; plan_id: number; status: string }[]
+  subscriptions: {
+    id: number
+    plan_id: number
+    status: string
+    plan_title?: string
+  }[]
 }) {
   const { t } = useTranslation()
   const client = useQueryClient()
@@ -211,7 +216,7 @@ export function InstanceAllocations(props: {
               .filter((s) => s.status === 'active')
               .map((s) => ({
                 value: String(s.id),
-                label: `#${s.id} · ${t('Plan')} #${s.plan_id}`,
+                label: `#${s.id} · ${s.plan_title?.trim() || `${t('Plan')} #${s.plan_id}`}`,
               }))}
             selected={selected}
             onChange={(v) => setSelected(batchAllowed ? v : v.slice(-1))}

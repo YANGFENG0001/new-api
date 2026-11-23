@@ -28,13 +28,69 @@ import type { Capabilities } from '../api'
 import { emptySyncSource, type SyncMapping } from '../sync-api'
 import { SyncObservations } from '../sync-observations'
 import { SyncSourcesPanel } from '../sync-sources-panel'
-import { SyncUsageCard, SyncSourceStatus } from '../sync-usage'
+import { SyncUsageCard, SyncSourceStatus, SyncAccounts } from '../sync-usage'
 
 const now = Math.floor(Date.now() / 1000)
 const mapping = { cycles: [] } as unknown as SyncMapping
 const source = { ...emptySyncSource(mapping), id: 1, name: 'Panel' }
 const clients: QueryClient[] = []
 afterEach(() => clients.splice(0).forEach((client) => client.clear()))
+
+test('placeholder accounts with null quotas or zero defaults and no observation metadata are not shown', () => {
+  const base = {
+    key: 'c',
+    name: 'Empty cycle',
+    seconds: 3600,
+    window_start: 0,
+    window_end: 0,
+    sampled_at: 0,
+    source: '',
+    error: 'Missing or inconsistent upstream cycle data',
+  }
+  render(
+    <SyncAccounts
+      staleSeconds={300}
+      accounts={[
+        {
+          id: 'empty-null',
+          name: 'vm-null',
+          expiry: 0,
+          sampled_at: 0,
+          cycles: [{ ...base, utilization: null }],
+        },
+        {
+          id: 'empty-zero',
+          name: 'vm-shell',
+          expiry: 0,
+          sampled_at: 0,
+          cycles: [{ ...base, utilization: 0 }],
+        },
+        {
+          id: 'real-zero',
+          name: 'vm-live',
+          expiry: 0,
+          sampled_at: now,
+          cycles: [
+            {
+              ...base,
+              name: 'Real zero',
+              utilization: 0,
+              sampled_at: now,
+              window_end: now + 1000,
+              error: '',
+            },
+          ],
+        },
+      ]}
+    />
+  )
+  expect(screen.queryByText('vm-null')).not.toBeInTheDocument()
+  expect(screen.queryByText('vm-shell')).not.toBeInTheDocument()
+  expect(screen.getByText('vm-live')).toBeVisible()
+  expect(
+    screen.getByRole('progressbar', { name: 'Real zero' })
+  ).toHaveAttribute('aria-valuenow', '0')
+})
 
 async function openAccounts() {
   vi.spyOn(api, 'request').mockImplementation(async (config) => ({

@@ -8346,6 +8346,13 @@
     "Zhipu": "Zhipu",
     "Zhipu GLM": "Zhipu GLM",
     "Zhipu V4": "Zhipu V4",
-    "Zoom": "Zoom"
+    "Zoom": "Zoom",
+    "Input unit": "Единица ввода",
+    "USD ($)": "Доллары ($)",
+    "CNY (￥)": "Юани (￥)",
+    "Currency inputs use the site exchange rate and are saved as quota units. Upstream percentages do not define a monetary capacity.": "Суммы пересчитываются по курсу сайта и сохраняются в единицах квоты. Проценты сервиса не определяют денежный лимит.",
+    "Enter a positive local quota to replace the unlimited setting. Upstream synchronization will not overwrite this limit.": "Введите положительную локальную квоту вместо безлимитного режима. Синхронизация не перезапишет этот лимит.",
+    "Upstream total usage": "Общее использование сервиса",
+    "Source polling only reads the upstream cache. This account has an old observation; another poll does not make it fresh. Check the upstream cache updater or per-cycle observation time mapping.": "Опрос читает только кеш сервиса. Наблюдение этого аккаунта устарело; повторный опрос его не обновит. Проверьте обновление кеша и поле времени каждого периода."
   }
 }

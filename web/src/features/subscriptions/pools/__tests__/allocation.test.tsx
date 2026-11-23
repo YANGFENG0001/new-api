@@ -549,7 +549,9 @@ test('single assignment requires a server preview and confirms the versions actu
   mount(
     <InstanceAllocations
       userId={1}
-      subscriptions={[{ id: 12, plan_id: 1, status: 'active' }]}
+      subscriptions={[
+        { id: 12, plan_id: 1, status: 'active', plan_title: 'Claude Pro' },
+      ]}
     />
   )
   const selection = await screen.findByRole('combobox', {
@@ -557,7 +559,7 @@ test('single assignment requires a server preview and confirms the versions actu
   })
   await userEvent.click(selection)
   await userEvent.click(
-    await screen.findByRole('option', { name: '#12 · Plan #1' })
+    await screen.findByRole('option', { name: '#12 · Claude Pro' })
   )
   await userEvent.keyboard('{Escape}')
   await userEvent.click(
@@ -606,6 +608,30 @@ test('allocation load failures do not expose enabled batch controls', async () =
   expect(
     screen.queryByRole('button', { name: 'Review and assign' })
   ).not.toBeInTheDocument()
+})
+
+test('a deleted or unnamed plan still has an identifiable subscription instance option', async () => {
+  vi.spyOn(api, 'request').mockImplementation(async (config) => {
+    if (config.url?.endsWith('/pool-capabilities')) return envelope(caps)
+    if (config.url?.endsWith('/allocations')) {
+      return envelope({ allocations: [], subscriptions: [] })
+    }
+    return envelope([pool])
+  })
+  mount(
+    <InstanceAllocations
+      userId={1}
+      subscriptions={[
+        { id: 13, plan_id: 99, status: 'active', plan_title: ' ' },
+      ]}
+    />
+  )
+  await userEvent.click(
+    await screen.findByRole('combobox', { name: 'Subscription instances' })
+  )
+  expect(
+    await screen.findByRole('option', { name: '#13 · Plan #99' })
+  ).toBeVisible()
 })
 
 test('creating from upstream fills reset windows and keeps imported policy editable before one atomic save', async () => {

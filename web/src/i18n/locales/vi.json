@@ -8346,6 +8346,13 @@
     "Zhipu": "Zhipu",
     "Zhipu GLM": "Zhipu GLM",
     "Zhipu V4": "Zhipu V4",
-    "Zoom": "Zoom"
+    "Zoom": "Zoom",
+    "Input unit": "Đơn vị nhập",
+    "USD ($)": "USD ($)",
+    "CNY (￥)": "CNY (￥)",
+    "Currency inputs use the site exchange rate and are saved as quota units. Upstream percentages do not define a monetary capacity.": "Số tiền được đổi theo tỷ giá của trang và lưu dưới dạng đơn vị hạn mức. Phần trăm thượng nguồn không xác định hạn mức tiền.",
+    "Enter a positive local quota to replace the unlimited setting. Upstream synchronization will not overwrite this limit.": "Nhập hạn mức cục bộ dương để tắt chế độ không giới hạn. Đồng bộ thượng nguồn không ghi đè giới hạn này.",
+    "Upstream total usage": "Tổng mức sử dụng thượng nguồn",
+    "Source polling only reads the upstream cache. This account has an old observation; another poll does not make it fresh. Check the upstream cache updater or per-cycle observation time mapping.": "Thăm dò chỉ đọc bộ nhớ đệm thượng nguồn. Quan sát của tài khoản này đã cũ; thăm dò lại không làm mới ảnh chụp. Kiểm tra cơ chế cập nhật bộ nhớ đệm hoặc ánh xạ thời gian của từng chu kỳ."
   }
 }

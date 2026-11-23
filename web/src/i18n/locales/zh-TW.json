@@ -8346,6 +8346,13 @@
     "Zhipu": "智譜",
     "Zhipu GLM": "智譜GLM",
     "Zhipu V4": "智譜 V4",
-    "Zoom": "縮放"
+    "Zoom": "縮放",
+    "Input unit": "輸入單位",
+    "USD ($)": "美元 ($)",
+    "CNY (￥)": "人民幣 (￥)",
+    "Currency inputs use the site exchange rate and are saved as quota units. Upstream percentages do not define a monetary capacity.": "金額按站點匯率換算後儲存為額度單位。上游百分比不代表具體金額額度。",
+    "Enter a positive local quota to replace the unlimited setting. Upstream synchronization will not overwrite this limit.": "填寫大於零的本地額度即可關閉無限制。上游同步不會覆蓋此本地額度。",
+    "Upstream total usage": "上游整體用量",
+    "Source polling only reads the upstream cache. This account has an old observation; another poll does not make it fresh. Check the upstream cache updater or per-cycle observation time mapping.": "輪詢僅讀取上游快取。此帳號的觀測時間較舊，再次輪詢不會使快照變新；請檢查上游快取更新機制或各週期的觀測時間映射。"
   }
 }

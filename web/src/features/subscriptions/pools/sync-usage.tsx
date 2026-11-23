@@ -21,6 +21,7 @@ import { useTranslation } from 'react-i18next'
 
 import { EmptyState } from '@/components/empty-state'
 import { StatusBadge } from '@/components/status-badge'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
   Popover,
@@ -206,6 +207,7 @@ export function SyncUsageCard(props: {
   issue?: string
   estimatedUtilization?: number | null
   localDelta?: number
+  scope?: 'Shared' | 'Independent'
 }) {
   const { t, i18n } = useTranslation()
   const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
@@ -234,7 +236,10 @@ export function SyncUsageCard(props: {
       className='bg-card min-w-0 space-y-3 rounded-xl border p-4'
     >
       <div className='flex flex-wrap items-center justify-between gap-2'>
-        <h4 className='min-w-0 font-medium break-words'>{props.name}</h4>
+        <div className='flex min-w-0 flex-wrap items-center gap-2'>
+          <h4 className='min-w-0 font-medium break-words'>{props.name}</h4>
+          {props.scope && <Badge variant='secondary'>{t(props.scope)}</Badge>}
+        </div>
         <SyncHealth
           healthy={reported && !issue}
           message={issue}
@@ -316,6 +321,7 @@ export function SyncUsageCard(props: {
 export function SyncAccounts(props: {
   accounts: SyncAccount[]
   staleSeconds: number
+  fetchedAt?: number
 }) {
   const { t } = useTranslation()
   const now = Math.floor(Date.now() / 1000)
@@ -364,6 +370,23 @@ export function SyncAccounts(props: {
               </div>
             )}
           </div>
+          {props.fetchedAt != null && (
+            <p className='text-muted-foreground text-xs'>
+              {t('Last fetch')}:{' '}
+              <SyncTimestamp value={props.fetchedAt} fallback='Never' />
+            </p>
+          )}
+          {account.cycles.some(
+            (cycle) =>
+              cycle.sampled_at > 0 &&
+              now - cycle.sampled_at > props.staleSeconds
+          ) && (
+            <p role='status' className='text-warning text-xs'>
+              {t(
+                'Source polling only reads the upstream cache. This account has an old observation; another poll does not make it fresh. Check the upstream cache updater or per-cycle observation time mapping.'
+              )}
+            </p>
+          )}
           <div className='grid min-w-0 gap-3 md:grid-cols-2 2xl:grid-cols-3'>
             {account.cycles.map((cycle) => (
               <SyncUsageCard

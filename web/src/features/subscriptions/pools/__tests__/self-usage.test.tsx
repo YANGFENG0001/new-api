@@ -94,11 +94,10 @@ test('a subscription only exposes its own pool and does not fetch duplicate pers
     end_time: 1890000000,
     cycles: [],
   })
-  const trigger = await screen.findByRole('button', {
-    name: 'Upstream carpool subscriptions',
-  })
-  expect(trigger).toHaveAttribute('aria-expanded', 'true')
-  expect(screen.getByText('My pool')).toBeVisible()
+  await screen.findByText('My pool')
+  expect(
+    screen.queryByRole('button', { name: 'Upstream carpool subscriptions' })
+  ).not.toBeInTheDocument()
   expect(screen.getByText('My pool')).toBeVisible()
   expect(
     screen.queryByText('Different subscription pool')
@@ -106,6 +105,136 @@ test('a subscription only exposes its own pool and does not fetch duplicate pers
   expect(request.mock.calls.some(([c]) => c.url?.endsWith('/usage'))).toBe(
     false
   )
+})
+
+test('a pooled subscription shows the shared cycle once and retains its independent member quota', async () => {
+  const cycle = {
+    key: 'short',
+    name: '7h',
+    seconds: 25200,
+    shared: true,
+    unlimited: true,
+    limit: 0,
+    used: 12,
+    reserved: 0,
+    adjustment: 0,
+    start_time: 1,
+    next_reset: 1890000000,
+    pending: false,
+  }
+  vi.spyOn(api, 'request').mockResolvedValue({
+    data: {
+      success: true,
+      data: [
+        {
+          id: 1,
+          name: 'Shared upstream',
+          subscription_ids: [9],
+          end_time: 1890000000,
+          cycles: [cycle],
+          observations: [],
+          sync_observations: [
+            {
+              key: 'short',
+              name: '7h',
+              utilization: 0.3,
+              sampled_at: 1890000000 - 100,
+              fetched_at: 1890000000 - 100,
+              window_end: 1890000000,
+              stale: false,
+              pending: '',
+            },
+          ],
+        },
+      ],
+    },
+  })
+  mount({
+    subscription_id: 9,
+    plan_id: 2,
+    status: 'active',
+    managed: true,
+    pending: false,
+    end_time: 1890000000,
+    cycles: [
+      cycle,
+      {
+        ...cycle,
+        key: 'week',
+        name: 'Personal week',
+        shared: false,
+        unlimited: false,
+        limit: 100,
+        used: 7,
+      },
+    ],
+  })
+  await screen.findByText('Shared upstream')
+  expect(screen.getAllByRole('progressbar', { name: '7h' })).toHaveLength(1)
+  expect(screen.getAllByText('7h')).toHaveLength(1)
+  expect(screen.getByText(/7 \/ 100/)).toBeVisible()
+  expect(screen.queryByText(/12 \/ Unlimited/)).not.toBeInTheDocument()
+  expect(
+    screen.queryByRole('button', { name: 'Upstream carpool subscriptions' })
+  ).not.toBeInTheDocument()
+})
+
+test('multiple subscription instances in one pool share one upstream summary while keeping each personal limit', async () => {
+  const cycle = {
+    key: 'week',
+    name: 'Member week',
+    seconds: 604800,
+    shared: false,
+    unlimited: false,
+    limit: 100,
+    used: 7,
+    reserved: 0,
+    adjustment: 0,
+    start_time: 1,
+    next_reset: 1890000000,
+    pending: false,
+  }
+  vi.spyOn(api, 'request').mockResolvedValue({
+    data: {
+      success: true,
+      data: [
+        {
+          id: 1,
+          name: 'Only one pool summary',
+          subscription_ids: [9, 10],
+          end_time: 1890000000,
+          cycles: [],
+          observations: [],
+        },
+      ],
+    },
+  })
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  })
+  clients.push(client)
+  const subscription = {
+    subscription_id: 9,
+    plan_id: 2,
+    status: 'active',
+    managed: true,
+    pending: false,
+    end_time: 1890000000,
+    cycles: [cycle],
+  }
+  render(
+    <QueryClientProvider client={client}>
+      <SelfAlignedUsage
+        subscriptions={[subscription, { ...subscription, subscription_id: 10 }]}
+        planTitles={new Map([[2, 'Claude Pro']])}
+      />
+    </QueryClientProvider>
+  )
+  await screen.findByText('Only one pool summary')
+  expect(screen.getAllByText('Only one pool summary')).toHaveLength(1)
+  expect(screen.getAllByText(/7 \/ 100/)).toHaveLength(2)
+  expect(screen.getByText('Claude Pro · Subscription #9')).toBeVisible()
+  expect(screen.getByText('Claude Pro · Subscription #10')).toBeVisible()
 })
 
 test('pending assignment shows unavailable without a fake unlimited quota or upstream section', async () => {
@@ -323,6 +452,7 @@ test('an upstream pool without a reported expiry displays never instead of the s
             {
               id: 1,
               name: 'No expiry pool',
+              subscription_ids: [1],
               end_time: 253402300799,
               cycles: [],
               observations: [],

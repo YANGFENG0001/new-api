@@ -305,7 +305,8 @@ export function reportedSyncAccounts(accounts: SyncAccount[]): SyncAccount[] {
         (c) =>
           c.utilization != null &&
           Number.isFinite(c.utilization) &&
-          c.utilization >= 0
+          c.utilization >= 0 &&
+          (c.utilization > 0 || c.sampled_at > 0 || c.window_end > 0)
       ),
     }))
     .filter((account) => account.cycles.length > 0)

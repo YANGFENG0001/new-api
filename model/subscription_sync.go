@@ -143,6 +143,15 @@ func ReportedSubscriptionSyncAccounts(accounts []SubscriptionSyncAccount) []Subs
 			if cycle.Utilization == nil {
 				continue
 			}
+			value := *cycle.Utilization
+			if math.IsNaN(value) || math.IsInf(value, 0) || value < 0 {
+				continue
+			}
+			// Some upstream catalogs fill uninitialized windows with numeric zero.
+			// A zero with neither an observation nor a reset is not a quota report.
+			if value == 0 && cycle.SampledAt <= 0 && cycle.WindowEnd <= 0 {
+				continue
+			}
 			cycle.Name = SubscriptionCycleName(cycle.Name, cycle.Seconds)
 			cycles = append(cycles, cycle)
 		}

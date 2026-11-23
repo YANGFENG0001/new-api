@@ -30,12 +30,25 @@ import { SyncObservations } from './sync-observations'
 export function CycleProgress(props: {
   cycles: CycleView[]
   observations?: SyncObservation[]
+  preferObservations?: boolean
 }) {
   const { t, i18n } = useTranslation()
   const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
   return (
     <div className='grid gap-3 sm:grid-cols-2'>
       {props.cycles.map((c) => {
+        const observation = props.observations?.find(
+          (o) => o.key === c.key && o.utilization != null
+        )
+        if (props.preferObservations && observation) {
+          return (
+            <SyncObservations
+              key={c.key}
+              observations={[observation]}
+              scope={c.shared ? 'Shared' : 'Independent'}
+            />
+          )
+        }
         let capacity = formatNumber(c.limit, locale)
         if (c.limit_unknown) capacity = t('Unknown')
         else if (c.unlimited) capacity = t('Unlimited')

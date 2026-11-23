@@ -297,6 +297,7 @@ export function SyncSourcesPanel(props: { caps: Capabilities }) {
                   : (state.data?.accounts ?? [])
               }
               staleSeconds={syncStaleSeconds(activeSource)}
+              fetchedAt={showPreview ? undefined : activeSource?.last_fetch}
             />
           )}
           {run.data && <SyncChangeTable changes={run.data.changes} />}
