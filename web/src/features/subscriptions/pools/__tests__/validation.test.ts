@@ -23,6 +23,7 @@ import {
   formatPlanQuota,
   formatPlanValidity,
   formatTimestamp,
+  isPlanFixedExpiryExpired,
 } from '../../lib/format'
 import { subscriptionPlanSchema, type PlanRecord } from '../../types'
 import {
@@ -84,10 +85,14 @@ describe('aligned subscription validation', () => {
     expect(formatPlanQuota(record, i18next.t)).toContain('5 hours')
     allocation.cycles[0].seconds = 120
     expect(formatPlanQuota(record, i18next.t)).toContain('2 minutes')
-    allocation.cycles = []
-    expect(formatPlanQuota(record, i18next.t)).toBe('Unknown')
     allocation.available = false
+    expect(formatPlanQuota(record, i18next.t)).toContain('2 minutes')
+    expect(isPlanFixedExpiryExpired(record, 1890000001)).toBe(true)
+    expect(isPlanFixedExpiryExpired(record, 1889999999)).toBe(false)
+    allocation.cycles = []
     expect(formatPlanQuota(record, i18next.t)).toBe('Unavailable')
+    allocation.available = true
+    expect(formatPlanQuota(record, i18next.t)).toBe('Unknown')
     allocation.mode = 'assign'
     expect(formatPlanQuota(record, i18next.t)).toBe(
       'Administrator assignment required'

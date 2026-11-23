@@ -33,8 +33,9 @@ export function formatPlanQuota(record: PlanRecord, t: TFunction): string {
   if (allocation.mode === 'assign') {
     return t('Administrator assignment required')
   }
-  if (!allocation.available) return t('Unavailable')
-  if (!allocation.cycles.length) return t('Unknown')
+  if (!allocation.cycles.length) {
+    return allocation.available ? t('Unknown') : t('Unavailable')
+  }
   return allocation.cycles
     .map((cycle) => {
       const quota = cycle.unlimited ? t('Unlimited') : formatQuota(cycle.limit)
@@ -49,6 +50,14 @@ export function formatPlanQuota(record: PlanRecord, t: TFunction): string {
       return `${cycle.name} · ${duration} · ${cycle.shared ? t('Shared') : t('Independent')} · ${quota}`
     })
     .join('\n')
+}
+
+export function isPlanFixedExpiryExpired(
+  record: PlanRecord,
+  nowSeconds = Math.floor(Date.now() / 1000)
+): boolean {
+  const fixedEnd = record.allocation?.fixed_end_time ?? 0
+  return fixedEnd > 0 && fixedEnd !== 253402300799 && fixedEnd <= nowSeconds
 }
 
 export function formatPlanValidity(record: PlanRecord, t: TFunction): string {

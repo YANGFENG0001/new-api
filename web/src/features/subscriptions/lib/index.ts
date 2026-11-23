@@ -22,6 +22,7 @@ export {
   formatTimestamp,
   formatPlanQuota,
   formatPlanValidity,
+  isPlanFixedExpiryExpired,
 } from './format'
 export {
   getPlanFormSchema,

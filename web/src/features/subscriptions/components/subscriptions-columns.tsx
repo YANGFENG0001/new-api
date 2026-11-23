@@ -25,7 +25,12 @@ import { GroupBadge } from '@/components/group-badge'
 import { StatusBadge } from '@/components/status-badge'
 import { TableId } from '@/components/table-id'
 
-import { formatPlanValidity, formatPlanQuota, formatResetPeriod } from '../lib'
+import {
+  formatPlanValidity,
+  formatPlanQuota,
+  formatResetPeriod,
+  isPlanFixedExpiryExpired,
+} from '../lib'
 import type { PlanRecord } from '../types'
 import { DataTableRowActions } from './data-table-row-actions'
 
@@ -76,12 +81,24 @@ export function useSubscriptionsColumns(): ColumnDef<PlanRecord>[] {
       {
         id: 'duration',
         header: t('Validity'),
-        cell: ({ row }) => (
-          <span className='text-muted-foreground'>
-            {formatPlanValidity(row.original, t)}
-          </span>
-        ),
-        size: 100,
+        cell: ({ row }) => {
+          const expired = isPlanFixedExpiryExpired(row.original)
+          return (
+            <div className='flex flex-wrap items-center gap-1.5'>
+              <span className='text-muted-foreground'>
+                {formatPlanValidity(row.original, t)}
+              </span>
+              {expired && (
+                <StatusBadge
+                  label={t('Expired')}
+                  variant='danger'
+                  copyable={false}
+                />
+              )}
+            </div>
+          )
+        },
+        size: 140,
       },
       {
         id: 'reset',
