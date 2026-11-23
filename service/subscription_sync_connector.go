@@ -461,7 +461,21 @@ func ParseSubscriptionSyncResponse(raw []byte, m model.SubscriptionSyncMapping, 
 			if valid && !math.IsNaN(value) && !math.IsInf(value, 0) && value >= 0 && value <= 100 {
 				cycle.Utilization = &value
 			}
+			roundingTolerance := min(int64(3660), c.Seconds/2)
 			cycle.WindowStart = cycle.WindowEnd - c.Seconds
+			if cycle.WindowEnd > 0 && cycle.WindowStart > 0 {
+				if cycle.SampledAt > 0 && cycle.SampledAt <= now &&
+					cycle.SampledAt < cycle.WindowStart &&
+					cycle.WindowStart-cycle.SampledAt <= roundingTolerance {
+					// Upstream providers such as Anthropic OAuth quantize resets_at up to
+					// the next 10-minute or 1-hour boundary, making resets_at - duration
+					// slightly later than the probe timestamp of a newly opened window.
+					// Clamp deterministically to SampledAt so observation digests stay stable.
+					cycle.WindowStart = cycle.SampledAt
+				} else if cycle.WindowStart > now && cycle.WindowStart-now <= roundingTolerance {
+					cycle.WindowStart = now
+				}
+			}
 			switch {
 			case cycle.Utilization == nil:
 				cycle.IssueCode = "invalid_utilization"

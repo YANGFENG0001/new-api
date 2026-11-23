@@ -2461,6 +2461,151 @@ func TestSubscriptionPoolSyncVM2APIMixedResetFormatsAndObjectProbe(t *testing.T)
 	})
 }
 
+func TestSubscriptionPoolSyncRoundedResetWindowTolerance(t *testing.T) {
+	// Reproduces vm-02 where Anthropic OAuth rounds resets_at up to the next
+	// 10-minute / 1-hour boundary (e.g. +447s or +3599s beyond sampled_at + 5h).
+	sampled := time.Now().UTC().Truncate(time.Second).Add(-10 * time.Minute)
+	roundedReset := sampled.Add(5*time.Hour + 447*time.Second)
+	body := fmt.Sprintf(
+		`{"ok":true,"data":{"accounts":[{"account_id":"vm02-id","vm_id":"vm-02","utilization_5h":0.22,"reset_5h":"%d","utilization_7d":0.01,"reset_7d":%q,"last_probe":{"at":%q,"ok":true},"probe_source":"vm-oauth-usage"}]}}`,
+		roundedReset.Unix(),
+		sampled.Add(5*24*time.Hour).Format(time.RFC3339),
+		sampled.Format(time.RFC3339Nano),
+	)
+
+	// Poll 1: immediately after probe, before naive (reset_5h - 5h) has arrived.
+	poll1Now := sampled.Add(30 * time.Second).Unix()
+	accounts1, err := service.ParseSubscriptionSyncResponse([]byte(body), model.PanelSubscriptionSyncMapping(), poll1Now)
+	require.NoError(t, err)
+	require.Len(t, accounts1, 1)
+	require.Len(t, accounts1[0].Cycles, 2)
+	c5h1 := accounts1[0].Cycles[0]
+	assert.Equal(t, "5h", c5h1.Key)
+	assert.Empty(t, c5h1.IssueCode)
+	assert.Empty(t, c5h1.Error)
+	assert.Equal(t, sampled.Unix(), c5h1.WindowStart)
+	assert.Equal(t, roundedReset.Unix(), c5h1.WindowEnd)
+
+	// Poll 2: 20 minutes later, after naive (reset_5h - 5h) passed while sample stayed unchanged.
+	poll2Now := sampled.Add(20 * time.Minute).Unix()
+	accounts2, err := service.ParseSubscriptionSyncResponse([]byte(body), model.PanelSubscriptionSyncMapping(), poll2Now)
+	require.NoError(t, err)
+	require.Len(t, accounts2, 1)
+	c5h2 := accounts2[0].Cycles[0]
+	assert.Empty(t, c5h2.IssueCode)
+	assert.Empty(t, c5h2.Error)
+	assert.Equal(t, c5h1.WindowStart, c5h2.WindowStart, "WindowStart must stay deterministic across polls for digest stability")
+
+	// Hourly rounding (+3599s) is also accepted.
+	hourlyReset := sampled.Add(5*time.Hour + 3599*time.Second)
+	hourlyBody := fmt.Sprintf(
+		`{"ok":true,"data":{"accounts":[{"account_id":"vm02-id","vm_id":"vm-02","utilization_5h":0.05,"reset_5h":"%d","last_probe":{"at":%q,"ok":true},"probe_source":"vm-oauth-usage"}]}}`,
+		hourlyReset.Unix(),
+		sampled.Format(time.RFC3339Nano),
+	)
+	hourlyAccounts, err := service.ParseSubscriptionSyncResponse([]byte(hourlyBody), model.PanelSubscriptionSyncMapping(), poll1Now)
+	require.NoError(t, err)
+	require.Len(t, hourlyAccounts, 1)
+	assert.Empty(t, hourlyAccounts[0].Cycles[0].IssueCode)
+	assert.Empty(t, hourlyAccounts[0].Cycles[0].Error)
+	assert.Equal(t, sampled.Unix(), hourlyAccounts[0].Cycles[0].WindowStart)
+
+	// Excessive future reset (e.g. 7d reset mistakenly mapped to 5h) is still rejected.
+	bogusReset := sampled.Add(24 * time.Hour)
+	bogusBody := fmt.Sprintf(
+		`{"ok":true,"data":{"accounts":[{"account_id":"vm02-id","vm_id":"vm-02","utilization_5h":0.22,"reset_5h":"%d","last_probe":{"at":%q,"ok":true},"probe_source":"vm-oauth-usage"}]}}`,
+		bogusReset.Unix(),
+		sampled.Format(time.RFC3339Nano),
+	)
+	bogusAccounts, err := service.ParseSubscriptionSyncResponse([]byte(bogusBody), model.PanelSubscriptionSyncMapping(), poll1Now)
+	require.NoError(t, err)
+	assert.Equal(t, "invalid_window", bogusAccounts[0].Cycles[0].IssueCode)
+	assert.NotEmpty(t, bogusAccounts[0].Cycles[0].Error)
+
+	// Genuinely stale sample from an earlier window (> 1h+60s before WindowEnd-5h) is still rejected.
+	oldSampleBody := fmt.Sprintf(
+		`{"ok":true,"data":{"accounts":[{"account_id":"vm02-id","vm_id":"vm-02","utilization_5h":0.22,"reset_5h":"%d","last_probe":{"at":%q,"ok":true},"probe_source":"vm-oauth-usage"}]}}`,
+		sampled.Add(7*time.Hour).Unix(),
+		sampled.Format(time.RFC3339Nano),
+	)
+	oldSampleAccounts, err := service.ParseSubscriptionSyncResponse([]byte(oldSampleBody), model.PanelSubscriptionSyncMapping(), sampled.Add(3*time.Hour).Unix())
+	require.NoError(t, err)
+	assert.Equal(t, "invalid_sample", oldSampleAccounts[0].Cycles[0].IssueCode)
+	assert.NotEmpty(t, oldSampleAccounts[0].Cycles[0].Error)
+
+	// End-to-end: create pool from upstream vm-02 catalog and apply sync twice without digest conflict.
+	_, _, now := setupSubscriptionPoolTest(t)
+	source, err := service.SaveSubscriptionSyncSource(model.SubscriptionSyncSourceInput{
+		SubscriptionSyncSource: model.SubscriptionSyncSource{
+			Name:            "vm02-rounded",
+			URL:             "https://example.com/usage",
+			Method:          "GET",
+			Enabled:         true,
+			IntervalSeconds: 60,
+			StaleSeconds:    1200,
+			TimeoutSeconds:  10,
+		},
+		Mapping: model.PanelSubscriptionSyncMapping(),
+	}, 1, true)
+	require.NoError(t, err)
+	liveSampled := now - 120
+	liveReset := liveSampled + 18000 + 447
+	liveBody := fmt.Sprintf(
+		`{"ok":true,"data":{"accounts":[{"account_id":"vm02-id","vm_id":"vm-02","utilization_5h":0.22,"reset_5h":"%d","utilization_7d":0.01,"reset_7d":%q,"last_probe":{"at":%q,"ok":true},"probe_source":"vm-oauth-usage"}]}}`,
+		liveReset,
+		time.Unix(liveSampled+5*86400, 0).UTC().Format(time.RFC3339),
+		time.Unix(liveSampled, 0).UTC().Format(time.RFC3339Nano),
+	)
+	parsed, err := service.ParseSubscriptionSyncResponse([]byte(liveBody), model.PanelSubscriptionSyncMapping(), now)
+	require.NoError(t, err)
+	require.Len(t, parsed, 1)
+	rawCatalog, err := common.Marshal(parsed)
+	require.NoError(t, err)
+	require.NoError(t, model.DB.Model(&model.SubscriptionSyncSource{}).Where("id = ?", source.Id).Updates(map[string]any{
+		"catalog_json": string(rawCatalog),
+		"last_fetch":   now,
+	}).Error)
+
+	pool, err := model.SaveSubscriptionPool(model.SubscriptionPoolInput{
+		SubscriptionPool: model.SubscriptionPool{Name: "vm-02 pool", Enabled: true},
+		Sync: &model.SubscriptionSyncPoolInput{
+			SourceID:      source.Id,
+			SourceVersion: source.Version,
+			AccountID:     "vm02-id",
+		},
+	}, 1)
+	require.NoError(t, err)
+	cfg, err := model.GetSubscriptionPoolConfiguration(pool.Id)
+	require.NoError(t, err)
+	require.Len(t, cfg.Cycles, 2, "both 5h and 7d cycles must be imported for vm-02")
+
+	// Verify active state's StartTime widened to <= SampledAt on initial sync apply
+	// and observation is immediately visible.
+	var state5h model.SubscriptionCycleState
+	require.NoError(t, model.DB.Where("owner = ? AND cycle_key = ?", fmt.Sprintf("pool:%d", pool.Id), "5h").First(&state5h).Error)
+	assert.LessOrEqual(t, state5h.StartTime, liveSampled)
+	assert.Equal(t, liveReset, state5h.EndTime)
+
+	views, err := model.GetSubscriptionSyncViews(pool.Id)
+	require.NoError(t, err)
+	require.Len(t, views, 2)
+	assert.Equal(t, "5h", views[0].Key)
+	require.NotNil(t, views[0].Utilization)
+	assert.InDelta(t, 0.22, *views[0].Utilization, 1e-9)
+
+	// Re-applying the same sample later must report unchanged, not conflicting timestamp.
+	binding, err := model.GetSubscriptionSyncBinding(pool.Id)
+	require.NoError(t, err)
+	claimed, err := model.ClaimSubscriptionSyncSource(source.Id, "rounded-poll-2", true)
+	require.NoError(t, err)
+	parsedLater, err := service.ParseSubscriptionSyncResponse([]byte(liveBody), model.PanelSubscriptionSyncMapping(), now+60)
+	require.NoError(t, err)
+	changes2, err := model.ApplySubscriptionSyncAccount(*claimed, "rounded-poll-2", binding, parsedLater[0], 1, false)
+	require.NoError(t, err)
+	require.Len(t, changes2, 2)
+	assert.Equal(t, "Upstream observation is unchanged or older", changes2[0].Message)
+}
+
 func TestSubscriptionPoolSyncVM2APIProfileIsNarrowAndCycleQualityIsSeparate(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	mapping := model.PanelSubscriptionSyncMapping()

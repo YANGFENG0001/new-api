@@ -775,7 +775,7 @@ func applySubscriptionSyncAccountTx(tx *gorm.DB, source SubscriptionSyncSource, 
 						}
 						if !adopt && (cycle.Seconds != currentRule.Seconds || difference > m.MaxShiftSeconds) {
 							pending = "Upstream reset shift requires confirmation"
-						} else if !preview && (end != cycle.WindowEnd || currentRule.Seconds != cycle.Seconds) {
+						} else if !preview && (end != cycle.WindowEnd || currentRule.Seconds != cycle.Seconds || state.StartTime > cycle.WindowStart) {
 							active, err := subscriptionCycleStateTx(tx, state.Owner, rules[i], now)
 							if err != nil {
 								return err
@@ -788,39 +788,44 @@ func applySubscriptionSyncAccountTx(tx *gorm.DB, source SubscriptionSyncSource, 
 								pending = "Upstream reset shift requires confirmation"
 								break
 							}
+							ruleChanged := end != cycle.WindowEnd || currentRule.Seconds != cycle.Seconds
 							active.StartTime = cycle.WindowStart
 							active.EndTime = cycle.WindowEnd
-							effective.NextReset = cycle.WindowEnd
-							effective.Seconds = cycle.Seconds
-							effective.Name = SubscriptionCycleName(effective.Name, cycle.Seconds)
-							active.Rule, err = cycleJSON(effective)
-							if err != nil {
-								return err
-							}
-							if active.PendingRule != "" {
-								var next SubscriptionCycleRule
-								if err := common.UnmarshalJsonStr(active.PendingRule, &next); err != nil {
-									return err
-								}
-								next.NextReset = cycle.WindowEnd
-								if adopt {
-									next.Seconds = cycle.Seconds
-									next.Name = SubscriptionCycleName(next.Name, cycle.Seconds)
-								}
-								active.PendingRule, err = cycleJSON(next)
+							if ruleChanged {
+								effective.NextReset = cycle.WindowEnd
+								effective.Seconds = cycle.Seconds
+								effective.Name = SubscriptionCycleName(effective.Name, cycle.Seconds)
+								active.Rule, err = cycleJSON(effective)
 								if err != nil {
 									return err
+								}
+								if active.PendingRule != "" {
+									var next SubscriptionCycleRule
+									if err := common.UnmarshalJsonStr(active.PendingRule, &next); err != nil {
+										return err
+									}
+									next.NextReset = cycle.WindowEnd
+									if adopt {
+										next.Seconds = cycle.Seconds
+										next.Name = SubscriptionCycleName(next.Name, cycle.Seconds)
+									}
+									active.PendingRule, err = cycleJSON(next)
+									if err != nil {
+										return err
+									}
 								}
 							}
 							if err := tx.Save(active).Error; err != nil {
 								return err
 							}
-							rules[i].NextReset = cycle.WindowEnd
-							if active.PendingRule == "" || adopt {
-								rules[i].Seconds = cycle.Seconds
-								rules[i].Name = SubscriptionCycleName(rules[i].Name, cycle.Seconds)
+							if ruleChanged {
+								rules[i].NextReset = cycle.WindowEnd
+								if active.PendingRule == "" || adopt {
+									rules[i].Seconds = cycle.Seconds
+									rules[i].Name = SubscriptionCycleName(rules[i].Name, cycle.Seconds)
+								}
+								poolChanged = true
 							}
-							poolChanged = true
 						}
 						break
 					}
