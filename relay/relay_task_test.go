@@ -615,7 +615,7 @@ func TestSharedEndpointBillingKeepsOrdinaryAndPluginPricesSeparate(t *testing.T)
 // failures that keep the upstream status and body.
 func TestRelayTaskSubmitAcceptsAnySuccessfulUpstreamStatus(t *testing.T) {
 	database := setupRelayChannelDB(t)
-	require.NoError(t, database.AutoMigrate(&model.SubscriptionCycleReservation{}))
+	require.NoError(t, database.AutoMigrate(&model.SubscriptionCycleReservation{}, &model.SubscriptionPoolChannel{}))
 	service.InitHttpClient()
 	const source = `
 export const meta = {apiVersion:1,key:"status-echo",name:"Status Echo",version:"1.0.0",author:{name:"Test"},models:["declared-model"],fetchMode:"per_task"};
@@ -679,7 +679,7 @@ export function parseTaskResult() { return {status:"SUCCESS"}; }
 // SetupContextForSelectedChannel pins another candidate plugin's channel.
 func TestRelayTaskSubmitRetryRepricesAndReservesBeforeUpstream(t *testing.T) {
 	database := setupRelayChannelDB(t)
-	require.NoError(t, database.AutoMigrate(&model.SubscriptionCycleReservation{}))
+	require.NoError(t, database.AutoMigrate(&model.SubscriptionCycleReservation{}, &model.SubscriptionPoolChannel{}))
 	service.InitHttpClient()
 	const source = `
 export const meta = {apiVersion:1,key:"KEY",name:"KEY",version:"1.0.0",author:{name:"Test"},models:["declared-model"],fetchMode:"per_task",usageSchema:{seconds:{type:"number",unit:"second",description:"Video generation unit price"}}};
