@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
@@ -18,6 +19,18 @@ const (
 	BillingSourceWallet       = "wallet"
 	BillingSourceSubscription = "subscription"
 )
+
+// HTTP pre-consume runs before protocol handlers initialize ChannelMeta. On
+// retries that metadata can also still describe the previous attempt. The
+// distributor's current context selection is authoritative for admission.
+func selectedBillingChannelID(c *gin.Context, info *relaycommon.RelayInfo) int {
+	if c != nil {
+		if _, selected := common.GetContextKey(c, constant.ContextKeyChannelId); selected {
+			return common.GetContextKeyInt(c, constant.ContextKeyChannelId)
+		}
+	}
+	return info.GetChannelID()
+}
 
 // PreConsumeBilling 根据用户计费偏好创建 BillingSession 并执行预扣费。
 // 会话存储在 relayInfo.Billing 上，供后续 Settle / Refund 使用。
@@ -41,7 +54,7 @@ func PreConsumeBilling(c *gin.Context, preConsumedQuota int, relayInfo *relaycom
 		)
 	}
 	if relayInfo != nil && relayInfo.Billing != nil {
-		if err := model.ValidateSubscriptionRetry(relayInfo.RequestId, relayInfo.GetChannelID(), relayInfo.BillingSource == BillingSourceWallet); err != nil {
+		if err := model.ValidateSubscriptionRetry(relayInfo.RequestId, selectedBillingChannelID(c, relayInfo), relayInfo.BillingSource == BillingSourceWallet); err != nil {
 			return types.NewErrorWithStatusCode(err, types.ErrorCodeInsufficientUserQuota, http.StatusForbidden, types.ErrOptionWithSkipRetry())
 		}
 		if err := relayInfo.Billing.ReserveBeforeSubmit(preConsumedQuota); err != nil {

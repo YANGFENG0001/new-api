@@ -351,6 +351,201 @@ test('pool binding selects a discovered stable account and saves only after conf
   expect(payload.sync_expiry).toBe(false)
 })
 
+test('a blank binding stale policy defaults to calibration for new bindings', async () => {
+  const pool = {
+    id: 8,
+    name: 'Pool',
+    version: 1,
+    cycles: [{ key: 'local', name: 'Personal', seconds: 3600 }],
+  } as Pool
+  vi.spyOn(api, 'request').mockImplementation(async (config) => {
+    if (config.url?.endsWith('/sync-sources')) {
+      return envelope({
+        sources: [source],
+        template: mapping,
+        privileged: true,
+      })
+    }
+    if (config.url?.endsWith('/state')) {
+      return envelope({ accounts: [], events: [] })
+    }
+    return envelope({
+      binding: {
+        pool_id: 8,
+        source_id: 4,
+        account_id: '',
+        enabled: false,
+        sync_expiry: false,
+        stale_policy: '',
+        grace_seconds: 0,
+        version: 0,
+        cycles: [],
+      },
+      observations: [],
+    })
+  })
+  mount(<PoolSyncBinding pool={pool} caps={caps} />)
+  expect(
+    await screen.findByRole('combobox', { name: 'When upstream data is stale' })
+  ).toHaveValue('Calibration only')
+})
+
+test.each([
+  ['stop', 'Pause new requests'],
+  ['local', 'Use local quota during grace period'],
+])(
+  'an explicit %s stale policy remains selected',
+  async (stalePolicy, label) => {
+    const pool = {
+      id: 8,
+      name: 'Pool',
+      version: 1,
+      cycles: [{ key: 'local', name: 'Personal', seconds: 3600 }],
+    } as Pool
+    vi.spyOn(api, 'request').mockImplementation(async (config) => {
+      if (config.url?.endsWith('/sync-sources')) {
+        return envelope({
+          sources: [source],
+          template: mapping,
+          privileged: true,
+        })
+      }
+      if (config.url?.endsWith('/state')) {
+        return envelope({ accounts: [], events: [] })
+      }
+      return envelope({
+        binding: {
+          pool_id: 8,
+          source_id: 4,
+          account_id: '',
+          enabled: false,
+          sync_expiry: false,
+          stale_policy: stalePolicy,
+          grace_seconds: 0,
+          version: 0,
+          cycles: [],
+        },
+        observations: [],
+      })
+    })
+    mount(<PoolSyncBinding pool={pool} caps={caps} />)
+    expect(
+      await screen.findByRole('combobox', {
+        name: 'When upstream data is stale',
+      })
+    ).toHaveValue(label)
+  }
+)
+
+test('binding validation accepts the calibration-only stale policy', () => {
+  const base = {
+    pool_id: 8,
+    source_id: 4,
+    account_id: 'stable',
+    enabled: true,
+    sync_expiry: false,
+    stale_policy: 'calibration',
+    grace_seconds: 0,
+    version: 0,
+    cycles: [],
+  }
+  expect(syncBindingSchema.safeParse(base).success).toBe(true)
+})
+
+test('calibration-only binding disables upstream admission, hides grace, and preserves saved values', async () => {
+  const pool = {
+    id: 8,
+    name: 'Pool',
+    version: 1,
+    cycles: [{ key: 'local', name: 'Personal', seconds: 3600 }],
+  } as Pool
+  const request = vi
+    .spyOn(api, 'request')
+    .mockImplementation(async (config) => {
+      if (config.method === 'put') return envelope(null)
+      if (config.url?.endsWith('/sync-sources')) {
+        return envelope({
+          sources: [source],
+          template: mapping,
+          privileged: true,
+        })
+      }
+      if (config.url?.endsWith('/state')) {
+        return envelope({ accounts: [], events: [] })
+      }
+      return envelope({
+        binding: {
+          pool_id: 8,
+          source_id: 4,
+          account_id: 'stable-id',
+          enabled: true,
+          sync_expiry: false,
+          stale_policy: 'calibration',
+          grace_seconds: 123,
+          version: 0,
+          cycles: [
+            {
+              local_key: 'local',
+              upstream_key: 'short',
+              align_reset: false,
+              enforce: true,
+              threshold: 0.8,
+              max_shift_seconds: 300,
+            },
+          ],
+        },
+        observations: [],
+      })
+    })
+  mount(<PoolSyncBinding pool={pool} caps={caps} />)
+  expect(
+    await screen.findByRole('combobox', { name: 'When upstream data is stale' })
+  ).toHaveValue('Calibration only')
+  expect(
+    screen.queryByLabelText('Grace period (seconds)')
+  ).not.toBeInTheDocument()
+  expect(
+    screen.getByText(
+      'Calibration only always uses local quota. There is no grace deadline. Stale, unreadable, or exhausted upstream data never blocks local requests, and upstream admission checks do not apply. Local cycle limits and expiries still apply; unlimited local limits remain unlimited.'
+    )
+  ).toBeVisible()
+  expect(
+    screen.getByRole('switch', { name: 'Enforce upstream utilization' })
+  ).toHaveAttribute('aria-disabled', 'true')
+  expect(
+    screen.getByRole('switch', { name: 'Enforce upstream utilization' })
+  ).toBeChecked()
+  expect(
+    screen.getByRole('spinbutton', { name: 'Block at utilization (%)' })
+  ).toBeDisabled()
+  await userEvent.click(screen.getByRole('button', { name: 'Save' }))
+  const dialog = await screen.findByRole('alertdialog')
+  await userEvent.click(
+    within(dialog).getByRole('button', { name: 'Continue' })
+  )
+  await waitFor(() =>
+    expect(request.mock.calls.some(([c]) => c.method === 'put')).toBe(true)
+  )
+  const payload = request.mock.calls.find(([c]) => c.method === 'put')?.[0]
+    .data as Record<string, unknown>
+  expect(payload).toMatchObject({
+    stale_policy: 'calibration',
+    grace_seconds: 123,
+    cycles: [expect.objectContaining({ enforce: true, threshold: 0.8 })],
+  })
+  i18next.addResourceBundle('zh', 'translation', zh.translation, true, true)
+  await i18next.changeLanguage('zh')
+  try {
+    expect(
+      screen.getByText(
+        '仅校准模式始终使用本地额度，无宽限截止；上游数据过期、读取失败或快照耗尽均不会阻断本地请求，上游准入检查不生效；本地周期、限额和有效期仍会执行，本地无限制则仍无限制。'
+      )
+    ).toBeVisible()
+  } finally {
+    await i18next.changeLanguage('en')
+  }
+})
+
 test('stale upstream observations stay visibly stale even after a recent fetch', () => {
   const now = Math.floor(Date.now() / 1000)
   mount(

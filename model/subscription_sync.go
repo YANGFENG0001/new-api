@@ -203,7 +203,7 @@ type SubscriptionSyncBinding struct {
 	ResourceKey  *string `json:"-" gorm:"type:varchar(64);uniqueIndex"`
 	Enabled      bool    `json:"enabled"`
 	SyncExpiry   bool    `json:"sync_expiry"`
-	StalePolicy  string  `json:"stale_policy"` // stop or local, with bounded grace
+	StalePolicy  string  `json:"stale_policy"` // stop, bounded local grace, or calibration-only
 	GraceSeconds int64   `json:"grace_seconds"`
 	Version      int64   `json:"version"`
 	CyclesJSON   string  `json:"-" gorm:"type:text"`
@@ -249,7 +249,10 @@ func GetSubscriptionSyncBinding(poolID int) (SubscriptionSyncBindingInput, error
 		err = common.UnmarshalJsonStr(view.CyclesJSON, &view.Cycles)
 	}
 	if view.StalePolicy == "" {
-		view.StalePolicy = "stop"
+		view.StalePolicy = "stop" // Existing blank policies retain their restrictive semantics.
+		if view.PoolID == 0 {
+			view.StalePolicy = "calibration"
+		}
 	}
 	view.PoolID = poolID
 	return view, err
@@ -266,7 +269,7 @@ func SaveSubscriptionSyncBinding(input SubscriptionSyncBindingInput, actorID int
 }
 
 func saveSubscriptionSyncBinding(db *gorm.DB, input SubscriptionSyncBindingInput, actorID int) error {
-	if input.PoolID <= 0 || input.SourceID <= 0 || strings.TrimSpace(input.AccountID) == "" || len(input.AccountID) > 128 || len(input.Cycles) > 32 || (input.StalePolicy != "stop" && input.StalePolicy != "local") || input.GraceSeconds < 0 || input.GraceSeconds > 86400 {
+	if input.PoolID <= 0 || input.SourceID <= 0 || strings.TrimSpace(input.AccountID) == "" || len(input.AccountID) > 128 || len(input.Cycles) > 32 || (input.StalePolicy != "stop" && input.StalePolicy != "local" && input.StalePolicy != "calibration") || input.GraceSeconds < 0 || input.GraceSeconds > 86400 {
 		return errors.New("Invalid synchronization binding")
 	}
 	return db.Transaction(func(tx *gorm.DB) error {
@@ -673,6 +676,19 @@ func applySubscriptionSyncAccountTx(tx *gorm.DB, source SubscriptionSyncSource, 
 			stale := now-cycle.SampledAt > SubscriptionSyncStaleSeconds(source) || cycle.WindowEnd <= now
 			if stale {
 				pending = "Upstream observation is stale"
+				if compatible && previous.Payload != "" {
+					// A newer sample/fetch timestamp is not evidence of a new window.
+					// Keep the last trusted baseline and its real sampled time; report
+					// the failed calibration without importing an expired window.
+					if !preview {
+						if err := tx.Model(&previous).Updates(map[string]any{"last_error": pending, "fetched_at": now}).Error; err != nil {
+							return err
+						}
+					}
+					change.Message = pending
+					changes = append(changes, change)
+					continue
+				}
 			}
 			if m.AlignReset && !stale {
 				for i := range rules {
@@ -963,6 +979,12 @@ func enforceSubscriptionSyncTx(tx *gorm.DB, poolID int, now int64, amount int64)
 		return err
 	}
 	if !b.Enabled || b.SourceID == 0 {
+		return nil
+	}
+	if b.StalePolicy == "calibration" {
+		// Synchronization only calibrates observations/reset anchors in this mode.
+		// No upstream age, availability, or utilization gates local admission. The
+		// caller still enforces local limits, expiry, enabled state, and channels.
 		return nil
 	}
 	var mappings []SubscriptionSyncCycleBinding
@@ -1279,7 +1301,7 @@ func createSubscriptionSyncPool(input SubscriptionPoolInput, actorID int) (*Subs
 		if err != nil {
 			return err
 		}
-		binding := SubscriptionSyncBindingInput{SubscriptionSyncBinding: SubscriptionSyncBinding{PoolID: pool.Id, SourceID: source.Id, AccountID: account.ID, Enabled: true, SyncExpiry: input.Sync.SyncExpiry, StalePolicy: "stop"}, Cycles: mappings}
+		binding := SubscriptionSyncBindingInput{SubscriptionSyncBinding: SubscriptionSyncBinding{PoolID: pool.Id, SourceID: source.Id, AccountID: account.ID, Enabled: true, SyncExpiry: input.Sync.SyncExpiry, StalePolicy: "calibration"}, Cycles: mappings}
 		if err := saveSubscriptionSyncBinding(tx, binding, actorID); err != nil {
 			return err
 		}

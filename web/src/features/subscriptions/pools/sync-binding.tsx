@@ -118,10 +118,11 @@ function BindingEditor(props: {
     resolver: zodResolver(syncBindingSchema),
     defaultValues: {
       ...props.initial,
-      stale_policy: props.initial.stale_policy || 'stop',
+      stale_policy: props.initial.stale_policy || 'calibration',
     },
   })
   const values = form.watch()
+  const calibrationOnly = values.stale_policy === 'calibration'
   const draftJSON = JSON.stringify(values)
   const onDraftChange = props.onDraftChange
   useEffect(() => {
@@ -357,7 +358,9 @@ function BindingEditor(props: {
                         <Label>
                           <Switch
                             disabled={
-                              !props.caps.sync_binding || !props.caps.sync_apply
+                              !props.caps.sync_binding ||
+                              !props.caps.sync_apply ||
+                              calibrationOnly
                             }
                             checked={mapping.enforce}
                             onCheckedChange={(v) =>
@@ -366,6 +369,13 @@ function BindingEditor(props: {
                           />
                           {t('Enforce upstream utilization')}
                         </Label>
+                        {calibrationOnly && (
+                          <p className='text-muted-foreground text-xs'>
+                            {t(
+                              'Upstream admission checks are disabled in calibration-only mode. The saved enforcement setting is retained.'
+                            )}
+                          </p>
+                        )}
                         {mapping.enforce && (
                           <>
                             <Label htmlFor={`threshold-${local.key}`}>
@@ -379,7 +389,8 @@ function BindingEditor(props: {
                               step='any'
                               disabled={
                                 !props.caps.sync_binding ||
-                                !props.caps.sync_apply
+                                !props.caps.sync_apply ||
+                                calibrationOnly
                               }
                               value={mapping.threshold * 100}
                               onChange={(e) =>
@@ -465,6 +476,9 @@ function BindingEditor(props: {
           <Combobox
             id='binding-stale'
             disabled={!props.caps.sync_binding || !props.caps.sync_apply}
+            aria-describedby={
+              calibrationOnly ? 'binding-calibration-hint' : undefined
+            }
             value={values.stale_policy}
             options={[
               { value: 'stop', label: t('Pause new requests') },
@@ -472,13 +486,24 @@ function BindingEditor(props: {
                 value: 'local',
                 label: t('Use local quota during grace period'),
               },
+              { value: 'calibration', label: t('Calibration only') },
             ]}
             onValueChange={(v) => {
-              if (v === 'stop' || v === 'local') {
+              if (v === 'stop' || v === 'local' || v === 'calibration') {
                 form.setValue('stale_policy', v)
               }
             }}
           />
+          {calibrationOnly && (
+            <p
+              id='binding-calibration-hint'
+              className='text-muted-foreground text-xs'
+            >
+              {t(
+                'Calibration only always uses local quota. There is no grace deadline. Stale, unreadable, or exhausted upstream data never blocks local requests, and upstream admission checks do not apply. Local cycle limits and expiries still apply; unlimited local limits remain unlimited.'
+              )}
+            </p>
+          )}
           {values.stale_policy === 'local' && (
             <>
               <Label htmlFor='binding-grace'>

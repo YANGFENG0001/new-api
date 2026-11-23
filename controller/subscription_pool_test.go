@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
@@ -70,7 +71,9 @@ func TestSubscriptionPoolSharedChannelsSelectMemberLedgerAndPinRetries(t *testin
 		assert.NotContains(t, blocked, 9601, "a second pool must not veto an eligible membership")
 		ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
 		ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
-		info := &relaycommon.RelayInfo{UserId: user.Id + index, RequestId: requestID, IsPlayground: true, ForcePreConsume: true, ChannelMeta: &relaycommon.ChannelMeta{ChannelId: 9601}, UserSetting: dto.UserSetting{BillingPreference: "subscription_only"}}
+		// HTTP relay reserves billing before the protocol handler initializes meta.
+		common.SetContextKey(ctx, constant.ContextKeyChannelId, 9601)
+		info := &relaycommon.RelayInfo{UserId: user.Id + index, RequestId: requestID, IsPlayground: true, ForcePreConsume: true, UserSetting: dto.UserSetting{BillingPreference: "subscription_only"}}
 		require.Nil(t, service.PreConsumeBilling(ctx, 10, info))
 		assert.Equal(t, subs[index].Id, info.SubscriptionId)
 		filters := service.GetChannelConstraints(ctx).Filters
@@ -82,7 +85,10 @@ func TestSubscriptionPoolSharedChannelsSelectMemberLedgerAndPinRetries(t *testin
 		allowed, _ := model.ChannelSatisfiesFilters(&model.Channel{Id: wrongChannel}, "m", filters)
 		assert.False(t, allowed)
 		require.Error(t, model.ValidateSubscriptionRetry(requestID, wrongChannel, false))
-		info.ChannelId = retryChannel
+		info.ChannelMeta = &relaycommon.ChannelMeta{ChannelId: 9601}
+		common.SetContextKey(ctx, constant.ContextKeyChannelId, wrongChannel)
+		require.NotNil(t, service.PreConsumeBilling(ctx, 20, info), "current selected channel, not stale attempt metadata, controls retry admission")
+		common.SetContextKey(ctx, constant.ContextKeyChannelId, retryChannel)
 		require.Nil(t, service.PreConsumeBilling(ctx, 20, info))
 		replay, err := model.PreConsumeUserSubscriptionForChannel(requestID, user.Id+index, "m", 0, 20, 9601)
 		require.NoError(t, err)
@@ -103,6 +109,13 @@ func TestSubscriptionPoolSharedChannelsSelectMemberLedgerAndPinRetries(t *testin
 	require.NoError(t, err)
 	assert.ElementsMatch(t, []int{9601, 9602, 9603}, blocked)
 	require.Error(t, model.ValidateSubscriptionRetry("", 9601, true))
+	walletCtx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	walletCtx.Request = httptest.NewRequest(http.MethodPost, "/pg/chat/completions", nil)
+	common.SetContextKey(walletCtx, constant.ContextKeyChannelId, 9601)
+	walletInfo := &relaycommon.RelayInfo{UserId: user.Id, IsPlayground: true, UserSetting: dto.UserSetting{BillingPreference: "wallet_only"}}
+	_, walletErr := service.NewBillingSession(walletCtx, walletInfo, 1)
+	require.NotNil(t, walletErr)
+	assert.Contains(t, walletErr.Error(), "Pool channels require an eligible subscription", "missing meta must not bypass pool access on the wallet path")
 	_, err = model.PreConsumeUserSubscriptionForChannel("wrong-member-route", user.Id, "m", 0, 1, 9603)
 	require.Error(t, err)
 	require.Error(t, model.DB.Create(&model.SubscriptionPoolChannel{PoolID: a.Id, ChannelID: 9601}).Error)
@@ -1230,6 +1243,142 @@ func TestSubscriptionPoolSyncReadIsExplicitAndSecretsStayPrivate(t *testing.T) {
 	assert.Error(t, err, "metadata targets remain forbidden even when listed")
 }
 
+func TestSubscriptionPoolSyncCalibrationNeverExpiresAndPreservesLocalLimits(t *testing.T) {
+	user, plan, now := setupSubscriptionPoolTest(t)
+	require.NoError(t, model.DB.Create(&model.Channel{Id: 9498, Name: "calibration"}).Error)
+	pool, err := model.SaveSubscriptionPool(model.SubscriptionPoolInput{SubscriptionPool: model.SubscriptionPool{Name: "calibration", Enabled: true, EndTime: now + 86400}, Channels: []int{9498}, Cycles: []model.SubscriptionCycleRule{{Key: "c", Name: "1h", Seconds: 3600, NextReset: now + 1000, Limit: 40, Shared: true, Enabled: true}}}, 1)
+	require.NoError(t, err)
+	require.NoError(t, model.SaveSubscriptionPlanAllocation(model.SubscriptionPlanAllocation{PlanID: plan.Id, Mode: "fixed", PoolID: pool.Id}, nil))
+	var sub *model.UserSubscription
+	require.NoError(t, model.DB.Transaction(func(tx *gorm.DB) error {
+		var e error
+		sub, e = model.CreateUserSubscriptionFromPlanTx(tx, user.Id, &plan, "admin")
+		return e
+	}))
+	mapping := model.PanelSubscriptionSyncMapping()
+	mapping.Cycles = mapping.Cycles[:1]
+	mapping.Cycles[0].Seconds = 3600
+	initialBinding, err := model.GetSubscriptionSyncBinding(pool.Id)
+	require.NoError(t, err)
+	assert.Equal(t, "calibration", initialBinding.StalePolicy, "new bindings default to upstream calibration, not a deadline")
+	source, err := service.SaveSubscriptionSyncSource(model.SubscriptionSyncSourceInput{SubscriptionSyncSource: model.SubscriptionSyncSource{Name: "calibration", URL: "https://example.com/usage", Method: "GET", IntervalSeconds: 60, StaleSeconds: 300, TimeoutSeconds: 10}, Mapping: mapping}, 1, true)
+	require.NoError(t, err)
+	binding := model.SubscriptionSyncBindingInput{SubscriptionSyncBinding: model.SubscriptionSyncBinding{PoolID: pool.Id, SourceID: source.Id, AccountID: "a", Enabled: true, StalePolicy: "calibration"}, Cycles: []model.SubscriptionSyncCycleBinding{{LocalKey: "c", UpstreamKey: "5h", AlignReset: true, Enforce: true, Threshold: 0.9, MaxShiftSeconds: 300, QuotaPerFullWindow: 100}}}
+	legacyBinding := binding.SubscriptionSyncBinding
+	legacyBinding.StalePolicy = ""
+	require.NoError(t, model.DB.Create(&legacyBinding).Error)
+	legacyView, err := model.GetSubscriptionSyncBinding(pool.Id)
+	require.NoError(t, err)
+	assert.Equal(t, "stop", legacyView.StalePolicy, "reading historical blank policies cannot implicitly relax enforcement")
+	require.NoError(t, model.DB.Delete(&legacyBinding).Error)
+	require.NoError(t, model.SaveSubscriptionSyncBinding(binding, 1), "calibration is an explicit, unbounded local-admission mode")
+	binding, err = model.GetSubscriptionSyncBinding(pool.Id)
+	require.NoError(t, err)
+	ratio := 1.0
+	cycle := model.SubscriptionSyncCycle{Key: "5h", Seconds: 3600, Utilization: &ratio, WindowStart: now - 2600, WindowEnd: now + 1000, SampledAt: now}
+	payload, err := common.Marshal(cycle)
+	require.NoError(t, err)
+	for _, test := range []struct {
+		name                                    string
+		age                                     int64
+		missing                                 bool
+		bindingError, observationError, pending string
+		oldVersion                              bool
+	}{
+		{name: "missing", missing: true},
+		{name: "older-than-24-hours", age: 90000},
+		{name: "older-than-30-days", age: 30 * 86400},
+		{name: "fetch-failed", bindingError: "Synchronization request failed"},
+		{name: "account-missing", observationError: "Upstream account is unavailable"},
+		{name: "source-edited", oldVersion: true},
+		{name: "reset-awaiting-confirmation", pending: "Upstream reset shift requires confirmation"},
+		{name: "fresh-exhausted"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			require.NoError(t, model.DB.Where("pool_id = ?", pool.Id).Delete(&model.SubscriptionSyncObservation{}).Error)
+			require.NoError(t, model.DB.Model(&model.SubscriptionSyncBinding{}).Where("pool_id = ?", pool.Id).Update("last_error", test.bindingError).Error)
+			if !test.missing {
+				version := source.Version
+				if test.oldVersion {
+					version--
+				}
+				require.NoError(t, model.DB.Create(&model.SubscriptionSyncObservation{PoolID: pool.Id, LocalKey: "c", SourceVersion: version, BindingVersion: binding.Version, Payload: string(payload), SampledAt: now - test.age, LastError: test.observationError, Pending: test.pending}).Error)
+			}
+			id := "calibration-" + test.name
+			_, e := model.PreConsumeUserSubscriptionForChannel(id, user.Id, "m", 0, 2, 9498)
+			require.NoError(t, e, "upstream observations never decide admission in calibration mode")
+			require.NoError(t, model.SettleSubscriptionRequest(id, sub.Id, 1))
+			require.NoError(t, model.SettleSubscriptionRequest(id, sub.Id, 1), "finalization stays idempotent")
+			_, e = model.PreConsumeUserSubscriptionForChannel(id+"-refund", user.Id, "m", 0, 1, 9498)
+			require.NoError(t, e)
+			require.NoError(t, model.RefundSubscriptionPreConsume(id+"-refund"))
+			require.NoError(t, model.RefundSubscriptionPreConsume(id+"-refund"))
+		})
+	}
+	stats, err := model.GetSubscriptionPoolStatistics(pool.Id)
+	require.NoError(t, err)
+	assert.EqualValues(t, 24, stats[0].Used)
+	assert.Zero(t, stats[0].Reserved)
+	_, err = model.PreConsumeUserSubscriptionForChannel("calibration-local-full", user.Id, "m", 0, 17, 9498)
+	require.ErrorContains(t, err, "cycle limit reached", "local limits are never bypassed")
+	// Simulate several days offline without sleeps or changing the database clock.
+	var state model.SubscriptionCycleState
+	require.NoError(t, model.DB.Where("cycle_key = ?", "c").First(&state).Error)
+	require.NoError(t, model.DB.Model(&state).Updates(map[string]any{"start_time": now - 3*86400 - 3600, "end_time": now - 3*86400}).Error)
+	_, err = model.PreConsumeUserSubscriptionForChannel("calibration-after-reset", user.Id, "m", 0, 40, 9498)
+	require.NoError(t, err, "local windows advance indefinitely without upstream")
+	require.NoError(t, model.SettleSubscriptionRequest("calibration-after-reset", sub.Id, 0))
+	stats, err = model.GetSubscriptionPoolStatistics(pool.Id)
+	require.NoError(t, err)
+	assert.EqualValues(t, 40, stats[0].Used)
+	assert.Greater(t, stats[0].NextReset, now)
+	// A trusted recovery calibrates the baseline without erasing real charges.
+	ratio = 0.5
+	cycle.WindowEnd, cycle.WindowStart, cycle.SampledAt = stats[0].NextReset, stats[0].NextReset-3600, now+1
+	account := model.SubscriptionSyncAccount{ID: "a", SampledAt: now, Cycles: []model.SubscriptionSyncCycle{cycle}}
+	claimed, err := model.ClaimSubscriptionSyncSource(source.Id, "calibration-recover", true)
+	require.NoError(t, err)
+	_, err = model.ApplySubscriptionSyncAccount(*claimed, "calibration-recover", binding, account, 1, false)
+	require.NoError(t, err)
+	require.NoError(t, model.FinishSubscriptionSyncSource(*claimed, "calibration-recover", []model.SubscriptionSyncAccount{account}, "", true, 1))
+	stats, err = model.GetSubscriptionPoolStatistics(pool.Id)
+	require.NoError(t, err)
+	assert.EqualValues(t, 40, stats[0].Used)
+	assert.Zero(t, stats[0].Adjustment)
+	views, err := model.GetSubscriptionSyncViews(pool.Id)
+	require.NoError(t, err)
+	require.NotNil(t, views[0].EstimatedUtilization)
+	assert.InDelta(t, 0.5, *views[0].EstimatedUtilization, 0.000001)
+	_, err = model.PreConsumeUserSubscriptionForChannel("calibration-recovery-full", user.Id, "m", 0, 1, 9498)
+	require.ErrorContains(t, err, "cycle limit reached")
+	cycle.WindowEnd, cycle.WindowStart, cycle.SampledAt = now-1, now-3601, now+2
+	account.Cycles[0] = cycle
+	claimed, err = model.ClaimSubscriptionSyncSource(source.Id, "calibration-old-window", true)
+	require.NoError(t, err)
+	_, err = model.ApplySubscriptionSyncAccount(*claimed, "calibration-old-window", binding, account, 1, false)
+	require.NoError(t, err)
+	require.NoError(t, model.FinishSubscriptionSyncSource(*claimed, "calibration-old-window", []model.SubscriptionSyncAccount{account}, "", false, 1))
+	var retained model.SubscriptionSyncObservation
+	require.NoError(t, model.DB.Where("pool_id = ?", pool.Id).First(&retained).Error)
+	assert.Equal(t, now+1, retained.SampledAt, "a later fetch carrying an expired window cannot replace the trusted baseline")
+	assert.Equal(t, "Upstream observation is stale", retained.LastError)
+	// Explicitly configured restrictive policies retain their previous behavior.
+	for _, policy := range []string{"stop", "local"} {
+		require.NoError(t, model.DB.Model(&model.SubscriptionSyncBinding{}).Where("pool_id = ?", pool.Id).Updates(map[string]any{"stale_policy": policy, "grace_seconds": 86400}).Error)
+		require.NoError(t, model.DB.Model(&model.SubscriptionSyncObservation{}).Where("pool_id = ?", pool.Id).Update("sampled_at", now-90000).Error)
+		_, err = model.PreConsumeUserSubscriptionForChannel("calibration-restrictive-"+policy, user.Id, "m", 0, 1, 9498)
+		require.ErrorContains(t, err, "upstream observation is unavailable or stale")
+	}
+	require.NoError(t, model.DB.Model(&model.SubscriptionSyncBinding{}).Where("pool_id = ?", pool.Id).Update("stale_policy", "calibration").Error)
+	require.NoError(t, model.DB.Model(&model.UserSubscription{}).Where("id = ?", sub.Id).Update("end_time", now-1).Error)
+	_, err = model.PreConsumeUserSubscriptionForChannel("calibration-sub-expired", user.Id, "m", 0, 1, 9498)
+	require.Error(t, err, "calibration must not extend a subscription")
+	require.NoError(t, model.DB.Model(&model.UserSubscription{}).Where("id = ?", sub.Id).Update("end_time", now+86400).Error)
+	require.NoError(t, model.DB.Model(&model.SubscriptionPool{}).Where("id = ?", pool.Id).Update("enabled", false).Error)
+	_, err = model.PreConsumeUserSubscriptionForChannel("calibration-pool-disabled", user.Id, "m", 0, 1, 9498)
+	require.ErrorContains(t, err, "upstream pool expired")
+}
+
 func TestSubscriptionPoolSyncKeepsLedgerAndUsesActualObservationAge(t *testing.T) {
 	user, plan, now := setupSubscriptionPoolTest(t)
 	require.NoError(t, model.DB.Create(&model.Channel{Id: 9401, Name: "sync"}).Error)
@@ -1899,6 +2048,7 @@ func TestSubscriptionPoolSyncCreateImportsCyclesAtomically(t *testing.T) {
 	binding, err := model.GetSubscriptionSyncBinding(pool.Id)
 	require.NoError(t, err)
 	assert.Equal(t, "car-account", binding.AccountID)
+	assert.Equal(t, "calibration", binding.StalePolicy, "automatic imports must not introduce an upstream admission deadline")
 	require.Len(t, binding.Cycles, 1)
 	assert.True(t, binding.Cycles[0].AlignReset)
 	assert.True(t, binding.Cycles[0].Enforce)

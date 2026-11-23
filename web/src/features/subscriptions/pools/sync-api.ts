@@ -138,7 +138,7 @@ export const syncBindingSchema = z.object({
   account_id: z.string().min(1).max(128),
   enabled: z.boolean(),
   sync_expiry: z.boolean(),
-  stale_policy: z.enum(['stop', 'local']),
+  stale_policy: z.enum(['stop', 'local', 'calibration']),
   grace_seconds: z.number().int().min(0).max(86400),
   version: z.number().int(),
   cycles: z

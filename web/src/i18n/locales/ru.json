@@ -8363,6 +8363,9 @@
     "Upstream account selection is controlled by the upstream service. Channel access does not guarantee an account match; synchronization calibrates only the account selected for this pool.": "Фактический аккаунт выбирает вышестоящий сервис. Доступ к каналу не гарантирует совпадение; синхронизация сверяет только выбранный для пула аккаунт.",
     "Legacy usage window does not match; reconcile usage before migration": "Периоды не совпадают; сверьте использование перед переносом",
     "Legacy usage changed; preview the assignment again": "Использование изменилось; повторите предварительный просмотр",
-    "Legacy usage requires reconciliation before migration": "Перед переносом необходимо сверить использование"
+    "Legacy usage requires reconciliation before migration": "Перед переносом необходимо сверить использование",
+    "Calibration only": "Только калибровка",
+    "Calibration only always uses local quota. There is no grace deadline. Stale, unreadable, or exhausted upstream data never blocks local requests, and upstream admission checks do not apply. Local cycle limits and expiries still apply; unlimited local limits remain unlimited.": "Режим только калибровки всегда использует локальную квоту. Льготного срока нет. Устаревшие, недоступные для чтения или исчерпанные данные источника никогда не блокируют локальные запросы, а проверки допуска на стороне источника не применяются. Локальные лимиты и сроки циклов продолжают действовать; неограниченный локальный лимит остаётся неограниченным.",
+    "Upstream admission checks are disabled in calibration-only mode. The saved enforcement setting is retained.": "В режиме только калибровки проверки допуска на стороне источника отключены. Сохранённая настройка принудительного ограничения сохраняется."
   }
 }

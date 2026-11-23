@@ -382,10 +382,11 @@ func NewBillingSession(c *gin.Context, relayInfo *relaycommon.RelayInfo, preCons
 	}
 
 	pref := common.NormalizeBillingPreference(relayInfo.UserSetting.BillingPreference)
+	channelID := selectedBillingChannelID(c, relayInfo)
 
 	// 钱包路径需要先检查用户额度
 	tryWallet := func() (*BillingSession, *types.NewAPIError) {
-		pooled, poolErr := model.SubscriptionChannelRequiresSubscription(relayInfo.GetChannelID())
+		pooled, poolErr := model.SubscriptionChannelRequiresSubscription(channelID)
 		if poolErr != nil {
 			return nil, types.NewError(poolErr, types.ErrorCodeQueryDataError, types.ErrOptionWithSkipRetry())
 		}
@@ -433,7 +434,7 @@ func NewBillingSession(c *gin.Context, relayInfo *relaycommon.RelayInfo, preCons
 				requestId: relayInfo.RequestId,
 				userId:    relayInfo.UserId,
 				modelName: relayInfo.GetBillingModelName(),
-				channelID: relayInfo.GetChannelID(),
+				channelID: channelID,
 				amount:    subConsume,
 			},
 		}

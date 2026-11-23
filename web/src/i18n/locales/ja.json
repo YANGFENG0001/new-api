@@ -8363,6 +8363,9 @@
     "Upstream account selection is controlled by the upstream service. Channel access does not guarantee an account match; synchronization calibrates only the account selected for this pool.": "実際の上流アカウントは上流サービスが選択します。チャネルの利用許可はアカウントの一致を保証せず、同期はこのプールで選択したアカウントのみを補正します。",
     "Legacy usage window does not match; reconcile usage before migration": "期間が一致しません。移行前に使用量を照合してください",
     "Legacy usage changed; preview the assignment again": "使用量が変更されました。割り当てを再確認してください",
-    "Legacy usage requires reconciliation before migration": "移行前に使用量の照合が必要です"
+    "Legacy usage requires reconciliation before migration": "移行前に使用量の照合が必要です",
+    "Calibration only": "校正のみ",
+    "Calibration only always uses local quota. There is no grace deadline. Stale, unreadable, or exhausted upstream data never blocks local requests, and upstream admission checks do not apply. Local cycle limits and expiries still apply; unlimited local limits remain unlimited.": "校正のみモードでは常にローカル使用枠を使用します。猶予期限はありません。上流データが古い、読み取れない、またはスナップショットを使い切っていても、ローカルリクエストを遮断しません。上流の受入判定は適用されません。ローカル周期の上限と有効期限は引き続き適用され、ローカル上限が無制限の場合は無制限のままです。",
+    "Upstream admission checks are disabled in calibration-only mode. The saved enforcement setting is retained.": "校正のみモードでは上流の受入判定を無効にします。保存済みの適用設定は保持されます。"
   }
 }

@@ -8363,6 +8363,9 @@
     "Upstream account selection is controlled by the upstream service. Channel access does not guarantee an account match; synchronization calibrates only the account selected for this pool.": "Le service amont choisit le compte réellement utilisé. L’accès au canal ne garantit pas sa correspondance ; la synchronisation ne calibre que le compte choisi pour ce pool.",
     "Legacy usage window does not match; reconcile usage before migration": "Les fenêtres ne correspondent pas ; rapprochez les usages avant la migration",
     "Legacy usage changed; preview the assignment again": "L’usage a changé ; prévisualisez à nouveau l’affectation",
-    "Legacy usage requires reconciliation before migration": "Rapprochez les usages avant la migration"
+    "Legacy usage requires reconciliation before migration": "Rapprochez les usages avant la migration",
+    "Calibration only": "Calibration uniquement",
+    "Calibration only always uses local quota. There is no grace deadline. Stale, unreadable, or exhausted upstream data never blocks local requests, and upstream admission checks do not apply. Local cycle limits and expiries still apply; unlimited local limits remain unlimited.": "Le mode calibration uniquement utilise toujours le quota local. Il n’a pas de délai de grâce. Des données amont obsolètes, illisibles ou épuisées ne bloquent jamais les requêtes locales, et les contrôles d’admission amont ne s’appliquent pas. Les limites et échéances des cycles locaux restent appliquées ; une limite locale illimitée le reste.",
+    "Upstream admission checks are disabled in calibration-only mode. The saved enforcement setting is retained.": "Les contrôles d’admission amont sont désactivés en mode calibration uniquement. Le réglage d’application enregistré est conservé."
   }
 }

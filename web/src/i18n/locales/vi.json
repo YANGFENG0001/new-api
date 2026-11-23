@@ -8363,6 +8363,9 @@
     "Upstream account selection is controlled by the upstream service. Channel access does not guarantee an account match; synchronization calibrates only the account selected for this pool.": "Dịch vụ thượng nguồn chọn tài khoản thực tế. Kênh không đảm bảo khớp tài khoản; đồng bộ chỉ hiệu chỉnh tài khoản đã chọn cho nhóm.",
     "Legacy usage window does not match; reconcile usage before migration": "Cửa sổ sử dụng không khớp; cần đối soát trước khi chuyển",
     "Legacy usage changed; preview the assignment again": "Mức dùng đã thay đổi; hãy xem trước phân bổ lại",
-    "Legacy usage requires reconciliation before migration": "Cần đối soát mức dùng trước khi chuyển"
+    "Legacy usage requires reconciliation before migration": "Cần đối soát mức dùng trước khi chuyển",
+    "Calibration only": "Chỉ hiệu chỉnh",
+    "Calibration only always uses local quota. There is no grace deadline. Stale, unreadable, or exhausted upstream data never blocks local requests, and upstream admission checks do not apply. Local cycle limits and expiries still apply; unlimited local limits remain unlimited.": "Chế độ chỉ hiệu chỉnh luôn dùng hạn mức cục bộ. Không có thời hạn gia hạn. Dữ liệu nguồn cũ, không đọc được hoặc đã cạn kiệt không bao giờ chặn yêu cầu cục bộ và kiểm tra chấp nhận từ nguồn không được áp dụng. Giới hạn và thời hạn của chu kỳ cục bộ vẫn được áp dụng; giới hạn cục bộ không giới hạn vẫn không giới hạn.",
+    "Upstream admission checks are disabled in calibration-only mode. The saved enforcement setting is retained.": "Trong chế độ chỉ hiệu chỉnh, kiểm tra chấp nhận từ nguồn bị vô hiệu hóa. Cấu hình thực thi đã lưu vẫn được giữ nguyên."
   }
 }

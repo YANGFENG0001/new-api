@@ -8363,6 +8363,9 @@
     "Upstream account selection is controlled by the upstream service. Channel access does not guarantee an account match; synchronization calibrates only the account selected for this pool.": "实际使用哪个上游账号由上游调度决定。选择渠道不保证账号匹配；自动同步只校准此池所选账号，不能证明请求实际消耗了该账号。",
     "Legacy usage window does not match; reconcile usage before migration": "传统订阅与目标周期的时间窗口不一致，请核对用量后再迁移",
     "Legacy usage changed; preview the assignment again": "传统订阅用量已变化，请重新预览分配",
-    "Legacy usage requires reconciliation before migration": "传统订阅用量账目需要核对，暂不能迁移"
+    "Legacy usage requires reconciliation before migration": "传统订阅用量账目需要核对，暂不能迁移",
+    "Calibration only": "仅校准",
+    "Calibration only always uses local quota. There is no grace deadline. Stale, unreadable, or exhausted upstream data never blocks local requests, and upstream admission checks do not apply. Local cycle limits and expiries still apply; unlimited local limits remain unlimited.": "仅校准模式始终使用本地额度，无宽限截止；上游数据过期、读取失败或快照耗尽均不会阻断本地请求，上游准入检查不生效；本地周期、限额和有效期仍会执行，本地无限制则仍无限制。",
+    "Upstream admission checks are disabled in calibration-only mode. The saved enforcement setting is retained.": "仅校准模式下不进行上游准入判断，已保存的准入设置将被保留。"
   }
 }
