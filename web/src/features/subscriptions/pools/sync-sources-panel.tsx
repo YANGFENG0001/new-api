@@ -26,6 +26,10 @@ import { ErrorState } from '@/components/error-state'
 import { LoadingState } from '@/components/loading-state'
 import { StatusBadge } from '@/components/status-badge'
 import { Button } from '@/components/ui/button'
+import {
+  SecureVerificationDialog,
+  useSecureVerification,
+} from '@/features/auth/secure-verification'
 import { toIntlLocale } from '@/i18n/languages'
 
 import type { Capabilities } from './api'
@@ -38,6 +42,31 @@ export function SyncSourcesPanel(props: { caps: Capabilities }) {
   const { t, i18n } = useTranslation()
   const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
   const client = useQueryClient()
+  const verification = useSecureVerification()
+  const [deleting, setDeleting] = useState<SyncSource | null>(null)
+  const remove = useMutation({
+    retry: false,
+    mutationFn: async (source: SyncSource) => {
+      const proof = await verification.requestVerification({
+        scope: 'subscription.sync.credentials',
+        context: {
+          source_id: source.id,
+          action: 'delete',
+          version: source.version,
+          credential_revision: source.credential_revision,
+        },
+      })
+      if (!proof) return false
+      await syncAPI.remove(source, proof.proof_token)
+      return true
+    },
+    onSuccess: async (deleted) => {
+      if (!deleted) return
+      if (deleting?.id === active) setActive(0)
+      setDeleting(null)
+      await client.invalidateQueries({ queryKey: ['subscription-sync'] })
+    },
+  })
   const list = useQuery({
     queryKey: ['subscription-sync', 'sources'],
     queryFn: syncAPI.sources,
@@ -152,9 +181,23 @@ export function SyncSourcesPanel(props: { caps: Capabilities }) {
             id: 'edit',
             header: t('Actions'),
             cell: (s) => (
-              <Button variant='outline' onClick={() => setSelected(s)}>
-                {props.caps.sync_credentials ? t('Edit') : t('View')}
-              </Button>
+              <div className='flex flex-wrap gap-2'>
+                <Button variant='outline' onClick={() => setSelected(s)}>
+                  {props.caps.sync_credentials ? t('Edit') : t('View')}
+                </Button>
+                {props.caps.sync_credentials && (
+                  <Button
+                    variant='destructive'
+                    aria-label={`${t('Delete')} ${s.name}`}
+                    onClick={() => {
+                      remove.reset()
+                      setDeleting(s)
+                    }}
+                  >
+                    {t('Delete')}
+                  </Button>
+                )}
+              </div>
             ),
           },
         ]}
@@ -314,6 +357,29 @@ export function SyncSourcesPanel(props: { caps: Capabilities }) {
           </details>
         </section>
       )}
+      <SecureVerificationDialog {...verification.dialogProps} />
+      <ConfirmDialog
+        open={!!deleting}
+        onOpenChange={(open) => {
+          if (!open) setDeleting(null)
+        }}
+        title={`${t('Delete')} ${deleting?.name ?? ''}`}
+        destructive
+        desc={t(
+          'Unbind linked pools before deleting this source. Stored credentials are removed; usage and audit history are retained.'
+        )}
+        confirmText={t('Delete')}
+        isLoading={remove.isPending}
+        handleConfirm={() => {
+          if (deleting) remove.mutate(deleting)
+        }}
+      >
+        {remove.isError && (
+          <p role='alert' className='text-destructive'>
+            {t(remove.error.message)}
+          </p>
+        )}
+      </ConfirmDialog>
       <ConfirmDialog
         open={confirm}
         onOpenChange={setConfirm}

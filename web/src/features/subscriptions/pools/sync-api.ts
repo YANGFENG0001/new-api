@@ -62,6 +62,10 @@ export const syncSourceSchema = z.object({
 export type SyncMapping = z.infer<typeof syncMappingSchema>
 export type SyncCycleMapping = z.infer<typeof syncCycleMappingSchema>
 export type SyncSource = z.infer<typeof syncSourceSchema> & {
+  fresh_cycles?: number
+  reported_cycles?: number
+  oldest_observed_at?: number
+  stale_accounts?: string[]
   effective_stale_seconds?: number
   fetch_status?: string
   observation_status?: string
@@ -112,6 +116,7 @@ export type SyncAccount = {
   cycles: SyncCycle[]
 }
 export type SyncObservation = {
+  seconds?: number
   estimated_utilization?: number | null
   local_delta?: number
   key: string
@@ -187,6 +192,17 @@ export type SyncState = {
 }
 const base = '/api/subscription/admin'
 export const syncAPI = {
+  remove: (source: SyncSource, proof: string) =>
+    poolRequest<null>(
+      'delete',
+      `${base}/sync-sources/${source.id}`,
+      {
+        version: source.version,
+        credential_revision: source.credential_revision,
+        confirm: true,
+      },
+      { 'X-Security-Proof': proof }
+    ),
   sources: () => poolRequest<SyncSourceList>('get', `${base}/sync-sources`),
   save: (source: SyncSource, request?: SyncRequest, proofToken?: string) =>
     poolRequest<SyncSource>(
@@ -278,4 +294,32 @@ export function syncStaleSeconds(
     source.stale_seconds,
     2 * source.interval_seconds + source.timeout_seconds + 10
   )
+}
+
+// Zero is reported; absent/null/invalid percentages do not create quota cards.
+export function reportedSyncAccounts(accounts: SyncAccount[]): SyncAccount[] {
+  return accounts
+    .map((account) => ({
+      ...account,
+      cycles: account.cycles.filter(
+        (c) =>
+          c.utilization != null &&
+          Number.isFinite(c.utilization) &&
+          c.utilization >= 0
+      ),
+    }))
+    .filter((account) => account.cycles.length > 0)
+}
+
+export function syncCycleName(name: string, seconds?: number): string {
+  if (!seconds || !/^[0-9]+(?:\.[0-9]+)?[smhd]$/.test(name)) return name
+  for (const [unit, suffix] of [
+    [86400, 'd'],
+    [3600, 'h'],
+    [60, 'm'],
+    [1, 's'],
+  ] as const) {
+    if (seconds % unit === 0) return `${seconds / unit}${suffix}`
+  }
+  return name
 }

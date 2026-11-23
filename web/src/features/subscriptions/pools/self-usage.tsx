@@ -113,7 +113,7 @@ export function SelfAlignedUsage(
           !props.subscription ||
           p.subscription_ids?.includes(props.subscription.subscription_id)
       ) && (
-        <Accordion>
+        <Accordion defaultValue={['upstream']}>
           <AccordionItem value='upstream'>
             <AccordionTrigger>
               {t('Upstream carpool subscriptions')}

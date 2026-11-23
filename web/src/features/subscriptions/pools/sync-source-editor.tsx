@@ -109,7 +109,7 @@ export function SyncSourceEditor(props: {
   })
   return (
     <form
-      className='space-y-4'
+      className='mx-auto w-full max-w-5xl space-y-4'
       onSubmit={form.handleSubmit((data) => save.mutate(data))}
     >
       <div className='flex flex-wrap items-center justify-between gap-3'>

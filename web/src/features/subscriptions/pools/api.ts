@@ -178,7 +178,7 @@ export type Capabilities = Partial<
 
 const base = '/api/subscription/admin'
 export async function poolRequest<T>(
-  method: 'get' | 'post' | 'put',
+  method: 'get' | 'post' | 'put' | 'delete',
   path: string,
   data?: unknown,
   headers?: Record<string, string>
@@ -198,6 +198,11 @@ export async function poolRequest<T>(
   return requireServerSuccess(response.data).data
 }
 export const poolAPI = {
+  remove: (pool: Pool) =>
+    poolRequest<null>('delete', `${base}/pools/${pool.id}`, {
+      version: pool.version,
+      confirm: true,
+    }),
   capabilities: () =>
     poolRequest<Capabilities>('get', `${base}/pool-capabilities`),
   list: () => poolRequest<Pool[]>('get', `${base}/pools`),

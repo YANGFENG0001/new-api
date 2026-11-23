@@ -18,7 +18,6 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { act, render, screen, within } from '@testing-library/react'
-import userEvent from '@testing-library/user-event'
 import { createInstance } from 'i18next'
 import { I18nextProvider } from 'react-i18next'
 import { afterEach, expect, test, vi } from 'vitest'
@@ -98,9 +97,8 @@ test('a subscription only exposes its own pool and does not fetch duplicate pers
   const trigger = await screen.findByRole('button', {
     name: 'Upstream carpool subscriptions',
   })
-  expect(trigger).toHaveAttribute('aria-expanded', 'false')
-  expect(screen.queryByText('My pool')).not.toBeInTheDocument()
-  await userEvent.click(trigger)
+  expect(trigger).toHaveAttribute('aria-expanded', 'true')
+  expect(screen.getByText('My pool')).toBeVisible()
   expect(screen.getByText('My pool')).toBeVisible()
   expect(
     screen.queryByText('Different subscription pool')
@@ -333,11 +331,6 @@ test('an upstream pool without a reported expiry displays never instead of the s
     },
   }))
   mount()
-  await userEvent.click(
-    await screen.findByRole('button', {
-      name: 'Upstream carpool subscriptions',
-    })
-  )
   await screen.findByText('No expiry pool')
   expect(screen.getAllByText('Never')).toHaveLength(2)
   expect(screen.queryByText(/9999/)).not.toBeInTheDocument()

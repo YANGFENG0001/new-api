@@ -788,11 +788,9 @@ func TestSubscriptionPoolSyncParsesPanelWithoutUsingBillingEstimates(t *testing.
 	require.NoError(t, err)
 	require.Len(t, accounts, 1)
 	assert.Equal(t, "a", accounts[0].ID)
-	require.Len(t, accounts[0].Cycles, 5)
+	require.Len(t, accounts[0].Cycles, 1, "unreported optional windows are not returned")
 	assert.InDelta(t, 0.62, *accounts[0].Cycles[0].Utilization, 0.000001)
 	assert.Equal(t, now.Add(-time.Hour).Unix(), accounts[0].Cycles[0].SampledAt, "a recent check does not refresh the observation")
-	assert.Nil(t, accounts[0].Cycles[1].Utilization, "missing values never become zero")
-	assert.NotEmpty(t, accounts[0].Cycles[1].Error)
 	_, err = service.ParseSubscriptionSyncResponse([]byte(`{"ok":false,"data":{"accounts":[]}}`), model.PanelSubscriptionSyncMapping(), now.Unix())
 	assert.Error(t, err)
 	_, err = service.ParseSubscriptionSyncResponse([]byte(`{"ok":true,"data":{"accounts":[{"account_id":"a"},{"account_id":"a"}]}}`), model.PanelSubscriptionSyncMapping(), now.Unix())
@@ -930,6 +928,7 @@ func TestSubscriptionPoolSyncRequiresConfirmationForLargeResetShift(t *testing.T
 	require.NoError(t, err)
 	mapping := model.PanelSubscriptionSyncMapping()
 	mapping.Cycles = mapping.Cycles[:1]
+	mapping.Cycles[0].Seconds = 25200
 	source, err := service.SaveSubscriptionSyncSource(model.SubscriptionSyncSourceInput{SubscriptionSyncSource: model.SubscriptionSyncSource{Name: "pending", URL: "https://example.com/api/panel/usage", Method: "GET", IntervalSeconds: 60, StaleSeconds: 300, TimeoutSeconds: 10}, Mapping: mapping}, 1, true)
 	require.NoError(t, err)
 	binding := model.SubscriptionSyncBindingInput{SubscriptionSyncBinding: model.SubscriptionSyncBinding{PoolID: pool.Id, SourceID: source.Id, AccountID: "a", Enabled: true, StalePolicy: "stop"}, Cycles: []model.SubscriptionSyncCycleBinding{{LocalKey: "c", UpstreamKey: "5h", AlignReset: true, Threshold: 1, MaxShiftSeconds: 60}}}
@@ -937,7 +936,7 @@ func TestSubscriptionPoolSyncRequiresConfirmationForLargeResetShift(t *testing.T
 	binding, err = model.GetSubscriptionSyncBinding(pool.Id)
 	require.NoError(t, err)
 	ratio := 0.5
-	account := model.SubscriptionSyncAccount{ID: "a", Cycles: []model.SubscriptionSyncCycle{{Key: "5h", Name: "short", Seconds: 18000, Utilization: &ratio, WindowStart: now + 3600 - 18000, WindowEnd: now + 3600, SampledAt: now}}}
+	account := model.SubscriptionSyncAccount{ID: "a", Cycles: []model.SubscriptionSyncCycle{{Key: "5h", Name: "7h", Seconds: 25200, Utilization: &ratio, WindowStart: now + 3600 - 25200, WindowEnd: now + 3600, SampledAt: now}}}
 	claimed, err := model.ClaimSubscriptionSyncSource(source.Id, "pending", true)
 	require.NoError(t, err)
 	_, err = model.ApplySubscriptionSyncAccount(*claimed, "pending", binding, account, 1, false)
@@ -954,6 +953,7 @@ func TestSubscriptionPoolSyncRequiresConfirmationForLargeResetShift(t *testing.T
 	stats, err = model.GetSubscriptionPoolStatistics(pool.Id)
 	require.NoError(t, err)
 	assert.Equal(t, now+3600, stats[0].NextReset)
+	assert.EqualValues(t, 25200, stats[0].Seconds)
 	assert.False(t, stats[0].Pending)
 	require.Error(t, model.ConfirmSubscriptionSyncReset(pool.Id, "c", views[0].Digest, pool.Version, 1), "old pool versions cannot confirm a later state")
 }
@@ -1035,9 +1035,7 @@ func TestSubscriptionPoolSyncFetchesOnceForMultiplePoolsAndKeepsMissingAccountHi
 	assert.Equal(t, "Bound upstream account was not found", binding.LastError)
 	observations, err := model.GetSubscriptionSyncViews(ids[1])
 	require.NoError(t, err)
-	require.Len(t, observations, 1)
-	assert.True(t, observations[0].Stale)
-	assert.InDelta(t, 0.5, *observations[0].Utilization, 0.00001)
+	require.Empty(t, observations, "unreported accounts are hidden; immutable observations remain in storage")
 	require.NoError(t, model.MigrateSubscriptionPools())
 	require.NoError(t, model.MigrateSubscriptionPools())
 	require.NoError(t, model.DB.Model(&model.SubscriptionSyncObservation{}).Count(&count).Error)
@@ -1062,7 +1060,8 @@ func TestSubscriptionPoolSyncFetchesOnceForMultiplePoolsAndKeepsMissingAccountHi
 	require.NoError(t, model.SaveSubscriptionSyncBinding(second, 1), "unbinding explicitly releases the upstream resource")
 	observations, err = model.GetSubscriptionSyncViews(ids[1])
 	require.NoError(t, err)
-	assert.Empty(t, observations, "old account observations cannot survive rebinding")
+	require.Len(t, observations, 1, "rebinding immediately displays the new account cache, not the prior account")
+	assert.InDelta(t, 0.5, *observations[0].Utilization, 1e-9)
 	require.NoError(t, model.UnbindSubscriptionSyncPool(ids[1], second.Version+1, 1))
 	require.NoError(t, model.MigrateSubscriptionPools())
 	require.NoError(t, model.MigrateSubscriptionPools())
@@ -1639,4 +1638,202 @@ func TestSubscriptionPoolSyncLocalEstimatesRebaseAndInvalidateAfterReset(t *test
 	views, err = model.GetSubscriptionSyncViews(pool.Id)
 	require.NoError(t, err)
 	assert.Nil(t, views[0].EstimatedUtilization, "reset generations cannot reuse a previous local baseline")
+}
+
+func TestSubscriptionPoolSyncFiltersNoiseAndKeepsAccountFreshnessSeparate(t *testing.T) {
+	_, _, now := setupSubscriptionPoolTest(t)
+	mapping := model.PanelSubscriptionSyncMapping()
+	mapping.Cycles[0].Seconds = 7 * 3600
+	body := fmt.Sprintf(`{"ok":true,"data":{"accounts":[{"account_id":"a","vm_id":"vm-01","utilization_5h":0,"reset_5h":%q,"last_probe":%q},{"account_id":"b","vm_id":"vm-02","utilization_5h":0.2,"reset_5h":%q,"last_probe":%q},{"account_id":"empty","vm_id":"empty","utilization_5h":null}]}}`, time.Unix(now+1000, 0).UTC().Format(time.RFC3339), time.Unix(now-30, 0).UTC().Format(time.RFC3339), time.Unix(now+1000, 0).UTC().Format(time.RFC3339), time.Unix(now-400, 0).UTC().Format(time.RFC3339))
+	accounts, err := service.ParseSubscriptionSyncResponse([]byte(body), mapping, now)
+	require.NoError(t, err)
+	require.Len(t, accounts, 2, "empty accounts are not subscriptions")
+	require.Len(t, accounts[0].Cycles, 1)
+	assert.Equal(t, "7h", accounts[0].Cycles[0].Name, "duration is a value, not the protocol field name")
+	assert.Zero(t, *accounts[0].Cycles[0].Utilization, "an explicit zero is reported usage")
+	raw, err := common.Marshal(accounts)
+	require.NoError(t, err)
+	config, err := common.Marshal(mapping)
+	require.NoError(t, err)
+	source := model.SubscriptionSyncSource{Name: "freshness", Version: 1, MappingJSON: string(config), CatalogJSON: string(raw), LastFetch: now, IntervalSeconds: 60, StaleSeconds: 300, TimeoutSeconds: 10}
+	require.NoError(t, model.DB.Create(&source).Error)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Set("id", 1)
+	c.Set("role", common.RoleRootUser)
+	ListSubscriptionSyncSources(c)
+	var result struct {
+		Data struct {
+			Sources []struct {
+				FreshCycles      int      `json:"fresh_cycles"`
+				ReportedCycles   int      `json:"reported_cycles"`
+				OldestObservedAt int64    `json:"oldest_observed_at"`
+				StaleAccounts    []string `json:"stale_accounts"`
+			} `json:"sources"`
+		} `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(w.Body.Bytes(), &result))
+	require.Len(t, result.Data.Sources, 1)
+	assert.Equal(t, 1, result.Data.Sources[0].FreshCycles)
+	assert.Equal(t, 2, result.Data.Sources[0].ReportedCycles)
+	assert.Equal(t, now-400, result.Data.Sources[0].OldestObservedAt)
+	assert.Equal(t, []string{"vm-02"}, result.Data.Sources[0].StaleAccounts)
+}
+
+func TestSubscriptionPoolSyncBindingImmediatelyFeedsPurchasedMemberViews(t *testing.T) {
+	user, plan, now := setupSubscriptionPoolTest(t)
+	ratio := 0.37
+	mapping := model.PanelSubscriptionSyncMapping()
+	mapping.Cycles[0].Seconds = 25200
+	rawMapping, err := common.Marshal(mapping)
+	require.NoError(t, err)
+	accounts := []model.SubscriptionSyncAccount{{ID: "member-account", Name: "vm-02", Expiry: now + 172800, SampledAt: now, Cycles: []model.SubscriptionSyncCycle{{Key: "5h", Name: "7h", Seconds: 25200, WindowStart: now - 24200, WindowEnd: now + 1000, SampledAt: now, Utilization: &ratio}}}}
+	raw, err := common.Marshal(accounts)
+	require.NoError(t, err)
+	source := model.SubscriptionSyncSource{Name: "member-source", URL: "https://example.com/usage", Version: 1, MappingJSON: string(rawMapping), CatalogJSON: string(raw), LastFetch: now, IntervalSeconds: 60, StaleSeconds: 300, TimeoutSeconds: 10}
+	require.NoError(t, model.DB.Create(&source).Error)
+	pool, err := model.SaveSubscriptionPool(model.SubscriptionPoolInput{SubscriptionPool: model.SubscriptionPool{Name: "member-pool", Enabled: true, EndTime: now + 86400}, Cycles: []model.SubscriptionCycleRule{{Key: "local", Name: "5h", Seconds: 18000, NextReset: now + 1100, Limit: 1000, Enabled: true}}}, 1)
+	require.NoError(t, err)
+	require.NoError(t, model.DB.Create(&model.Channel{Id: 9501, Name: "adoption"}).Error)
+	require.NoError(t, model.DB.Create(&model.SubscriptionPoolChannel{PoolID: pool.Id, ChannelID: 9501}).Error)
+	require.NoError(t, model.SaveSubscriptionPlanAllocation(model.SubscriptionPlanAllocation{PlanID: plan.Id, Mode: "fixed", PoolID: pool.Id}, nil))
+	var member *model.UserSubscription
+	require.NoError(t, model.DB.Transaction(func(tx *gorm.DB) error {
+		var e error
+		member, e = model.CreateUserSubscriptionFromPlanTx(tx, user.Id, &plan, "admin")
+		return e
+	}))
+	_, err = model.PreConsumeUserSubscriptionForChannel("adopt-settled", user.Id, "m", 0, 10, 9501)
+	require.NoError(t, err)
+	require.NoError(t, model.SettleSubscriptionRequest("adopt-settled", member.Id, 0))
+	_, err = model.PreConsumeUserSubscriptionForChannel("adopt-inflight", user.Id, "m", 0, 5, 9501)
+	require.NoError(t, err)
+	binding := model.SubscriptionSyncBindingInput{SubscriptionSyncBinding: model.SubscriptionSyncBinding{PoolID: pool.Id, SourceID: source.Id, AccountID: "member-account", Enabled: true, SyncExpiry: true, StalePolicy: "stop"}, Cycles: []model.SubscriptionSyncCycleBinding{{LocalKey: "local", UpstreamKey: "5h", AlignReset: true, Enforce: true, Threshold: 1, MaxShiftSeconds: 300}}}
+	require.NoError(t, model.SaveSubscriptionSyncBinding(binding, 1))
+	views, err := model.GetSubscriptionSyncViews(pool.Id)
+	require.NoError(t, err)
+	require.Len(t, views, 1, "binding save immediately imports the cached snapshot, without HTTP or another poll")
+	assert.InDelta(t, ratio, *views[0].Utilization, 1e-9)
+	cfg, err := model.GetSubscriptionPoolConfiguration(pool.Id)
+	require.NoError(t, err)
+	assert.Equal(t, now+1000, cfg.Cycles[0].NextReset)
+	assert.Equal(t, accounts[0].Expiry, cfg.EndTime)
+	assert.EqualValues(t, 25200, cfg.Cycles[0].Seconds)
+	assert.Equal(t, "7h", cfg.Cycles[0].Name)
+	require.NoError(t, model.SettleSubscriptionRequest("adopt-inflight", member.Id, 0), "adopting 7h must preserve reservation provenance")
+	priorUsage, err := model.GetSubscriptionUsage(user.Id)
+	require.NoError(t, err)
+	require.Len(t, priorUsage, 1)
+	assert.EqualValues(t, 15, priorUsage[0].Cycles[0].Used)
+	require.NoError(t, model.DB.Model(member).Update("status", "cancelled").Error)
+
+	require.NoError(t, model.DB.Transaction(func(tx *gorm.DB) error {
+		var e error
+		member, e = model.CreateUserSubscriptionFromPlanTx(tx, user.Id, &plan, "admin")
+		return e
+	}))
+	usage, err := model.GetSubscriptionUsage(user.Id)
+	require.NoError(t, err)
+	require.Len(t, usage, 2)
+	assert.True(t, usage[0].Managed)
+	assert.Equal(t, member.Id, usage[0].SubscriptionID)
+	require.Len(t, usage[0].Cycles, 1)
+	assert.EqualValues(t, 25200, usage[0].Cycles[0].Seconds)
+	assert.Equal(t, now+1000, usage[0].Cycles[0].NextReset)
+	overview, err := model.GetSubscriptionPoolOverview(user.Id)
+	require.NoError(t, err)
+	require.Len(t, overview, 1)
+	assert.Equal(t, []int{member.Id}, overview[0].SubscriptionIDs)
+	require.Len(t, overview[0].SyncObservations, 1)
+	assert.InDelta(t, ratio, *overview[0].SyncObservations[0].Utilization, 1e-9)
+	// A later response omitting a previously reported cycle hides the old card,
+	// but must never make upstream enforcement or recorded local use disappear.
+	storedBinding, err := model.GetSubscriptionSyncBinding(pool.Id)
+	require.NoError(t, err)
+	claimed, err := model.ClaimSubscriptionSyncSource(source.Id, "missing-cycle", true)
+	require.NoError(t, err)
+	missing := accounts[0]
+	missing.Cycles = nil
+	_, err = model.ApplySubscriptionSyncAccount(*claimed, "missing-cycle", storedBinding, missing, 1, false)
+	require.NoError(t, err)
+	require.NoError(t, model.FinishSubscriptionSyncSource(*claimed, "missing-cycle", []model.SubscriptionSyncAccount{missing}, "", true, 1))
+	hidden, err := model.GetSubscriptionSyncViews(pool.Id)
+	require.NoError(t, err)
+	assert.Empty(t, hidden)
+	_, err = model.PreConsumeUserSubscriptionForChannel("unreported-denied", user.Id, "m", 0, 1, 9501)
+	require.ErrorContains(t, err, "subscription quota insufficient")
+	var retained int64
+	require.NoError(t, model.DB.Model(&model.SubscriptionSyncObservation{}).Where("pool_id = ?", pool.Id).Count(&retained).Error)
+	assert.EqualValues(t, 1, retained, "hiding noise does not delete accounting evidence")
+
+}
+
+func TestSubscriptionPoolDeletionProtectsReferencesAndPreservesAccounting(t *testing.T) {
+	user, plan, now := setupSubscriptionPoolTest(t)
+	source, err := service.SaveSubscriptionSyncSource(model.SubscriptionSyncSourceInput{SubscriptionSyncSource: model.SubscriptionSyncSource{Name: "delete-source", URL: "https://example.com/usage", Method: "GET", IntervalSeconds: 60, StaleSeconds: 300, TimeoutSeconds: 10}, Mapping: model.PanelSubscriptionSyncMapping()}, 1, true)
+	require.NoError(t, err)
+	require.NoError(t, model.DB.Create(&model.Channel{Id: 9502, Name: "delete"}).Error)
+	pool, err := model.SaveSubscriptionPool(model.SubscriptionPoolInput{SubscriptionPool: model.SubscriptionPool{Name: "delete-pool", Enabled: true, EndTime: now + 86400}, Channels: []int{9502}, Cycles: []model.SubscriptionCycleRule{{Key: "c", Name: "5h", Seconds: 18000, NextReset: now + 1000, Limit: 100, Enabled: true, Shared: true}}}, 1)
+	require.NoError(t, err)
+	binding := model.SubscriptionSyncBindingInput{SubscriptionSyncBinding: model.SubscriptionSyncBinding{PoolID: pool.Id, SourceID: source.Id, AccountID: "a", Enabled: true, StalePolicy: "stop"}}
+	require.NoError(t, model.SaveSubscriptionSyncBinding(binding, 1))
+	require.ErrorContains(t, model.DeleteSubscriptionSyncSource(source.Id, source.Version, source.CredentialRevision, 1), "Unbind")
+	require.ErrorContains(t, model.DeleteSubscriptionPool(pool.Id, pool.Version, 0, 1), "Synchronization binding changed", "a binding created after the controller inspected permissions cannot be implicitly detached")
+	require.ErrorContains(t, model.DeleteSubscriptionPool(pool.Id, pool.Version-1, 1, 1), "reload")
+	require.NoError(t, model.SaveSubscriptionPlanAllocation(model.SubscriptionPlanAllocation{PlanID: plan.Id, Mode: "fixed", PoolID: pool.Id}, nil))
+	require.ErrorContains(t, model.DeleteSubscriptionPool(pool.Id, pool.Version, 1, 1), "subscription plans")
+	var member *model.UserSubscription
+	require.NoError(t, model.DB.Transaction(func(tx *gorm.DB) error {
+		var e error
+		member, e = model.CreateUserSubscriptionFromPlanTx(tx, user.Id, &plan, "admin")
+		return e
+	}))
+	require.NoError(t, model.SaveSubscriptionPlanAllocation(model.SubscriptionPlanAllocation{PlanID: plan.Id, Mode: "legacy", Version: 1}, nil))
+	require.ErrorContains(t, model.DeleteSubscriptionPool(pool.Id, pool.Version, 1, 1), "active members")
+	_, err = model.PreConsumeUserSubscriptionForChannel("delete-inflight", user.Id, "m", 0, 10, 9502)
+	require.NoError(t, err)
+	require.NoError(t, model.DB.Model(member).Update("status", "cancelled").Error)
+	require.ErrorContains(t, model.DeleteSubscriptionPool(pool.Id, pool.Version, 1, 1), "in-flight")
+	require.NoError(t, model.SettleSubscriptionRequest("delete-inflight", member.Id, 0))
+	require.NoError(t, model.DeleteSubscriptionPool(pool.Id, pool.Version, 1, 1))
+	var count int64
+	require.NoError(t, model.DB.Model(&model.SubscriptionCycleReservation{}).Where("pool_id = ?", pool.Id).Count(&count).Error)
+	assert.Positive(t, count, "settled reservation history is retained")
+	require.NoError(t, model.DB.Model(&model.SubscriptionPoolEvent{}).Where("pool_id = ? AND action = ?", pool.Id, "delete").Count(&count).Error)
+	assert.EqualValues(t, 1, count)
+	require.NoError(t, model.DB.Model(&model.SubscriptionPoolChannel{}).Where("pool_id = ?", pool.Id).Count(&count).Error)
+	assert.Zero(t, count)
+	claimed, err := model.ClaimSubscriptionSyncSource(source.Id, "deleted-worker", true)
+	require.NoError(t, err)
+	require.ErrorContains(t, model.DeleteSubscriptionSyncSource(source.Id, source.Version-1, source.CredentialRevision, 1), "reload")
+	require.NoError(t, model.DeleteSubscriptionSyncSource(source.Id, source.Version, source.CredentialRevision, 1))
+	require.Error(t, model.FinishSubscriptionSyncSource(*claimed, "deleted-worker", nil, "", false, 1), "deleted workers cannot resurrect credentials or catalogs")
+	require.NoError(t, model.DB.Model(&model.SubscriptionSyncEvent{}).Where("source_id = ? AND action = ?", source.Id, "delete").Count(&count).Error)
+	assert.EqualValues(t, 1, count)
+}
+
+func TestSubscriptionPoolSourceDeleteRequiresScopedSingleUseProof(t *testing.T) {
+	user, identity := setupSecurityEnrollmentTest(t)
+	require.NoError(t, model.DB.Model(user).Update("role", common.RoleRootUser).Error)
+	require.NoError(t, model.MigrateSubscriptionPools())
+	source, err := service.SaveSubscriptionSyncSource(model.SubscriptionSyncSourceInput{SubscriptionSyncSource: model.SubscriptionSyncSource{Name: "proof-delete", URL: "https://example.com/usage", Method: "GET", IntervalSeconds: 60, StaleSeconds: 300, TimeoutSeconds: 10}, Mapping: model.PanelSubscriptionSyncMapping()}, user.Id, true)
+	require.NoError(t, err)
+	raw, err := common.Marshal(service.SubscriptionSyncCredentialContext{SourceID: source.Id, Action: "delete", Version: source.Version, Revision: source.CredentialRevision})
+	require.NoError(t, err)
+	proof := issueSecurityEnrollmentProof(t, identity, service.VerificationOperation{Scope: service.VerificationScopeSubscriptionSyncCredentials, Context: raw}, "password")
+	handler := func(c *gin.Context) {
+		c.Set("role", common.RoleRootUser)
+		c.Params = gin.Params{{Key: "id", Value: fmt.Sprint(source.Id)}}
+		DeleteSubscriptionSyncSource(c)
+	}
+	body := fmt.Sprintf(`{"version":%d,"credential_revision":%d,"confirm":true}`, source.Version, source.CredentialRevision)
+	missing := securityEnrollmentRequest("DELETE", "/sync", body, "", identity, handler)
+	assert.Equal(t, 403, missing.Code)
+	wrong := securityEnrollmentRequest("DELETE", "/sync", strings.Replace(body, `"version":1`, `"version":2`, 1), proof, identity, handler)
+	assert.Equal(t, 403, wrong.Code)
+	success := securityEnrollmentRequest("DELETE", "/sync", body, proof, identity, handler)
+	assert.Equal(t, 200, success.Code)
+	assert.Contains(t, success.Body.String(), `"success":true`)
+	replay := securityEnrollmentRequest("DELETE", "/sync", body, proof, identity, handler)
+	assert.Equal(t, 403, replay.Code)
 }

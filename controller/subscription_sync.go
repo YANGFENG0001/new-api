@@ -52,20 +52,37 @@ func ListSubscriptionSyncSources(c *gin.Context) {
 				return
 			}
 		}
+		accounts = model.ReportedSubscriptionSyncAccounts(accounts)
 		total, fresh := 0, 0
+		view.StaleAccounts = []string{}
 		now := model.GetDBTimestamp()
 		for _, account := range accounts {
+			accountStale := false
 			for _, cycle := range account.Cycles {
-				if cycle.Error != "" || cycle.SampledAt <= 0 || cycle.Utilization == nil {
+				if cycle.Utilization == nil {
 					continue
 				}
 				total++
 				view.ObservedAt = max(view.ObservedAt, cycle.SampledAt)
-				if now-cycle.SampledAt <= view.EffectiveStaleSeconds && cycle.WindowEnd > now {
+				if view.OldestObservedAt == 0 || cycle.SampledAt < view.OldestObservedAt {
+					view.OldestObservedAt = cycle.SampledAt
+				}
+				if cycle.Error == "" && cycle.SampledAt > 0 && cycle.SampledAt <= now+60 && now-cycle.SampledAt <= view.EffectiveStaleSeconds && cycle.WindowEnd > now {
 					fresh++
+				} else {
+					accountStale = true
 				}
 			}
+			if accountStale {
+				name := account.Name
+				if name == "" {
+					name = account.ID
+				}
+				view.StaleAccounts = append(view.StaleAccounts, name)
+			}
 		}
+		view.FreshCycles = fresh
+		view.ReportedCycles = total
 		switch {
 		case total == 0:
 			view.ObservationStatus = "No upstream observation"
@@ -176,7 +193,7 @@ func GetSubscriptionSyncSourceState(c *gin.Context) {
 			}
 		}
 	}
-	common.ApiSuccess(c, gin.H{"accounts": accounts, "events": events})
+	common.ApiSuccess(c, gin.H{"accounts": model.ReportedSubscriptionSyncAccounts(accounts), "events": events})
 }
 
 func GetSubscriptionSyncBinding(c *gin.Context) {
@@ -320,4 +337,33 @@ func ManageSubscriptionSyncAuthentication(c *gin.Context) {
 		return
 	}
 	common.ApiSuccess(c, source)
+}
+
+func DeleteSubscriptionSyncSource(c *gin.Context) {
+	if !requireSubscriptionPoolPermission(c, "sync_credentials") {
+		return
+	}
+	id, _ := strconv.Atoi(c.Param("id"))
+	var input struct {
+		Version  int64 `json:"version"`
+		Revision int64 `json:"credential_revision"`
+		Confirm  bool  `json:"confirm"`
+	}
+	if id <= 0 || c.ShouldBindJSON(&input) != nil || !input.Confirm {
+		common.ApiErrorT(c, "Invalid parameters")
+		return
+	}
+	context, err := common.Marshal(service.SubscriptionSyncCredentialContext{SourceID: id, Action: "delete", Version: input.Version, Revision: input.Revision})
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if middleware.RequireSecurityProof(c, service.VerificationOperation{Scope: service.VerificationScopeSubscriptionSyncCredentials, Context: context}) == nil {
+		return
+	}
+	if err := model.DeleteSubscriptionSyncSource(id, input.Version, input.Revision, c.GetInt("id")); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, nil)
 }

@@ -57,7 +57,7 @@ export type VerificationOperation =
       scope: 'subscription.sync.credentials'
       context: {
         source_id: number
-        action: 'save' | 'check' | 'refresh' | 'replace'
+        action: 'save' | 'check' | 'refresh' | 'replace' | 'delete'
         version: number
         credential_revision: number
       }

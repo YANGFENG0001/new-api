@@ -41,7 +41,10 @@ func SaveSubscriptionPool(input SubscriptionPoolInput, actorID int) (*Subscripti
 			}
 			binding := *input.SyncBinding
 			binding.PoolID = saved.Id
-			return saveSubscriptionSyncBinding(tx, binding, actorID)
+			if err := saveSubscriptionSyncBinding(tx, binding, actorID); err != nil {
+				return err
+			}
+			return tx.First(saved, saved.Id).Error
 		})
 		return saved, err
 	}
@@ -524,5 +527,72 @@ func ResetSubscriptionCycle(subID, poolID, userID int, key string, actorID int) 
 			return err
 		}
 		return tx.Create(&SubscriptionPoolEvent{PoolID: poolID, SubscriptionID: subID, ActorID: actorID, Action: "reset", Detail: key, CreatedAt: GetDBTimestamp()}).Error
+	})
+}
+
+// Delete only unused resources. Immutable accounting/audit rows are deliberately
+// retained; there is no cascading deletion of consumption or refund provenance.
+func DeleteSubscriptionPool(id int, version, bindingVersion int64, actorID int) error {
+	hint, err := GetSubscriptionSyncBinding(id)
+	if err != nil {
+		return err
+	}
+	// Pin the binding inspected by the controller's permission check. A new
+	// binding must not be implicitly detached using only pool-manage permission.
+	if hint.Version != bindingVersion {
+		return errors.New("Synchronization binding changed; retry the request")
+	}
+	return DB.Transaction(func(tx *gorm.DB) error {
+		if hint.SourceID > 0 {
+			var source SubscriptionSyncSource
+			if err := lockForUpdate(tx).First(&source, hint.SourceID).Error; err != nil {
+				return err
+			}
+		}
+		var pool SubscriptionPool
+		if err := lockForUpdate(tx).First(&pool, id).Error; err != nil {
+			return err
+		}
+		if pool.Version != version {
+			return errors.New("Upstream pool changed; reload before saving")
+		}
+		var binding SubscriptionSyncBinding
+		if err := tx.Where("pool_id = ?", id).Find(&binding).Error; err != nil {
+			return err
+		}
+		if binding.Version != hint.Version || binding.SourceID != hint.SourceID {
+			return errors.New("Synchronization binding changed; retry the request")
+		}
+		var count int64
+		if err := tx.Model(&SubscriptionPlanAllocation{}).Where("pool_id = ? AND mode = ?", id, "fixed").Count(&count).Error; err != nil {
+			return err
+		}
+		if count > 0 {
+			return errors.New("Change the subscription plans linked to this pool before deleting it")
+		}
+		if err := tx.Table("subscription_allocations AS a").Joins("JOIN user_subscriptions AS s ON s.id = a.subscription_id").Where("a.pool_id = ? AND s.status = ? AND s.end_time > ?", id, "active", GetDBTimestamp()).Count(&count).Error; err != nil {
+			return err
+		}
+		if count > 0 {
+			return errors.New("Move or cancel active members before deleting this pool")
+		}
+		if err := tx.Model(&SubscriptionCycleReservation{}).Where("pool_id = ? AND status = ?", id, "reserved").Count(&count).Error; err != nil {
+			return err
+		}
+		if count > 0 {
+			return errors.New("Wait for in-flight requests to finish before deleting this pool")
+		}
+		if err := tx.Where("pool_id = ?", id).Delete(&SubscriptionPoolChannel{}).Error; err != nil {
+			return err
+		}
+		if binding.PoolID > 0 {
+			if err := tx.Model(&binding).Updates(map[string]any{"enabled": false, "source_id": 0, "account_id": "", "resource_key": nil, "version": binding.Version + 1}).Error; err != nil {
+				return err
+			}
+		}
+		if err := tx.Create(&SubscriptionPoolEvent{PoolID: id, ActorID: actorID, Action: "delete", CreatedAt: GetDBTimestamp()}).Error; err != nil {
+			return err
+		}
+		return tx.Delete(&pool).Error
 	})
 }

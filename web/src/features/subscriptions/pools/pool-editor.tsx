@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
@@ -41,7 +41,7 @@ import {
 import { CycleEditor } from './cycle-editor'
 import { PoolSyncImport } from './pool-sync-import'
 import { poolSchema, emptyPool, newCycle } from './schema'
-import { syncBindingSchema, type SyncBinding } from './sync-api'
+import { syncBindingSchema, syncCycleName, type SyncBinding } from './sync-api'
 import { PoolSyncBinding } from './sync-binding'
 
 export function PoolEditor(props: {
@@ -104,10 +104,18 @@ export function PoolEditor(props: {
     },
   })
   const values = form.watch()
+  const observedVersion = useRef(props.pool?.version)
+  const isDirty = form.formState.isDirty
+  useEffect(() => {
+    if (!props.pool || observedVersion.current === props.pool.version) return
+    observedVersion.current = props.pool.version
+    // Never overwrite unsaved edits with background observations.
+    if (!isDirty) form.reset(props.pool)
+  }, [props.pool, form, isDirty])
   const issue = Object.keys(form.formState.errors).length > 0
   return (
     <form
-      className='space-y-5 pb-6'
+      className='mx-auto w-full max-w-6xl space-y-5 pb-6'
       onSubmit={form.handleSubmit((data) => save.mutate(data))}
     >
       {!props.embedded && (
@@ -202,7 +210,7 @@ export function PoolEditor(props: {
                 form.setValue(
                   'end_time',
                   d ? Math.floor(d.getTime() / 1000) : 253402300799,
-                  { shouldValidate: true }
+                  { shouldValidate: true, shouldDirty: true }
                 )
               }}
             />
@@ -215,7 +223,9 @@ export function PoolEditor(props: {
         <Label>
           <Switch
             checked={values.enabled}
-            onCheckedChange={(v) => form.setValue('enabled', v)}
+            onCheckedChange={(v) =>
+              form.setValue('enabled', v, { shouldDirty: true })
+            }
           />
           {t('Enabled')}
         </Label>
@@ -229,7 +239,9 @@ export function PoolEditor(props: {
             }))}
             selected={values.channels.map(String)}
             allowCreate={false}
-            onChange={(v) => form.setValue('channels', v.map(Number))}
+            onChange={(v) =>
+              form.setValue('channels', v.map(Number), { shouldDirty: true })
+            }
           />
           <p className='text-muted-foreground mt-2 text-xs'>
             {t(
@@ -248,6 +260,7 @@ export function PoolEditor(props: {
               const pool = latest.find((item) => item.id === props.pool?.id)
               if (!pool) return
               form.setValue('version', pool.version)
+              form.setValue('end_time', pool.end_time)
               form.setValue(
                 'cycles',
                 form.getValues('cycles').map((cycle) => {
@@ -259,6 +272,7 @@ export function PoolEditor(props: {
                         ...cycle,
                         next_reset: saved.next_reset,
                         seconds: saved.seconds,
+                        name: syncCycleName(cycle.name, saved.seconds),
                       }
                     : cycle
                 })
@@ -273,7 +287,7 @@ export function PoolEditor(props: {
                     values.cycles.flatMap((cycle) =>
                       cycle.key === key ? next : [cycle]
                     ),
-                    { shouldValidate: true }
+                    { shouldValidate: true, shouldDirty: true }
                   )
                 }
                 pooled
@@ -287,7 +301,10 @@ export function PoolEditor(props: {
           <CycleEditor
             value={values.cycles}
             onChange={(v) =>
-              form.setValue('cycles', v, { shouldValidate: true })
+              form.setValue('cycles', v, {
+                shouldValidate: true,
+                shouldDirty: true,
+              })
             }
             pooled
             lockedKeys={props.pool?.cycles.map((c) => c.key)}
@@ -299,7 +316,11 @@ export function PoolEditor(props: {
             variant='outline'
             disabled={values.cycles.length >= 32}
             onClick={() =>
-              form.setValue('cycles', [...values.cycles, newCycle(t('Cycle'))])
+              form.setValue(
+                'cycles',
+                [...values.cycles, newCycle(t('Cycle'))],
+                { shouldDirty: true }
+              )
             }
           >
             {t('Add cycle')}

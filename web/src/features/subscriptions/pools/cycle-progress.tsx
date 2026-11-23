@@ -24,7 +24,7 @@ import { toIntlLocale } from '@/i18n/languages'
 import { formatNumber } from '@/lib/format'
 
 import type { CycleView } from './api'
-import type { SyncObservation } from './sync-api'
+import { syncCycleName, type SyncObservation } from './sync-api'
 import { SyncObservations } from './sync-observations'
 
 export function CycleProgress(props: {
@@ -49,7 +49,7 @@ export function CycleProgress(props: {
               <strong className='break-all'>
                 {c.name === 'Subscription quota'
                   ? t('Subscription quota')
-                  : c.name}
+                  : syncCycleName(c.name, c.seconds)}
               </strong>
               <Badge variant='secondary'>
                 {c.shared ? t('Shared') : t('Independent')}

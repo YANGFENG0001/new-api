@@ -16,10 +16,11 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { ConfirmDialog } from '@/components/confirm-dialog'
 import { StaticDataTable } from '@/components/data-table'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -27,14 +28,28 @@ import { Input } from '@/components/ui/input'
 import { poolAPI, type Pool, type Capabilities } from './api'
 import { PoolDetail } from './pool-detail'
 import { PoolEditor } from './pool-editor'
+import { syncCycleName } from './sync-api'
 import { PoolSyncBinding } from './sync-binding'
 import { SyncTimestamp } from './sync-usage'
 
 export function PoolPanel(props: { caps: Capabilities }) {
   const { t } = useTranslation()
+  const client = useQueryClient()
+  const [deleting, setDeleting] = useState<Pool | null>(null)
+  const remove = useMutation({
+    mutationFn: poolAPI.remove,
+    onSuccess: async () => {
+      setDeleting(null)
+      await Promise.all([
+        client.invalidateQueries({ queryKey: ['subscription-pools'] }),
+        client.invalidateQueries({ queryKey: ['subscription-sync'] }),
+      ])
+    },
+  })
   const query = useQuery({
     queryKey: ['subscription-pools', 'list'],
     queryFn: poolAPI.list,
+    refetchInterval: 30000,
   })
   const [selected, setSelected] = useState<Pool | 'new' | null>(null)
   const [tab, setTab] = useState('overview')
@@ -151,15 +166,15 @@ export function PoolPanel(props: { caps: Capabilities }) {
                 p.cycles
                   .map(
                     (c) =>
-                      `${c.name} · ${c.shared ? t('Shared') : t('Independent')}`
+                      `${syncCycleName(c.name, c.seconds)} · ${c.shared ? t('Shared') : t('Independent')}`
                   )
                   .join(' / '),
             },
             {
               id: 'sync',
-              header: t('Automatic synchronization'),
-              cell: (p) =>
-                props.caps.sync_read ? (
+              header: t('Actions'),
+              cell: (p) => (
+                <div className='flex flex-wrap gap-2'>
                   <Button
                     variant='outline'
                     onClick={() => {
@@ -167,11 +182,22 @@ export function PoolPanel(props: { caps: Capabilities }) {
                       setTab('settings')
                     }}
                   >
-                    {t('Automatic synchronization')}
+                    {props.caps.manage ? t('Edit') : t('View')}
                   </Button>
-                ) : (
-                  '—'
-                ),
+                  {props.caps.manage && (
+                    <Button
+                      variant='destructive'
+                      aria-label={`${t('Delete')} ${p.name}`}
+                      onClick={() => {
+                        remove.reset()
+                        setDeleting(p)
+                      }}
+                    >
+                      {t('Delete')}
+                    </Button>
+                  )}
+                </div>
+              ),
             },
             {
               id: 'end',
@@ -191,6 +217,28 @@ export function PoolPanel(props: { caps: Capabilities }) {
           ]}
         />
       </div>
+      <ConfirmDialog
+        open={!!deleting}
+        onOpenChange={(open) => {
+          if (!open) setDeleting(null)
+        }}
+        title={`${t('Delete')} ${deleting?.name ?? ''}`}
+        destructive
+        desc={t(
+          'Only pools without active members, linked plans or in-flight requests can be deleted. Usage and audit history are retained.'
+        )}
+        confirmText={t('Delete')}
+        isLoading={remove.isPending}
+        handleConfirm={() => {
+          if (deleting) remove.mutate(deleting)
+        }}
+      >
+        {remove.isError && (
+          <p role='alert' className='text-destructive'>
+            {t(remove.error.message)}
+          </p>
+        )}
+      </ConfirmDialog>
     </div>
   )
 }

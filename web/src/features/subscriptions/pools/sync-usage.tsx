@@ -33,7 +33,13 @@ import { Progress } from '@/components/ui/progress'
 import { toIntlLocale } from '@/i18n/languages'
 import { formatNumber, formatTimestampRelative } from '@/lib/format'
 
-import { syncStaleSeconds, type SyncAccount, type SyncSource } from './sync-api'
+import {
+  syncStaleSeconds,
+  reportedSyncAccounts,
+  syncCycleName,
+  type SyncAccount,
+  type SyncSource,
+} from './sync-api'
 
 export function SyncSourceStatus(props: { source: SyncSource }) {
   const { t } = useTranslation()
@@ -70,11 +76,27 @@ export function SyncSourceStatus(props: { source: SyncSource }) {
             props.source.observation_status ===
             'Upstream observations are current'
               ? 'Snapshot within freshness window'
-              : undefined
+              : props.source.observation_status
           }
           message={props.source.observation_status}
         />
       </div>
+      {props.source.reported_cycles != null &&
+        props.source.reported_cycles > 0 && (
+          <p className='text-muted-foreground text-xs'>
+            {t('{{fresh}} / {{total}} current windows', {
+              fresh: props.source.fresh_cycles ?? 0,
+              total: props.source.reported_cycles,
+            })}
+          </p>
+        )}
+      {!!props.source.stale_accounts?.length && (
+        <p className='text-warning text-xs'>
+          {t('Cached upstream data is old for: {{accounts}}', {
+            accounts: props.source.stale_accounts.join(', '),
+          })}
+        </p>
+      )}
       <p className='text-muted-foreground text-xs'>
         {t(
           'Poll every {{interval}}s; observations expire after {{threshold}}s.',
@@ -205,6 +227,7 @@ export function SyncUsageCard(props: {
   const stale = props.stale || resetPassed
   let issue = props.issue
   if (!issue && stale) issue = 'Upstream observation is stale'
+  if (!reported) return null
   return (
     <section
       aria-label={props.name}
@@ -296,7 +319,8 @@ export function SyncAccounts(props: {
 }) {
   const { t } = useTranslation()
   const now = Math.floor(Date.now() / 1000)
-  if (!props.accounts.length) {
+  const accounts = reportedSyncAccounts(props.accounts)
+  if (!accounts.length) {
     return (
       <EmptyState
         className='min-h-40'
@@ -310,7 +334,7 @@ export function SyncAccounts(props: {
   }
   return (
     <div className='space-y-4'>
-      {props.accounts.map((account) => (
+      {accounts.map((account) => (
         <section
           key={account.id}
           aria-label={account.name || account.id}
@@ -344,7 +368,7 @@ export function SyncAccounts(props: {
             {account.cycles.map((cycle) => (
               <SyncUsageCard
                 key={cycle.key}
-                name={cycle.name || cycle.key}
+                name={syncCycleName(cycle.name || cycle.key, cycle.seconds)}
                 utilization={cycle.utilization}
                 windowEnd={cycle.window_end}
                 sampledAt={cycle.sampled_at}

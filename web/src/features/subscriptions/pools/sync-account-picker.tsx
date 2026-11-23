@@ -21,7 +21,11 @@ import { useTranslation } from 'react-i18next'
 import { Combobox } from '@/components/ui/combobox'
 import { Label } from '@/components/ui/label'
 
-import type { SyncAccount, SyncSource } from './sync-api'
+import {
+  reportedSyncAccounts,
+  type SyncAccount,
+  type SyncSource,
+} from './sync-api'
 
 // Shared metadata-only selector; selecting an account never contacts upstream.
 export function SyncAccountPicker(props: {
@@ -59,7 +63,7 @@ export function SyncAccountPicker(props: {
           id={`${props.id}-account`}
           disabled={props.accountDisabled || !props.sourceId}
           value={props.accountId}
-          options={props.accounts.map((account) => ({
+          options={reportedSyncAccounts(props.accounts).map((account) => ({
             value: account.id,
             label: `${account.name || account.id} · ${account.id}`,
           }))}

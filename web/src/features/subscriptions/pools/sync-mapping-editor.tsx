@@ -25,7 +25,7 @@ import { Combobox } from '@/components/ui/combobox'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 
-import type { SyncCycleMapping } from './sync-api'
+import { syncCycleName, type SyncCycleMapping } from './sync-api'
 import type { SyncSourceForm } from './sync-source-schema'
 
 export function SyncMappingEditor(props: {
@@ -49,7 +49,13 @@ export function SyncMappingEditor(props: {
   function update(index: number, patch: Partial<SyncCycleMapping>) {
     props.form.setValue(
       `mapping.cycles.${index}`,
-      { ...value.cycles[index], ...patch },
+      {
+        ...value.cycles[index],
+        ...patch,
+        name: patch.seconds
+          ? syncCycleName(value.cycles[index].name, patch.seconds)
+          : (patch.name ?? value.cycles[index].name),
+      },
       { shouldDirty: true }
     )
   }

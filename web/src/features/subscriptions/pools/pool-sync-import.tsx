@@ -28,7 +28,7 @@ import { Button } from '@/components/ui/button'
 
 import type { CycleRule, PoolSyncCreation } from './api'
 import { SyncAccountPicker } from './sync-account-picker'
-import { syncAPI } from './sync-api'
+import { syncAPI, syncCycleName } from './sync-api'
 import { SyncSourceStatus } from './sync-usage'
 
 export type PoolSyncDraft = {
@@ -130,7 +130,7 @@ export function PoolSyncImport(props: {
               )
               .map((c) => ({
                 key: c.key,
-                name: c.name || c.key,
+                name: syncCycleName(c.name || c.key, c.seconds),
                 seconds: c.seconds,
                 next_reset: c.window_end,
                 limit: 0,

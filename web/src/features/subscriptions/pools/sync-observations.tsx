@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import type { SyncObservation } from './sync-api'
+import { syncCycleName, type SyncObservation } from './sync-api'
 import { SyncUsageCard } from './sync-usage'
 
 export function SyncObservations(props: { observations: SyncObservation[] }) {
@@ -25,7 +25,7 @@ export function SyncObservations(props: { observations: SyncObservation[] }) {
       {props.observations.map((o) => (
         <SyncUsageCard
           key={o.key}
-          name={o.name}
+          name={syncCycleName(o.name || o.key, o.seconds)}
           utilization={o.utilization}
           windowEnd={o.window_end}
           sampledAt={o.sampled_at}

@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen, within } from '@testing-library/react'
+import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import i18next from 'i18next'
 import { afterEach, expect, test, vi } from 'vitest'
@@ -111,30 +111,17 @@ test('account quotas show separate progress bars and reset times while preservin
     'aria-valuenow',
     '26'
   )
-  expect(screen.getAllByText('Next reset time')).toHaveLength(3)
+  expect(screen.getAllByText('Next reset time')).toHaveLength(2)
   expect(screen.getByText('26%')).toBeVisible()
   expect(screen.getAllByText('0%')).toHaveLength(1)
 })
 
-test('missing upstream fields show a compact status and reveal the translated reason on demand rather than implying zero usage', async () => {
+test('unreported optional cycles are hidden rather than displayed as empty subscriptions', async () => {
   await openAccounts()
-  const cycle = await screen.findByRole('region', { name: 'Sonnet' })
+  expect(await screen.findByRole('progressbar', { name: '5h' })).toBeVisible()
   expect(
-    within(cycle)
-      .getAllByText('Not reported')
-      .every((element) => element.textContent === 'Not reported')
-  ).toBe(true)
-  expect(within(cycle).queryByText('0%')).not.toBeInTheDocument()
-  expect(within(cycle).queryByRole('progressbar')).not.toBeInTheDocument()
-  expect(
-    within(cycle).queryByText('Upstream cycle data is missing or inconsistent')
+    screen.queryByRole('region', { name: 'Sonnet' })
   ).not.toBeInTheDocument()
-  await userEvent.click(
-    within(cycle).getByRole('button', { name: 'View status details' })
-  )
-  expect(
-    await screen.findByRole('dialog', { name: 'Status' })
-  ).toHaveTextContent('Upstream cycle data is missing or inconsistent')
 })
 
 test('an observation without timestamps never renders the Unix epoch or an invented reset countdown', () => {
@@ -155,7 +142,7 @@ test('an observation without timestamps never renders the Unix epoch or an inven
     />
   )
   expect(screen.queryByText(/1970/)).not.toBeInTheDocument()
-  expect(screen.getByText('Reset time unavailable')).toBeVisible()
+  expect(screen.queryByText('Reset time unavailable')).not.toBeInTheDocument()
   expect(screen.queryByRole('progressbar')).not.toBeInTheDocument()
 })
 
@@ -224,7 +211,7 @@ test('a recent successful poll and an old upstream snapshot have distinct status
     />
   )
   expect(screen.getByText('Synchronization is on schedule')).toBeVisible()
-  expect(screen.getByText('Stale data')).toBeVisible()
+  expect(screen.getByText('Upstream observation is stale')).toBeVisible()
   expect(
     screen.getByText('Poll every 60s; observations expire after 300s.')
   ).toBeVisible()

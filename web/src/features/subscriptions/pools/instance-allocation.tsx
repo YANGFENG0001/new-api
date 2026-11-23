@@ -167,6 +167,15 @@ export function InstanceAllocations(props: {
   return (
     <section className='space-y-3 rounded-lg border p-4'>
       <h3 className='font-semibold'>{t('Actual pool allocation')}</h3>
+      {(allocations.data?.subscriptions ?? []).some(
+        (u) => !u.managed && u.status === 'active'
+      ) && (
+        <p role='status' className='text-warning text-sm'>
+          {t(
+            'Active legacy subscriptions are not linked to a pool. Select the instances below to migrate them; changing plan defaults does not migrate existing subscriptions.'
+          )}
+        </p>
+      )}
       {(allocations.data?.subscriptions ?? [])
         .filter((u) => u.managed)
         .map((u) => (

@@ -369,11 +369,14 @@ func ParseSubscriptionSyncResponse(raw []byte, m model.SubscriptionSyncMapping, 
 			source = ""
 		}
 		for _, c := range m.Cycles {
+			if syncPath(item, c.UtilizationPath) == nil {
+				continue
+			}
 			timestampPath := m.SampledAtPath
 			if c.SampledAtPath != "" {
 				timestampPath = c.SampledAtPath
 			}
-			cycle := model.SubscriptionSyncCycle{Key: c.Key, Name: c.Name, Seconds: c.Seconds, WindowEnd: syncTimestamp(syncPath(item, c.ResetPath), m.TimeFormat), SampledAt: syncTimestamp(syncPath(item, timestampPath), m.TimeFormat), Source: source}
+			cycle := model.SubscriptionSyncCycle{Key: c.Key, Name: model.SubscriptionCycleName(c.Name, c.Seconds), Seconds: c.Seconds, WindowEnd: syncTimestamp(syncPath(item, c.ResetPath), m.TimeFormat), SampledAt: syncTimestamp(syncPath(item, timestampPath), m.TimeFormat), Source: source}
 			value, valid := syncPath(item, c.UtilizationPath).(float64)
 			if c.Scale == "percent" {
 				value /= 100
@@ -389,7 +392,7 @@ func ParseSubscriptionSyncResponse(raw []byte, m model.SubscriptionSyncMapping, 
 		}
 		accounts = append(accounts, account)
 	}
-	return accounts, nil
+	return model.ReportedSubscriptionSyncAccounts(accounts), nil
 }
 
 type subscriptionSyncRateLimitError struct{ RetryAfter int64 }

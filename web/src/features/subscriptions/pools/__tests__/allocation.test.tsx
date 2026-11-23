@@ -50,6 +50,9 @@ const pool = {
   enabled: true,
   version: 3,
   channels: [],
+  external_source: '',
+  external_id: '',
+  updated_at: Math.floor(Date.now() / 1000),
   note: '',
   end_time: Math.floor(Date.now() / 1000) + 86400,
   cycles: [newCycle('Custom')],
@@ -314,9 +317,7 @@ test('a saved pool synchronization shortcut opens unified settings with exactly 
       }
     />
   )
-  await userEvent.click(
-    await screen.findByRole('button', { name: 'Automatic synchronization' })
-  )
+  await userEvent.click(await screen.findByRole('button', { name: 'Edit' }))
   expect(screen.getByRole('tab', { name: 'Settings' })).toHaveAttribute(
     'aria-selected',
     'true'
@@ -543,8 +544,8 @@ test('creating from upstream fills reset windows and keeps imported policy edita
                 {
                   key: 'short',
                   name: '5h',
-                  seconds: 18000,
-                  window_start: now - 100,
+                  seconds: 25200,
+                  window_start: now - 7300,
                   window_end: now + 17900,
                   utilization: 0.4,
                   sampled_at: now,
@@ -615,7 +616,7 @@ test('creating from upstream fills reset windows and keeps imported policy edita
   await userEvent.click(
     await screen.findByRole('option', { name: 'vm-01 · account-1' })
   )
-  const cycle = screen.getByRole('region', { name: '5h' })
+  const cycle = screen.getByRole('region', { name: '7h' })
   expect(within(cycle).getByRole('switch', { name: 'Unlimited' })).toBeChecked()
   expect(
     screen.queryByRole('region', { name: 'Sonnet' })
@@ -643,10 +644,100 @@ test('creating from upstream fills reset windows and keeps imported policy edita
         key: 'short',
         name: 'Custom cycle',
         next_reset: now + 17900,
-        seconds: 18000,
+        seconds: 25200,
         unlimited: true,
       },
     ],
   })
   expect(request.mock.calls.some(([c]) => c.url?.endsWith('/run'))).toBe(false)
 })
+
+test('pool deletion requires confirmation and preserves the list when the server refuses active members', async () => {
+  const request = vi
+    .spyOn(api, 'request')
+    .mockImplementation(async (config) => {
+      if (config.method === 'delete') {
+        return {
+          data: {
+            success: false,
+            message: 'Move or cancel active members before deleting this pool',
+          },
+        }
+      }
+      return envelope([pool])
+    })
+  mount(<PoolPanel caps={caps as Parameters<typeof PoolPanel>[0]['caps']} />)
+  await userEvent.click(
+    await screen.findByRole('button', { name: 'Delete Pool A' })
+  )
+  expect(request.mock.calls.some(([c]) => c.method === 'delete')).toBe(false)
+  const dialog = await screen.findByRole('alertdialog')
+  await userEvent.click(within(dialog).getByRole('button', { name: 'Delete' }))
+  expect(await within(dialog).findByRole('alert')).toHaveTextContent(
+    'Move or cancel active members before deleting this pool'
+  )
+  await userEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+  expect(await screen.findByRole('button', { name: 'Pool A' })).toBeVisible()
+  expect(
+    request.mock.calls.find(([c]) => c.method === 'delete')?.[0]
+  ).toMatchObject({
+    url: '/api/subscription/admin/pools/7',
+    data: { version: 3, confirm: true },
+  })
+})
+
+test('pool deletion is not offered without management permission', async () => {
+  vi.spyOn(api, 'request').mockResolvedValue(envelope([pool]))
+  mount(
+    <PoolPanel
+      caps={
+        { ...caps, manage: false } as Parameters<typeof PoolPanel>[0]['caps']
+      }
+    />
+  )
+  await screen.findByRole('button', { name: 'Pool A' })
+  expect(
+    screen.queryByRole('button', { name: 'Delete Pool A' })
+  ).not.toBeInTheDocument()
+})
+
+test.each([false, true])(
+  'background synchronization refreshes only clean pool forms (edited=%s)',
+  async (edited) => {
+    vi.spyOn(api, 'request').mockResolvedValue(envelope([]))
+    const view = mount(
+      <PoolEditor pool={pool} canManage onClose={() => undefined} />
+    )
+    await screen.findByDisplayValue('Pool A')
+    if (edited) {
+      await userEvent.click(
+        screen.getAllByRole('switch', { name: 'Enabled' })[0]
+      )
+    }
+    const client = clients.at(-1)
+    if (!client) {
+      throw new Error('Missing test query client')
+    }
+    view.rerender(
+      <QueryClientProvider client={client}>
+        <PoolEditor
+          pool={{ ...pool, version: 4, name: 'Updated upstream pool' }}
+          canManage
+          onClose={() => undefined}
+        />
+      </QueryClientProvider>
+    )
+    if (edited) {
+      expect(
+        screen.getAllByRole('switch', { name: 'Enabled' })[0]
+      ).not.toBeChecked()
+      expect(screen.getAllByRole('textbox', { name: 'Name' })[0]).toHaveValue(
+        'Pool A'
+      )
+    } else {
+      expect(screen.getAllByRole('textbox', { name: 'Name' })[0]).toHaveValue(
+        'Updated upstream pool'
+      )
+    }
+  }
+)

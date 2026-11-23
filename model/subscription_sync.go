@@ -4,7 +4,9 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"math"
+	"regexp"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
@@ -27,33 +29,37 @@ type SubscriptionSyncSource struct {
 	AuthLeaseToken     string `json:"-" gorm:"type:varchar(64)"`
 	RefreshBlocked     bool   `json:"refresh_blocked"`
 
-	ObservationStatus     string `json:"observation_status" gorm:"-"`
-	ObservedAt            int64  `json:"observed_at" gorm:"-"`
-	EffectiveStaleSeconds int64  `json:"effective_stale_seconds" gorm:"-"`
-	FetchStatus           string `json:"fetch_status" gorm:"-"`
-	Id                    int    `json:"id"`
-	Name                  string `json:"name" gorm:"type:varchar(128)"`
-	URL                   string `json:"url" gorm:"type:text"`
-	Method                string `json:"method" gorm:"type:varchar(8)"`
-	Enabled               bool   `json:"enabled"`
-	IntervalSeconds       int64  `json:"interval_seconds"`
-	StaleSeconds          int64  `json:"stale_seconds"`
-	TimeoutSeconds        int64  `json:"timeout_seconds"`
-	AllowHTTP             bool   `json:"allow_http"`
-	PrivateIPs            string `json:"private_ips" gorm:"type:text"`
-	Version               int64  `json:"version"`
-	MappingJSON           string `json:"-" gorm:"type:text"`
-	SecretPayload         string `json:"-" gorm:"type:text"`
-	CatalogJSON           string `json:"-" gorm:"type:text"`
-	HasCredentials        bool   `json:"has_credentials" gorm:"-"`
-	LastAttempt           int64  `json:"last_attempt"`
-	LastFetch             int64  `json:"last_fetch"`
-	LastApplied           int64  `json:"last_applied"`
-	LastError             string `json:"last_error" gorm:"type:varchar(128)"`
-	Failures              int    `json:"failures"`
-	NextRun               int64  `json:"next_run" gorm:"index"`
-	LeaseUntil            int64  `json:"-"`
-	LeaseToken            string `json:"-" gorm:"type:varchar(64)"`
+	FreshCycles           int      `json:"fresh_cycles" gorm:"-"`
+	ReportedCycles        int      `json:"reported_cycles" gorm:"-"`
+	OldestObservedAt      int64    `json:"oldest_observed_at" gorm:"-"`
+	StaleAccounts         []string `json:"stale_accounts" gorm:"-"`
+	ObservationStatus     string   `json:"observation_status" gorm:"-"`
+	ObservedAt            int64    `json:"observed_at" gorm:"-"`
+	EffectiveStaleSeconds int64    `json:"effective_stale_seconds" gorm:"-"`
+	FetchStatus           string   `json:"fetch_status" gorm:"-"`
+	Id                    int      `json:"id"`
+	Name                  string   `json:"name" gorm:"type:varchar(128)"`
+	URL                   string   `json:"url" gorm:"type:text"`
+	Method                string   `json:"method" gorm:"type:varchar(8)"`
+	Enabled               bool     `json:"enabled"`
+	IntervalSeconds       int64    `json:"interval_seconds"`
+	StaleSeconds          int64    `json:"stale_seconds"`
+	TimeoutSeconds        int64    `json:"timeout_seconds"`
+	AllowHTTP             bool     `json:"allow_http"`
+	PrivateIPs            string   `json:"private_ips" gorm:"type:text"`
+	Version               int64    `json:"version"`
+	MappingJSON           string   `json:"-" gorm:"type:text"`
+	SecretPayload         string   `json:"-" gorm:"type:text"`
+	CatalogJSON           string   `json:"-" gorm:"type:text"`
+	HasCredentials        bool     `json:"has_credentials" gorm:"-"`
+	LastAttempt           int64    `json:"last_attempt"`
+	LastFetch             int64    `json:"last_fetch"`
+	LastApplied           int64    `json:"last_applied"`
+	LastError             string   `json:"last_error" gorm:"type:varchar(128)"`
+	Failures              int      `json:"failures"`
+	NextRun               int64    `json:"next_run" gorm:"index"`
+	LeaseUntil            int64    `json:"-"`
+	LeaseToken            string   `json:"-" gorm:"type:varchar(64)"`
 }
 
 type SubscriptionSyncRequest struct {
@@ -108,6 +114,45 @@ func PanelSubscriptionSyncMapping() SubscriptionSyncMapping {
 		{Key: "oi", Name: "OI", Seconds: 604800, UtilizationPath: "utilization_7d_oi", Scale: "ratio", ResetPath: "reset_7d_oi"},
 		{Key: "fable", Name: "Fable", Seconds: 604800, UtilizationPath: "fable.utilization", Scale: "ratio", ResetPath: "fable.reset", SampledAtPath: "fable.probed_at"},
 	}}
+}
+
+// Protocol keys (e.g. utilization_5h) are stable identifiers, not durations.
+var subscriptionDurationName = regexp.MustCompile(`^[0-9]+(?:\.[0-9]+)?[smhd]$`)
+
+func SubscriptionCycleName(name string, seconds int64) string {
+	if !subscriptionDurationName.MatchString(name) || seconds <= 0 {
+		return name
+	}
+	for _, unit := range []struct {
+		seconds int64
+		suffix  string
+	}{{86400, "d"}, {3600, "h"}, {60, "m"}, {1, "s"}} {
+		if seconds%unit.seconds == 0 {
+			return fmt.Sprintf("%d%s", seconds/unit.seconds, unit.suffix)
+		}
+	}
+	return name
+}
+
+// Filter old cached catalogs too; a reported zero is a real observation.
+func ReportedSubscriptionSyncAccounts(accounts []SubscriptionSyncAccount) []SubscriptionSyncAccount {
+	result := make([]SubscriptionSyncAccount, 0, len(accounts))
+	for _, account := range accounts {
+		cycles := make([]SubscriptionSyncCycle, 0, len(account.Cycles))
+		for _, cycle := range account.Cycles {
+			if cycle.Utilization == nil {
+				continue
+			}
+			cycle.Name = SubscriptionCycleName(cycle.Name, cycle.Seconds)
+			cycles = append(cycles, cycle)
+		}
+		if len(cycles) == 0 {
+			continue
+		}
+		account.Cycles = cycles
+		result = append(result, account)
+	}
+	return result
 }
 
 type SubscriptionSyncCycle struct {
@@ -255,7 +300,7 @@ func saveSubscriptionSyncBinding(db *gorm.DB, input SubscriptionSyncBindingInput
 					break
 				}
 			}
-			if c.QuotaPerFullWindow < 0 || c.QuotaPerFullWindow > common.MaxWalletQuota || seen[c.LocalKey] || local == nil || remote == nil || c.Threshold <= 0 || c.Threshold > 1 || math.IsNaN(c.Threshold) || math.IsInf(c.Threshold, 0) || c.MaxShiftSeconds < 0 || c.MaxShiftSeconds > remote.Seconds || (c.AlignReset && local.Seconds != remote.Seconds) {
+			if c.QuotaPerFullWindow < 0 || c.QuotaPerFullWindow > common.MaxWalletQuota || seen[c.LocalKey] || local == nil || remote == nil || c.Threshold <= 0 || c.Threshold > 1 || math.IsNaN(c.Threshold) || math.IsInf(c.Threshold, 0) || c.MaxShiftSeconds < 0 || c.MaxShiftSeconds > remote.Seconds {
 				return errors.New("Invalid synchronization cycle mapping")
 			}
 			seen[c.LocalKey] = true
@@ -265,7 +310,7 @@ func saveSubscriptionSyncBinding(db *gorm.DB, input SubscriptionSyncBindingInput
 			return err
 		}
 		if prior.PoolID != 0 && prior.SourceID == input.SourceID && prior.AccountID == input.AccountID && prior.Enabled == input.Enabled && prior.SyncExpiry == input.SyncExpiry && prior.StalePolicy == input.StalePolicy && prior.GraceSeconds == input.GraceSeconds && prior.CyclesJSON == raw {
-			return nil // Saving unrelated pool settings must not invalidate observations.
+			return nil // Unrelated saves do not invalidate or reapply observations.
 		}
 		b := input.SubscriptionSyncBinding
 		b.LastError = ""
@@ -284,7 +329,10 @@ func saveSubscriptionSyncBinding(db *gorm.DB, input SubscriptionSyncBindingInput
 		if saved.Error != nil {
 			return errors.New("Upstream resource is already bound or unavailable")
 		}
-		return tx.Create(&SubscriptionSyncEvent{SourceID: source.Id, PoolID: pool.Id, ActorID: actorID, Action: "binding_save", CreatedAt: GetDBTimestamp()}).Error
+		if err := tx.Create(&SubscriptionSyncEvent{SourceID: source.Id, PoolID: pool.Id, ActorID: actorID, Action: "binding_save", CreatedAt: GetDBTimestamp()}).Error; err != nil {
+			return err
+		}
+		return applySubscriptionSyncCatalogTx(tx, source, b, actorID)
 	})
 }
 
@@ -510,6 +558,36 @@ func ApplySubscriptionSyncAccount(source SubscriptionSyncSource, token string, h
 		if currentSource.Version != source.Version || (!preview && (currentSource.LeaseToken != token || currentSource.LeaseUntil < GetDBTimestamp())) {
 			return errors.New("Synchronization configuration changed; retry the request")
 		}
+		var err error
+		changes, err = applySubscriptionSyncAccountTx(tx, currentSource, hint, account, actorID, preview, false)
+		return err
+	})
+	return changes, err
+}
+
+// Called under the same source-then-pool lock order as scheduled synchronization.
+// Selecting a binding is explicit consent to adopt its current observed times.
+func applySubscriptionSyncCatalogTx(tx *gorm.DB, source SubscriptionSyncSource, binding SubscriptionSyncBinding, actorID int) error {
+	if !binding.Enabled || source.CatalogJSON == "" {
+		return nil
+	}
+	var accounts []SubscriptionSyncAccount
+	if err := common.UnmarshalJsonStr(source.CatalogJSON, &accounts); err != nil {
+		return err
+	}
+	for _, account := range accounts {
+		if account.ID != binding.AccountID {
+			continue
+		}
+		_, err := applySubscriptionSyncAccountTx(tx, source, SubscriptionSyncBindingInput{SubscriptionSyncBinding: binding}, account, actorID, false, true)
+		return err
+	}
+	return nil
+}
+
+func applySubscriptionSyncAccountTx(tx *gorm.DB, source SubscriptionSyncSource, hint SubscriptionSyncBindingInput, account SubscriptionSyncAccount, actorID int, preview, adopt bool) ([]SubscriptionSyncChange, error) {
+	changes := []SubscriptionSyncChange{}
+	err := func() error {
 		var pool SubscriptionPool
 		if err := lockForUpdate(tx).First(&pool, hint.PoolID).Error; err != nil {
 			return err
@@ -605,9 +683,9 @@ func ApplySubscriptionSyncAccount(source SubscriptionSyncSource, token string, h
 						if difference < 0 {
 							difference = -difference
 						}
-						if cycle.Seconds != rules[i].Seconds || difference > m.MaxShiftSeconds {
+						if !adopt && (cycle.Seconds != rules[i].Seconds || difference > m.MaxShiftSeconds) {
 							pending = "Upstream reset shift requires confirmation"
-						} else if !preview && end != cycle.WindowEnd {
+						} else if !preview && (end != cycle.WindowEnd || rules[i].Seconds != cycle.Seconds) {
 							active, err := subscriptionCycleStateTx(tx, state.Owner, rules[i], now)
 							if err != nil {
 								return err
@@ -616,13 +694,15 @@ func ApplySubscriptionSyncAccount(source SubscriptionSyncSource, token string, h
 							if err := common.UnmarshalJsonStr(active.Rule, &effective); err != nil {
 								return err
 							}
-							if effective.Seconds != cycle.Seconds {
+							if !adopt && effective.Seconds != cycle.Seconds {
 								pending = "Upstream reset shift requires confirmation"
 								break
 							}
 							active.StartTime = cycle.WindowStart
 							active.EndTime = cycle.WindowEnd
 							effective.NextReset = cycle.WindowEnd
+							effective.Seconds = cycle.Seconds
+							effective.Name = SubscriptionCycleName(effective.Name, cycle.Seconds)
 							active.Rule, err = cycleJSON(effective)
 							if err != nil {
 								return err
@@ -633,6 +713,8 @@ func ApplySubscriptionSyncAccount(source SubscriptionSyncSource, token string, h
 									return err
 								}
 								next.NextReset = cycle.WindowEnd
+								next.Seconds = cycle.Seconds
+								next.Name = SubscriptionCycleName(next.Name, cycle.Seconds)
 								active.PendingRule, err = cycleJSON(next)
 								if err != nil {
 									return err
@@ -642,6 +724,8 @@ func ApplySubscriptionSyncAccount(source SubscriptionSyncSource, token string, h
 								return err
 							}
 							rules[i].NextReset = cycle.WindowEnd
+							rules[i].Seconds = cycle.Seconds
+							rules[i].Name = SubscriptionCycleName(rules[i].Name, cycle.Seconds)
 							poolChanged = true
 						}
 						break
@@ -699,11 +783,12 @@ func ApplySubscriptionSyncAccount(source SubscriptionSyncSource, token string, h
 			return tx.Create(&SubscriptionSyncEvent{SourceID: source.Id, PoolID: pool.Id, ActorID: actorID, Action: "pool_sync", Message: "Upstream synchronization evaluated", Detail: detail, CreatedAt: now}).Error
 		}
 		return nil
-	})
+	}()
 	return changes, err
 }
 
 type SubscriptionSyncObservationView struct {
+	Seconds              int64    `json:"seconds"`
 	EstimatedUtilization *float64 `json:"estimated_utilization"`
 	LocalDelta           int64    `json:"local_delta"`
 	Key                  string   `json:"key"`
@@ -730,6 +815,26 @@ func subscriptionSyncViewsTx(tx *gorm.DB, poolID int, now int64) ([]Subscription
 	if err := tx.First(&source, b.SourceID).Error; err != nil {
 		return nil, err
 	}
+	// Display only windows present in the most recent successful response. Keep
+	// immutable observations for admission checks, audit and in-flight settlement.
+	reported := map[string]bool{}
+	if source.LastFetch > 0 && source.CatalogJSON != "" {
+		var accounts []SubscriptionSyncAccount
+		if err := common.UnmarshalJsonStr(source.CatalogJSON, &accounts); err != nil {
+			return nil, err
+		}
+		for _, account := range ReportedSubscriptionSyncAccounts(accounts) {
+			if account.ID == b.AccountID {
+				for _, cycle := range account.Cycles {
+					reported[cycle.Key] = true
+				}
+			}
+		}
+	}
+	var mappings []SubscriptionSyncCycleBinding
+	if err := common.UnmarshalJsonStr(b.CyclesJSON, &mappings); err != nil {
+		return nil, err
+	}
 	var records []SubscriptionSyncObservation
 	if err := tx.Where("pool_id = ?", poolID).Find(&records).Error; err != nil {
 		return nil, err
@@ -741,6 +846,21 @@ func subscriptionSyncViewsTx(tx *gorm.DB, poolID int, now int64) ([]Subscription
 		var c SubscriptionSyncCycle
 		if err := common.UnmarshalJsonStr(r.Payload, &c); err != nil {
 			return nil, err
+		}
+		if c.Utilization == nil {
+			continue
+		}
+		if source.LastFetch > 0 && source.CatalogJSON != "" {
+			visible := false
+			for _, mapping := range mappings {
+				if mapping.LocalKey == r.LocalKey && reported[mapping.UpstreamKey] {
+					visible = true
+					break
+				}
+			}
+			if !visible {
+				continue
+			}
 		}
 		// Age is derived below from the current effective threshold. A persisted
 		// pre-upgrade age warning must not keep a valid observation stale forever.
@@ -757,7 +877,7 @@ func subscriptionSyncViewsTx(tx *gorm.DB, poolID int, now int64) ([]Subscription
 		if err != nil {
 			return nil, err
 		}
-		views = append(views, SubscriptionSyncObservationView{EstimatedUtilization: estimate, LocalDelta: delta, Key: r.LocalKey, Name: c.Name, Utilization: c.Utilization, SampledAt: r.SampledAt, FetchedAt: r.FetchedAt, WindowEnd: c.WindowEnd, Stale: b.LastError != "" || r.LastError != "" || now-r.SampledAt > SubscriptionSyncStaleSeconds(source) || c.WindowEnd <= now, Pending: r.Pending, Digest: r.Digest})
+		views = append(views, SubscriptionSyncObservationView{EstimatedUtilization: estimate, LocalDelta: delta, Key: r.LocalKey, Name: SubscriptionCycleName(c.Name, c.Seconds), Seconds: c.Seconds, Utilization: c.Utilization, SampledAt: r.SampledAt, FetchedAt: r.FetchedAt, WindowEnd: c.WindowEnd, Stale: b.LastError != "" || r.LastError != "" || now-r.SampledAt > SubscriptionSyncStaleSeconds(source) || c.WindowEnd <= now, Pending: r.Pending, Digest: r.Digest})
 	}
 	return views, nil
 }
@@ -907,9 +1027,6 @@ func ConfirmSubscriptionSyncReset(poolID int, key, digest string, poolVersion in
 		}
 		for i := range rules {
 			if rules[i].Key == key {
-				if cycle.Seconds != rules[i].Seconds {
-					return errors.New("Invalid synchronization cycle mapping")
-				}
 				state, err := subscriptionCycleStateTx(tx, allocationOwner(0, poolID), rules[i], now)
 				if err != nil {
 					return err
@@ -918,12 +1035,11 @@ func ConfirmSubscriptionSyncReset(poolID int, key, digest string, poolVersion in
 				if err := common.UnmarshalJsonStr(state.Rule, &active); err != nil {
 					return err
 				}
-				if active.Seconds != cycle.Seconds {
-					return errors.New("Invalid synchronization cycle mapping")
-				}
 				state.StartTime = cycle.WindowStart
 				state.EndTime = cycle.WindowEnd
 				active.NextReset = cycle.WindowEnd
+				active.Seconds = cycle.Seconds
+				active.Name = SubscriptionCycleName(active.Name, cycle.Seconds)
 				state.Rule, err = cycleJSON(active)
 				if err != nil {
 					return err
@@ -934,6 +1050,8 @@ func ConfirmSubscriptionSyncReset(poolID int, key, digest string, poolVersion in
 						return err
 					}
 					pending.NextReset = cycle.WindowEnd
+					pending.Seconds = cycle.Seconds
+					pending.Name = SubscriptionCycleName(pending.Name, cycle.Seconds)
 					state.PendingRule, err = cycleJSON(pending)
 					if err != nil {
 						return err
@@ -943,6 +1061,8 @@ func ConfirmSubscriptionSyncReset(poolID int, key, digest string, poolVersion in
 					return err
 				}
 				rules[i].NextReset = cycle.WindowEnd
+				rules[i].Seconds = cycle.Seconds
+				rules[i].Name = SubscriptionCycleName(rules[i].Name, cycle.Seconds)
 				raw, err := cycleJSON(rules)
 				if err != nil {
 					return err
@@ -1092,22 +1212,6 @@ func createSubscriptionSyncPool(input SubscriptionPoolInput, actorID int) (*Subs
 		if err := saveSubscriptionSyncBinding(tx, binding, actorID); err != nil {
 			return err
 		}
-		for _, m := range mappings {
-			cycle := usable[m.UpstreamKey]
-			raw, err := cycleJSON(cycle)
-			if err != nil {
-				return err
-			}
-			hash := sha256.Sum256([]byte(raw))
-			pending := ""
-			if now-cycle.SampledAt > SubscriptionSyncStaleSeconds(source) {
-				pending = "Upstream observation is stale"
-			}
-			observation := SubscriptionSyncObservation{PoolID: pool.Id, LocalKey: m.LocalKey, SourceVersion: source.Version, BindingVersion: 1, Digest: hex.EncodeToString(hash[:]), Payload: raw, SampledAt: cycle.SampledAt, FetchedAt: source.LastFetch, Pending: pending}
-			if err := tx.Create(&observation).Error; err != nil {
-				return err
-			}
-		}
 		return nil
 	})
 	return pool, err
@@ -1174,4 +1278,28 @@ func subscriptionSyncEstimateTx(tx *gorm.DB, poolID int, observation Subscriptio
 	delta := max(int64(0), usage.Used-b.Used)
 	ratio := *payload.Utilization + float64(delta)/float64(b.Capacity)
 	return &ratio, delta, float64(usage.Reserved) / float64(b.Capacity), nil
+}
+
+func DeleteSubscriptionSyncSource(id int, version, revision int64, actorID int) error {
+	return DB.Transaction(func(tx *gorm.DB) error {
+		var source SubscriptionSyncSource
+		if err := lockForUpdate(tx).First(&source, id).Error; err != nil {
+			return err
+		}
+		if source.Version != version || source.CredentialRevision != revision {
+			return errors.New("Synchronization configuration changed; reload before saving")
+		}
+		var count int64
+		if err := tx.Model(&SubscriptionSyncBinding{}).Where("source_id = ?", id).Count(&count).Error; err != nil {
+			return err
+		}
+		if count > 0 {
+			return errors.New("Unbind the pools linked to this source before deleting it")
+		}
+		if err := tx.Create(&SubscriptionSyncEvent{SourceID: id, ActorID: actorID, Action: "delete", CreatedAt: GetDBTimestamp()}).Error; err != nil {
+			return err
+		}
+		// Removing the row also invalidates every in-flight worker/auth lease.
+		return tx.Delete(&source).Error
+	})
 }

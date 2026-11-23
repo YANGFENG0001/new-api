@@ -423,3 +423,31 @@ func ResetIndependentSubscriptionCycle(c *gin.Context) {
 	}
 	common.ApiSuccess(c, nil)
 }
+
+func DeleteSubscriptionPool(c *gin.Context) {
+	if !requireSubscriptionPoolPermission(c, "manage") {
+		return
+	}
+	id, _ := strconv.Atoi(c.Param("id"))
+	var input struct {
+		Version int64 `json:"version"`
+		Confirm bool  `json:"confirm"`
+	}
+	if id <= 0 || c.ShouldBindJSON(&input) != nil || !input.Confirm {
+		common.ApiErrorT(c, "Invalid parameters")
+		return
+	}
+	binding, err := model.GetSubscriptionSyncBinding(id)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if binding.SourceID > 0 && !requireSubscriptionPoolPermission(c, "sync_binding") {
+		return
+	}
+	if err := model.DeleteSubscriptionPool(id, input.Version, binding.Version, c.GetInt("id")); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, nil)
+}

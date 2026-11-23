@@ -271,7 +271,25 @@ test('pool binding selects a discovered stable account and saves only after conf
       }
       if (config.url?.endsWith('/state')) {
         return envelope({
-          accounts: [{ id: 'stable-id', name: 'vm-01', expiry: 0, cycles: [] }],
+          accounts: [
+            {
+              id: 'stable-id',
+              name: 'vm-01',
+              expiry: 0,
+              cycles: [
+                {
+                  key: 'short',
+                  name: 'Short',
+                  seconds: 3600,
+                  utilization: 0.2,
+                  sampled_at: Math.floor(Date.now() / 1000),
+                  window_start: 1,
+                  window_end: 253402300799,
+                  error: '',
+                },
+              ],
+            },
+          ],
           events: [],
         })
       }
@@ -298,6 +316,23 @@ test('pool binding selects a discovered stable account and saves only after conf
   await userEvent.click(
     await screen.findByRole('option', { name: 'vm-01 · stable-id' })
   )
+  await userEvent.click(
+    screen.getByRole('combobox', { name: 'Upstream cycle' })
+  )
+  await userEvent.click(await screen.findByRole('option', { name: 'Short' }))
+  expect(
+    screen.queryByRole('spinbutton', {
+      name: 'Quota units per full upstream window (optional)',
+    })
+  ).not.toBeInTheDocument()
+  await userEvent.click(
+    screen.getByRole('button', { name: 'Advanced synchronization settings' })
+  )
+  expect(
+    await screen.findByRole('spinbutton', {
+      name: 'Quota units per full upstream window (optional)',
+    })
+  ).toBeVisible()
   await userEvent.click(screen.getByRole('button', { name: 'Save' }))
   const dialog = await screen.findByRole('alertdialog')
   expect(request.mock.calls.some(([c]) => c.method === 'put')).toBe(false)
@@ -310,7 +345,9 @@ test('pool binding selects a discovered stable account and saves only after conf
   const payload = request.mock.calls.find(([c]) => c.method === 'put')?.[0]
     .data as Record<string, unknown>
   expect(payload.account_id).toBe('stable-id')
-  expect(payload.cycles).toEqual([])
+  expect(payload.cycles).toEqual([
+    expect.objectContaining({ local_key: 'local', upstream_key: 'short' }),
+  ])
   expect(payload.sync_expiry).toBe(false)
 })
 
@@ -671,4 +708,44 @@ test('failed token validation displays the error without reporting success or ch
   ).toBeInTheDocument()
   expect(changed).not.toHaveBeenCalled()
   expect(screen.getByText('Managed upstream')).toBeInTheDocument()
+})
+
+test('source deletion requires confirmation and bound verification before removing the source', async () => {
+  mockAuthenticationVerification()
+  let removed = false
+  const request = vi
+    .spyOn(api, 'request')
+    .mockImplementation(async (config) => {
+      if (config.method === 'delete') {
+        removed = true
+        return envelope(null)
+      }
+      return envelope({
+        sources: removed ? [] : [source],
+        template: mapping,
+        privileged: true,
+      })
+    })
+  mount(<SyncSourcesPanel caps={caps} />)
+  await userEvent.click(
+    await screen.findByRole('button', { name: 'Delete Panel' })
+  )
+  expect(request.mock.calls.some(([c]) => c.method === 'delete')).toBe(false)
+  const dialog = await screen.findByRole('alertdialog')
+  await userEvent.click(within(dialog).getByRole('button', { name: 'Delete' }))
+  expect(request.mock.calls.some(([c]) => c.method === 'delete')).toBe(false)
+  await completeAuthenticationVerification()
+  await waitFor(() =>
+    expect(request.mock.calls.some(([c]) => c.method === 'delete')).toBe(true)
+  )
+  expect(
+    request.mock.calls.find(([c]) => c.method === 'delete')?.[0]
+  ).toMatchObject({
+    data: { version: 1, credential_revision: 0, confirm: true },
+  })
+  await waitFor(() =>
+    expect(
+      screen.queryByRole('button', { name: 'Delete Panel' })
+    ).not.toBeInTheDocument()
+  )
 })

@@ -28,6 +28,7 @@ import { Switch } from '@/components/ui/switch'
 
 import type { CycleRule } from './api'
 import { newCycle } from './schema'
+import { syncCycleName } from './sync-api'
 
 function DurationInput(props: {
   value: number
@@ -75,20 +76,36 @@ export function CycleEditor(props: {
   const { t } = useTranslation()
   function update(index: number, patch: Partial<CycleRule>) {
     props.onChange(
-      props.value.map((r, i) => (i === index ? { ...r, ...patch } : r))
+      props.value.map((r, i) =>
+        i === index
+          ? {
+              ...r,
+              ...patch,
+              name: patch.seconds
+                ? syncCycleName(r.name, patch.seconds)
+                : (patch.name ?? r.name),
+            }
+          : r
+      )
     )
   }
   return (
     <fieldset disabled={props.disabled} className='space-y-4'>
-      <p className='text-muted-foreground text-sm'>
-        {t(
-          'Cycle quotas use site quota units. Each cycle is checked independently.'
-        )}
-      </p>
+      {!props.single && (
+        <p className='text-muted-foreground text-sm'>
+          {t(
+            'Cycle quotas use site quota units. Each cycle is checked independently.'
+          )}
+        </p>
+      )}
       {props.value.map((rule, i) => (
         <section
           key={rule.key}
-          className='space-y-3 rounded-lg border p-4'
+          className={
+            props.single
+              ? 'min-w-0 space-y-3'
+              : 'space-y-3 rounded-lg border p-4'
+          }
           aria-label={rule.name}
         >
           <div className='grid gap-3 sm:grid-cols-2'>
@@ -214,11 +231,13 @@ export function CycleEditor(props: {
           {t('Add cycle')}
         </Button>
       )}
-      <p className='text-muted-foreground text-xs'>
-        {t(
-          'Existing cycle keys cannot be removed. Disable them instead. Duration, scope and quota changes apply at the next boundary; moving the next reset preserves usage.'
-        )}
-      </p>
+      {!props.single && (
+        <p className='text-muted-foreground text-xs'>
+          {t(
+            'Existing cycle keys cannot be removed. Disable them instead. Duration, scope and quota changes apply at the next boundary; moving the next reset preserves usage.'
+          )}
+        </p>
+      )}
     </fieldset>
   )
 }

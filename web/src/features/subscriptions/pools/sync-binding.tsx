@@ -26,6 +26,12 @@ import { ConfirmDialog } from '@/components/confirm-dialog'
 import { ErrorState } from '@/components/error-state'
 import { LoadingState } from '@/components/loading-state'
 import { StatusBadge } from '@/components/status-badge'
+import {
+  Accordion,
+  AccordionItem,
+  AccordionTrigger,
+  AccordionContent,
+} from '@/components/ui/accordion'
 import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Combobox } from '@/components/ui/combobox'
@@ -38,6 +44,7 @@ import { SyncAccountPicker } from './sync-account-picker'
 import {
   syncAPI,
   syncStaleSeconds,
+  syncCycleName,
   syncBindingSchema,
   type SyncBinding,
   type SyncSource,
@@ -201,7 +208,7 @@ function BindingEditor(props: {
     })
   }
   return (
-    <div className='space-y-4'>
+    <div className='min-w-0 space-y-4'>
       <Alert>
         <AlertTitle>{t('Automatic synchronization')}</AlertTitle>
         <AlertDescription>
@@ -233,7 +240,7 @@ function BindingEditor(props: {
         </div>
       )}
       <Container
-        className='max-w-5xl space-y-4 rounded-xl border p-4'
+        className='min-w-0 space-y-4'
         onSubmit={form.handleSubmit((data) => setConfirm(data))}
       >
         <fieldset disabled={save.isPending} className='space-y-4'>
@@ -293,7 +300,7 @@ function BindingEditor(props: {
               return (
                 <section
                   key={local.key}
-                  className='space-y-3 rounded-lg border p-3'
+                  className='grid min-w-0 gap-5 rounded-xl border p-4 lg:grid-cols-2'
                   aria-label={local.name}
                 >
                   {props.renderLocalCycle ? (
@@ -304,125 +311,152 @@ function BindingEditor(props: {
                   ) : (
                     <h4>{local.name}</h4>
                   )}
-                  <Label htmlFor={`binding-${local.key}`}>
-                    {t('Upstream cycle')}
-                  </Label>
-                  <Combobox
-                    id={`binding-${local.key}`}
-                    disabled={
-                      !props.caps.sync_binding || !props.caps.sync_apply
-                    }
-                    value={mapping?.upstream_key ?? '__none'}
-                    options={[
-                      { value: '__none', label: t('Not synchronized') },
-                      ...(source?.mapping.cycles ?? []).map((c) => ({
-                        value: c.key,
-                        label: c.name || c.key,
-                      })),
-                    ]}
-                    onValueChange={(v) =>
-                      updateCycle(local.key, {
-                        upstream_key: v === '__none' ? '' : (v ?? ''),
-                      })
-                    }
-                  />
-                  {mapping && (
-                    <>
-                      <Label htmlFor={`capacity-${local.key}`}>
-                        {t('Quota units per full upstream window (optional)')}
-                      </Label>
-                      <Input
-                        id={`capacity-${local.key}`}
-                        type='number'
-                        min={0}
-                        step={1}
-                        max={Number.MAX_SAFE_INTEGER}
-                        disabled={
-                          !props.caps.sync_binding || !props.caps.sync_apply
-                        }
-                        value={mapping.quota_per_full_window ?? 0}
-                        onChange={(e) =>
-                          updateCycle(local.key, {
-                            quota_per_full_window: Number(e.target.value),
-                          })
-                        }
-                      />
-                      <p className='text-muted-foreground text-xs'>
-                        {t(
-                          'Set an explicit capacity to estimate upstream progress from local settled usage between polls. Zero keeps the upstream percentage unchanged. Billing remains separate.'
+                  <div className='bg-muted/30 min-w-0 space-y-3 rounded-lg p-3'>
+                    <Label htmlFor={`binding-${local.key}`}>
+                      {t('Upstream cycle')}
+                    </Label>
+                    <Combobox
+                      id={`binding-${local.key}`}
+                      disabled={
+                        !props.caps.sync_binding || !props.caps.sync_apply
+                      }
+                      value={mapping?.upstream_key ?? '__none'}
+                      options={[
+                        { value: '__none', label: t('Not synchronized') },
+                        ...(
+                          accounts.find((a) => a.id === values.account_id)
+                            ?.cycles ??
+                          source?.mapping.cycles ??
+                          []
+                        ).map((c) => ({
+                          value: c.key,
+                          label: syncCycleName(c.name || c.key, c.seconds),
+                        })),
+                      ]}
+                      onValueChange={(v) =>
+                        updateCycle(local.key, {
+                          upstream_key: v === '__none' ? '' : (v ?? ''),
+                        })
+                      }
+                    />
+                    {mapping && (
+                      <>
+                        <Label>
+                          <Switch
+                            disabled={
+                              !props.caps.sync_binding || !props.caps.sync_apply
+                            }
+                            checked={mapping.align_reset}
+                            onCheckedChange={(v) =>
+                              updateCycle(local.key, { align_reset: v })
+                            }
+                          />
+                          {t('Align reset time')}
+                        </Label>
+                        <Label>
+                          <Switch
+                            disabled={
+                              !props.caps.sync_binding || !props.caps.sync_apply
+                            }
+                            checked={mapping.enforce}
+                            onCheckedChange={(v) =>
+                              updateCycle(local.key, { enforce: v })
+                            }
+                          />
+                          {t('Enforce upstream utilization')}
+                        </Label>
+                        {mapping.enforce && (
+                          <>
+                            <Label htmlFor={`threshold-${local.key}`}>
+                              {t('Block at utilization (%)')}
+                            </Label>
+                            <Input
+                              id={`threshold-${local.key}`}
+                              type='number'
+                              min={0.01}
+                              max={100}
+                              step='any'
+                              disabled={
+                                !props.caps.sync_binding ||
+                                !props.caps.sync_apply
+                              }
+                              value={mapping.threshold * 100}
+                              onChange={(e) =>
+                                updateCycle(local.key, {
+                                  threshold: Number(e.target.value) / 100,
+                                })
+                              }
+                            />
+                          </>
                         )}
-                      </p>
-                      <Label>
-                        <Switch
-                          disabled={
-                            !props.caps.sync_binding || !props.caps.sync_apply
-                          }
-                          checked={mapping.align_reset}
-                          onCheckedChange={(v) =>
-                            updateCycle(local.key, { align_reset: v })
-                          }
-                        />
-                        {t('Align reset time')}
-                      </Label>
-                      <Label>
-                        <Switch
-                          disabled={
-                            !props.caps.sync_binding || !props.caps.sync_apply
-                          }
-                          checked={mapping.enforce}
-                          onCheckedChange={(v) =>
-                            updateCycle(local.key, { enforce: v })
-                          }
-                        />
-                        {t('Enforce upstream utilization')}
-                      </Label>
-                      {mapping.enforce && (
-                        <>
-                          <Label htmlFor={`threshold-${local.key}`}>
-                            {t('Block at utilization (%)')}
-                          </Label>
-                          <Input
-                            id={`threshold-${local.key}`}
-                            type='number'
-                            min={0.01}
-                            max={100}
-                            step='any'
-                            disabled={
-                              !props.caps.sync_binding || !props.caps.sync_apply
-                            }
-                            value={mapping.threshold * 100}
-                            onChange={(e) =>
-                              updateCycle(local.key, {
-                                threshold: Number(e.target.value) / 100,
-                              })
-                            }
-                          />
-                        </>
-                      )}
-                      {mapping.align_reset && (
-                        <>
-                          <Label htmlFor={`shift-${local.key}`}>
-                            {t('Automatic reset shift tolerance (seconds)')}
-                          </Label>
-                          <Input
-                            id={`shift-${local.key}`}
-                            type='number'
-                            min={0}
-                            max={local.seconds}
-                            disabled={
-                              !props.caps.sync_binding || !props.caps.sync_apply
-                            }
-                            value={mapping.max_shift_seconds}
-                            onChange={(e) =>
-                              updateCycle(local.key, {
-                                max_shift_seconds: Number(e.target.value),
-                              })
-                            }
-                          />
-                        </>
-                      )}
-                    </>
-                  )}
+                        <Accordion>
+                          <AccordionItem value='advanced'>
+                            <AccordionTrigger>
+                              {t('Advanced synchronization settings')}
+                            </AccordionTrigger>
+                            <AccordionContent className='space-y-3'>
+                              <Label htmlFor={`capacity-${local.key}`}>
+                                {t(
+                                  'Quota units per full upstream window (optional)'
+                                )}
+                              </Label>
+                              <Input
+                                id={`capacity-${local.key}`}
+                                type='number'
+                                min={0}
+                                step={1}
+                                max={Number.MAX_SAFE_INTEGER}
+                                disabled={
+                                  !props.caps.sync_binding ||
+                                  !props.caps.sync_apply
+                                }
+                                value={mapping.quota_per_full_window ?? 0}
+                                onChange={(e) =>
+                                  updateCycle(local.key, {
+                                    quota_per_full_window: Number(
+                                      e.target.value
+                                    ),
+                                  })
+                                }
+                              />
+                              <p className='text-muted-foreground text-xs'>
+                                {t(
+                                  'Set an explicit capacity to estimate upstream progress from local settled usage between polls. Zero keeps the upstream percentage unchanged. Billing remains separate.'
+                                )}
+                              </p>
+                              {mapping.align_reset && (
+                                <>
+                                  <Label htmlFor={`shift-${local.key}`}>
+                                    {t(
+                                      'Automatic reset shift tolerance (seconds)'
+                                    )}
+                                  </Label>
+                                  <Input
+                                    id={`shift-${local.key}`}
+                                    type='number'
+                                    min={0}
+                                    max={local.seconds}
+                                    disabled={
+                                      !props.caps.sync_binding ||
+                                      !props.caps.sync_apply
+                                    }
+                                    value={mapping.max_shift_seconds}
+                                    onChange={(e) =>
+                                      updateCycle(local.key, {
+                                        max_shift_seconds: Number(
+                                          e.target.value
+                                        ),
+                                      })
+                                    }
+                                  />
+                                </>
+                              )}
+                            </AccordionContent>
+                          </AccordionItem>
+                        </Accordion>
+                      </>
+                    )}
+                  </div>
                 </section>
               )
             })}

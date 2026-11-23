@@ -211,7 +211,7 @@ func BindVerificationOperation(operation VerificationOperation) (VerificationBin
 	switch operation.Scope {
 	case VerificationScopeSubscriptionSyncCredentials:
 		var context SubscriptionSyncCredentialContext
-		if len(fields) != 4 || common.Unmarshal(operation.Context, &context) != nil || context.SourceID < 0 || context.Version < 0 || context.Revision < 0 || !slices.Contains([]string{"save", "check", "refresh", "replace"}, context.Action) || (context.SourceID == 0 && context.Action != "save") {
+		if len(fields) != 4 || common.Unmarshal(operation.Context, &context) != nil || context.SourceID < 0 || context.Version < 0 || context.Revision < 0 || !slices.Contains([]string{"save", "check", "refresh", "replace", "delete"}, context.Action) || (context.SourceID == 0 && context.Action != "save") {
 			return VerificationBinding{}, ErrVerificationContextInvalid
 		}
 		normalized = context
