@@ -8353,6 +8353,16 @@
     "Currency inputs use the site exchange rate and are saved as quota units. Upstream percentages do not define a monetary capacity.": "Les montants sont convertis au taux du site et enregistrés en unités de quota. Les pourcentages en amont ne définissent pas une capacité monétaire.",
     "Enter a positive local quota to replace the unlimited setting. Upstream synchronization will not overwrite this limit.": "Saisissez un quota local positif pour remplacer le mode illimité. La synchronisation en amont ne remplace pas cette limite.",
     "Upstream total usage": "Utilisation totale en amont",
-    "Source polling only reads the upstream cache. This account has an old observation; another poll does not make it fresh. Check the upstream cache updater or per-cycle observation time mapping.": "Le sondage lit uniquement le cache en amont. L’observation de ce compte est ancienne ; un nouveau sondage ne la rafraîchit pas. Vérifiez la mise à jour du cache ou le mappage temporel de chaque fenêtre."
+    "Source polling only reads the upstream cache. This account has an old observation; another poll does not make it fresh. Check the upstream cache updater or per-cycle observation time mapping.": "Le sondage lit uniquement le cache en amont. L’observation de ce compte est ancienne ; un nouveau sondage ne la rafraîchit pas. Vérifiez la mise à jour du cache ou le mappage temporel de chaque fenêtre.",
+    "Historical upstream snapshot": "Instantané historique en amont",
+    "Local estimate for current cycle": "Estimation locale du cycle actuel",
+    "Legacy subscriptions retain settled usage in exactly matching cycles. Unmatched usage requires reconciliation before migration. Legacy inflight requests remain on their original ledger.": "Les abonnements classiques conservent leur usage réglé dans les cycles aux fenêtres identiques. Rapprochez les usages incompatibles avant la migration. Les requêtes en cours restent dans leur registre initial.",
+    "Settled usage to retain: {{amount}} quota units; excluded inflight reserves: {{reserved}}; target cycles: {{cycles}}.": "Usage réglé conservé : {{amount}} unités de quota ; réservations en cours exclues : {{reserved}} ; cycles cibles : {{cycles}}.",
+    "This pool has no allowed channels. Select at least one channel so its members can use their subscriptions.": "Ce pool n’a aucun canal autorisé. Sélectionnez au moins un canal pour permettre aux membres d’utiliser leur abonnement.",
+    "Channels can be shared by multiple pools. Each request is charged to its selected subscription pool, not to a channel account.": "Plusieurs pools peuvent partager les mêmes canaux. Chaque requête est comptabilisée dans le pool de l’abonnement sélectionné, pas selon un compte du canal.",
+    "Upstream account selection is controlled by the upstream service. Channel access does not guarantee an account match; synchronization calibrates only the account selected for this pool.": "Le service amont choisit le compte réellement utilisé. L’accès au canal ne garantit pas sa correspondance ; la synchronisation ne calibre que le compte choisi pour ce pool.",
+    "Legacy usage window does not match; reconcile usage before migration": "Les fenêtres ne correspondent pas ; rapprochez les usages avant la migration",
+    "Legacy usage changed; preview the assignment again": "L’usage a changé ; prévisualisez à nouveau l’affectation",
+    "Legacy usage requires reconciliation before migration": "Rapprochez les usages avant la migration"
   }
 }

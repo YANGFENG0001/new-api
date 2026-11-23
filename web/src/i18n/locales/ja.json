@@ -8353,6 +8353,16 @@
     "Currency inputs use the site exchange rate and are saved as quota units. Upstream percentages do not define a monetary capacity.": "金額はサイトの為替レートで換算し、クォータ単位で保存します。上流の割合から金額上限は推定しません。",
     "Enter a positive local quota to replace the unlimited setting. Upstream synchronization will not overwrite this limit.": "正のローカルクォータを入力すると無制限を解除します。上流の同期はこの上限を上書きしません。",
     "Upstream total usage": "上流全体の使用量",
-    "Source polling only reads the upstream cache. This account has an old observation; another poll does not make it fresh. Check the upstream cache updater or per-cycle observation time mapping.": "ポーリングは上流キャッシュを読むだけです。このアカウントの観測は古く、再取得では新しくなりません。上流キャッシュの更新と各期間の観測時刻の対応付けを確認してください。"
+    "Source polling only reads the upstream cache. This account has an old observation; another poll does not make it fresh. Check the upstream cache updater or per-cycle observation time mapping.": "ポーリングは上流キャッシュを読むだけです。このアカウントの観測は古く、再取得では新しくなりません。上流キャッシュの更新と各期間の観測時刻の対応付けを確認してください。",
+    "Historical upstream snapshot": "過去の上流スナップショット",
+    "Local estimate for current cycle": "現在のサイクルのローカル推定",
+    "Legacy subscriptions retain settled usage in exactly matching cycles. Unmatched usage requires reconciliation before migration. Legacy inflight requests remain on their original ledger.": "従来のサブスクリプションの確定使用量は、期間が完全に一致するサイクルに引き継がれます。不一致の場合は移行前に照合が必要です。処理中のリクエストは元の台帳に残ります。",
+    "Settled usage to retain: {{amount}} quota units; excluded inflight reserves: {{reserved}}; target cycles: {{cycles}}.": "引き継ぐ確定使用量：{{amount}} クォータ単位、除外する処理中の予約：{{reserved}}、対象サイクル：{{cycles}}。",
+    "This pool has no allowed channels. Select at least one channel so its members can use their subscriptions.": "このプールで利用可能なチャネルがありません。サブスクリプションを利用するには、少なくとも1つ選択してください。",
+    "Channels can be shared by multiple pools. Each request is charged to its selected subscription pool, not to a channel account.": "複数のプールでチャネルを共有できます。リクエストはチャネルのアカウントではなく、選択したサブスクリプションのプールに計上されます。",
+    "Upstream account selection is controlled by the upstream service. Channel access does not guarantee an account match; synchronization calibrates only the account selected for this pool.": "実際の上流アカウントは上流サービスが選択します。チャネルの利用許可はアカウントの一致を保証せず、同期はこのプールで選択したアカウントのみを補正します。",
+    "Legacy usage window does not match; reconcile usage before migration": "期間が一致しません。移行前に使用量を照合してください",
+    "Legacy usage changed; preview the assignment again": "使用量が変更されました。割り当てを再確認してください",
+    "Legacy usage requires reconciliation before migration": "移行前に使用量の照合が必要です"
   }
 }

@@ -215,11 +215,8 @@ func reserveSubscriptionCyclesTx(tx *gorm.DB, requestID string, sub *UserSubscri
 			return true, errors.New("subscription quota insufficient: incompatible pool channel")
 		}
 		var channel Channel
-		if err := tx.Select("id", "channel_info").First(&channel, channelID).Error; err != nil {
+		if err := tx.Select("id").First(&channel, channelID).Error; err != nil {
 			return true, err
-		}
-		if channel.ChannelInfo.IsMultiKey {
-			return true, errors.New("Pool channels must identify a single upstream account")
 		}
 		raw = p.Rules
 	}

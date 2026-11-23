@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen } from '@testing-library/react'
+import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import i18next from 'i18next'
 import { afterEach, expect, test, vi } from 'vitest'
@@ -241,9 +241,13 @@ test.each([
       />
     )
     try {
-      await i18next.changeLanguage(language)
+      await act(async () => {
+        await i18next.changeLanguage(language)
+      })
       const expected = new Date((now + 3600) * 1000).toLocaleString(locale)
-      expect(await screen.findByText(expected)).toBeVisible()
+      expect(
+        await screen.findByText(expected.replaceAll(/\s+/g, ' '))
+      ).toBeVisible()
       expect(screen.getByRole('progressbar')).toHaveAttribute(
         'aria-valuenow',
         '62.5'

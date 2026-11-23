@@ -208,6 +208,7 @@ export function SyncUsageCard(props: {
   estimatedUtilization?: number | null
   localDelta?: number
   scope?: 'Shared' | 'Independent'
+  historical?: boolean
 }) {
   const { t, i18n } = useTranslation()
   const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
@@ -216,6 +217,7 @@ export function SyncUsageCard(props: {
     Number.isFinite(props.utilization) &&
     props.utilization >= 0
   const estimated =
+    !props.historical &&
     props.estimatedUtilization != null &&
     Number.isFinite(props.estimatedUtilization) &&
     props.estimatedUtilization >= 0
@@ -238,6 +240,9 @@ export function SyncUsageCard(props: {
       <div className='flex flex-wrap items-center justify-between gap-2'>
         <div className='flex min-w-0 flex-wrap items-center gap-2'>
           <h4 className='min-w-0 font-medium break-words'>{props.name}</h4>
+          {props.historical && (
+            <Badge variant='outline'>{t('Historical upstream snapshot')}</Badge>
+          )}
           {props.scope && <Badge variant='secondary'>{t(props.scope)}</Badge>}
         </div>
         <SyncHealth

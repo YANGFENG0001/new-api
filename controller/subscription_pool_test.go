@@ -44,6 +44,153 @@ func setupSubscriptionPoolTest(t *testing.T) (*model.User, model.SubscriptionPla
 	return user, plan, now
 }
 
+func TestSubscriptionPoolSharedChannelsSelectMemberLedgerAndPinRetries(t *testing.T) {
+	user, plan, now := setupSubscriptionPoolTest(t)
+	for _, id := range []int{9601, 9602, 9603} {
+		require.NoError(t, model.DB.Create(&model.Channel{Id: id, Name: "shared-route", ChannelInfo: model.ChannelInfo{IsMultiKey: id == 9601}}).Error)
+	}
+	rules := []model.SubscriptionCycleRule{{Key: "c", Name: "quota", Seconds: 3600, NextReset: now + 3500, Limit: 100, Shared: true, Enabled: true}}
+	a, err := model.SaveSubscriptionPool(model.SubscriptionPoolInput{SubscriptionPool: model.SubscriptionPool{Name: "account-a", Enabled: true, EndTime: now + 86400}, Channels: []int{9601, 9602}, Cycles: rules}, 1)
+	require.NoError(t, err, "channel key rotation is not a subscription accounting identity")
+	b, err := model.SaveSubscriptionPool(model.SubscriptionPoolInput{SubscriptionPool: model.SubscriptionPool{Name: "account-b", Enabled: true, EndTime: now + 86400}, Channels: []int{9601, 9603}, Cycles: rules}, 1)
+	require.NoError(t, err, "one route may serve members of different pools")
+	subs := []*model.UserSubscription{}
+	for index, pool := range []*model.SubscriptionPool{a, b} {
+		require.NoError(t, model.SaveSubscriptionPlanAllocation(model.SubscriptionPlanAllocation{PlanID: plan.Id, Mode: "fixed", PoolID: pool.Id, Version: int64(index)}, nil))
+		require.NoError(t, model.DB.Transaction(func(tx *gorm.DB) error {
+			sub, err := model.CreateUserSubscriptionFromPlanTx(tx, user.Id+index, &plan, "admin")
+			subs = append(subs, sub)
+			return err
+		}))
+	}
+	for index, retryChannel := range []int{9602, 9603} {
+		requestID := fmt.Sprintf("shared-route-%d", index)
+		blocked, err := model.SubscriptionBlockedChannels(user.Id+index, false)
+		require.NoError(t, err)
+		assert.NotContains(t, blocked, 9601, "a second pool must not veto an eligible membership")
+		ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+		ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+		info := &relaycommon.RelayInfo{UserId: user.Id + index, RequestId: requestID, IsPlayground: true, ForcePreConsume: true, ChannelMeta: &relaycommon.ChannelMeta{ChannelId: 9601}, UserSetting: dto.UserSetting{BillingPreference: "subscription_only"}}
+		require.Nil(t, service.PreConsumeBilling(ctx, 10, info))
+		assert.Equal(t, subs[index].Id, info.SubscriptionId)
+		filters := service.GetChannelConstraints(ctx).Filters
+		for _, id := range []int{9601, retryChannel} {
+			allowed, _ := model.ChannelSatisfiesFilters(&model.Channel{Id: id}, "m", filters)
+			assert.True(t, allowed)
+		}
+		wrongChannel := 9605 - (retryChannel - 9600)
+		allowed, _ := model.ChannelSatisfiesFilters(&model.Channel{Id: wrongChannel}, "m", filters)
+		assert.False(t, allowed)
+		require.Error(t, model.ValidateSubscriptionRetry(requestID, wrongChannel, false))
+		info.ChannelId = retryChannel
+		require.Nil(t, service.PreConsumeBilling(ctx, 20, info))
+		replay, err := model.PreConsumeUserSubscriptionForChannel(requestID, user.Id+index, "m", 0, 20, 9601)
+		require.NoError(t, err)
+		assert.Equal(t, subs[index].Id, replay.UserSubscriptionId)
+		require.NoError(t, info.Billing.Settle(25))
+	}
+	for _, pool := range []*model.SubscriptionPool{a, b} {
+		stats, err := model.GetSubscriptionPoolStatistics(pool.Id)
+		require.NoError(t, err)
+		require.Len(t, stats, 1)
+		assert.Equal(t, int64(25), stats[0].Used)
+		assert.Zero(t, stats[0].Reserved)
+	}
+	blocked, err := model.SubscriptionBlockedChannels(user.Id+99, false)
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []int{9601, 9602, 9603}, blocked)
+	blocked, err = model.SubscriptionBlockedChannels(user.Id, true)
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []int{9601, 9602, 9603}, blocked)
+	require.Error(t, model.ValidateSubscriptionRetry("", 9601, true))
+	_, err = model.PreConsumeUserSubscriptionForChannel("wrong-member-route", user.Id, "m", 0, 1, 9603)
+	require.Error(t, err)
+	require.Error(t, model.DB.Create(&model.SubscriptionPoolChannel{PoolID: a.Id, ChannelID: 9601}).Error)
+	_, err = model.SaveSubscriptionPool(model.SubscriptionPoolInput{SubscriptionPool: *a, Channels: []int{9602}, Cycles: rules}, 1)
+	require.NoError(t, err)
+	require.Error(t, model.ValidateSubscriptionRetry("shared-route-0", 9601, false))
+	require.NoError(t, model.ValidateSubscriptionRetry("shared-route-1", 9601, false))
+	bConfig, err := model.GetSubscriptionPoolConfiguration(b.Id)
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []int{9601, 9603}, bConfig.Channels, "editing one pool must preserve another pool's links")
+}
+
+func TestSubscriptionPoolChannelMigrationPreservesLinksAndPairUniqueness(t *testing.T) {
+	setupSubscriptionPoolTest(t)
+	require.NoError(t, model.DB.Migrator().DropTable(&model.SubscriptionPoolChannel{}))
+	legacy := struct {
+		ChannelID int `gorm:"primaryKey;autoIncrement:false"`
+		PoolID    int `gorm:"index"`
+	}{}
+	require.NoError(t, model.DB.Table("subscription_pool_channels").Migrator().CreateTable(&legacy))
+	require.NoError(t, model.DB.Table("subscription_pool_channels").Create(map[string]any{"channel_id": 9701, "pool_id": 1}).Error)
+	results := make(chan error, 2)
+	var migrations sync.WaitGroup
+	for range 2 {
+		migrations.Go(func() { results <- model.MigrateSubscriptionPools() })
+	}
+	migrations.Wait()
+	close(results)
+	for err := range results {
+		require.NoError(t, err, "concurrent startup must serialize the key migration")
+	}
+	var links []model.SubscriptionPoolChannel
+	require.NoError(t, model.DB.Find(&links).Error)
+	assert.Equal(t, []model.SubscriptionPoolChannel{{ChannelID: 9701, PoolID: 1}}, links)
+	require.NoError(t, model.DB.Create(&model.SubscriptionPoolChannel{ChannelID: 9701, PoolID: 2}).Error)
+	require.NoError(t, model.DB.Create(&model.SubscriptionPoolChannel{ChannelID: 9702, PoolID: 1}).Error)
+	require.Error(t, model.DB.Create(&model.SubscriptionPoolChannel{ChannelID: 9701, PoolID: 1}).Error)
+	require.NoError(t, model.DB.Where("pool_id = ? AND channel_id = ?", 1, 9701).Delete(&model.SubscriptionPoolChannel{}).Error)
+	for range 2 {
+		require.NoError(t, model.MigrateSubscriptionPools())
+	}
+	require.NoError(t, model.DB.Find(&links).Error)
+	assert.ElementsMatch(t, []model.SubscriptionPoolChannel{{ChannelID: 9701, PoolID: 2}, {ChannelID: 9702, PoolID: 1}}, links, "restarts must not resurrect deleted links")
+}
+
+func TestSubscriptionPoolChannelEditAndAdmissionKeepAccountingIsolated(t *testing.T) {
+	user, plan, now := setupSubscriptionPoolTest(t)
+	require.NoError(t, model.DB.Create(&model.Channel{Id: 9703, Name: "editable-route"}).Error)
+	rules := []model.SubscriptionCycleRule{{Key: "c", Name: "quota", Seconds: 3600, NextReset: now + 3500, Limit: 100, Shared: true, Enabled: true}}
+	pool, err := model.SaveSubscriptionPool(model.SubscriptionPoolInput{SubscriptionPool: model.SubscriptionPool{Name: "changing", Enabled: true, EndTime: now + 86400}, Channels: []int{9703}, Cycles: rules}, 1)
+	require.NoError(t, err)
+	require.NoError(t, model.SaveSubscriptionPlanAllocation(model.SubscriptionPlanAllocation{PlanID: plan.Id, Mode: "fixed", PoolID: pool.Id}, nil))
+	require.NoError(t, model.DB.Transaction(func(tx *gorm.DB) error {
+		_, err := model.CreateUserSubscriptionFromPlanTx(tx, user.Id, &plan, "admin")
+		return err
+	}))
+	start := make(chan struct{})
+	var admitted *model.SubscriptionPreConsumeResult
+	var admissionErr, editErr error
+	var workers sync.WaitGroup
+	workers.Go(func() {
+		<-start
+		admitted, admissionErr = model.PreConsumeUserSubscriptionForChannel("relation-edit", user.Id, "m", 0, 10, 9703)
+	})
+	workers.Go(func() {
+		<-start
+		_, editErr = model.SaveSubscriptionPool(model.SubscriptionPoolInput{SubscriptionPool: *pool, Channels: []int{}, Cycles: rules}, 1)
+	})
+	close(start)
+	workers.Wait()
+	require.NoError(t, editErr)
+	if admissionErr == nil {
+		require.NotNil(t, admitted)
+		var reservation model.SubscriptionCycleReservation
+		require.NoError(t, model.DB.Where("request_id = ?", "relation-edit").First(&reservation).Error)
+		assert.Equal(t, pool.Id, reservation.PoolID)
+		require.NoError(t, model.RefundSubscriptionPreConsume("relation-edit"))
+	} else {
+		require.ErrorContains(t, admissionErr, "subscription quota insufficient")
+	}
+	_, err = model.PreConsumeUserSubscriptionForChannel("relation-removed", user.Id, "m", 0, 10, 9703)
+	require.ErrorContains(t, err, "pool has no bound channels")
+	stats, err := model.GetSubscriptionPoolStatistics(pool.Id)
+	require.NoError(t, err)
+	assert.Zero(t, stats[0].Used)
+	assert.Zero(t, stats[0].Reserved)
+}
+
 func TestSubscriptionPoolUnifiedSaveIsAtomicAndHonorsFollowing(t *testing.T) {
 	_, _, now := setupSubscriptionPoolTest(t)
 	mapping := model.PanelSubscriptionSyncMapping()
@@ -397,10 +544,9 @@ func TestSubscriptionPoolBillingPinsRetriesAndChargesEachCycleOnce(t *testing.T)
 	assert.False(t, allowed)
 	info.ChannelId = 9022
 	require.Nil(t, service.PreConsumeBilling(c, 20, info))
-	// Channel administration can enable key rotation after pool creation.
-	// An already admitted retry must not silently switch upstream accounts.
+	// Key rotation does not change the request's logical subscription ledger.
 	require.NoError(t, model.DB.Model(&model.Channel{}).Where("id = ?", 9022).Update("channel_info", model.ChannelInfo{IsMultiKey: true}).Error)
-	assert.NotNil(t, service.PreConsumeBilling(c, 30, info), "pool retries must recheck deterministic upstream identity")
+	assert.Nil(t, service.PreConsumeBilling(c, 30, info))
 	require.NoError(t, model.DB.Model(&model.Channel{}).Where("id = ?", 9022).Update("channel_info", model.ChannelInfo{}).Error)
 	info.ChannelId = 9023
 	require.NotNil(t, service.PreConsumeBilling(c, 30, info))
@@ -461,6 +607,186 @@ func TestSubscriptionPoolMigrationRetainsLegacyInflightSettlementAndRefund(t *te
 			assert.Zero(t, stats[0].Reserved)
 		})
 	}
+}
+
+func TestSubscriptionPoolAdmissionReportsConfigurationAndCycleFailures(t *testing.T) {
+	user, plan, now := setupSubscriptionPoolTest(t)
+	require.NoError(t, model.DB.Create(&model.Channel{Id: 9599, Name: "diagnostics"}).Error)
+	input := model.SubscriptionPoolInput{SubscriptionPool: model.SubscriptionPool{Name: "diagnostics", Enabled: true, EndTime: now + 86400}, Cycles: []model.SubscriptionCycleRule{{Key: "c", Name: "c", Seconds: 3600, NextReset: now + 3500, Limit: 10, Enabled: true}}}
+	pool, err := model.SaveSubscriptionPool(input, 1)
+	require.NoError(t, err)
+	require.NoError(t, model.SaveSubscriptionPlanAllocation(model.SubscriptionPlanAllocation{PlanID: plan.Id, Mode: "fixed", PoolID: pool.Id}, nil))
+	var sub *model.UserSubscription
+	require.NoError(t, model.DB.Transaction(func(tx *gorm.DB) error {
+		var e error
+		sub, e = model.CreateUserSubscriptionFromPlanTx(tx, user.Id, &plan, "admin")
+		return e
+	}))
+	_, err = model.PreConsumeUserSubscriptionForChannel("missing-channel", user.Id, "m", 0, 1, 9599)
+	require.ErrorContains(t, err, "pool has no bound channels")
+	input.SubscriptionPool = *pool
+	input.Channels = []int{9599}
+	_, err = model.SaveSubscriptionPool(input, 1)
+	require.NoError(t, err)
+	_, err = model.PreConsumeUserSubscriptionForChannel("actual-limit", user.Id, "m", 0, 11, 9599)
+	require.ErrorContains(t, err, "cycle limit reached")
+	require.NoError(t, model.DB.Model(&model.SubscriptionAllocation{}).Where("subscription_id = ?", sub.Id).Update("pending", true).Error)
+	_, err = model.PreConsumeUserSubscriptionForChannel("pending-pool", user.Id, "m", 0, 1, 9599)
+	require.ErrorContains(t, err, "pool assignment pending")
+}
+
+func TestSubscriptionPoolLegacyCarryPreservesSettledUsageAndRejectsAmbiguousWindows(t *testing.T) {
+	user, plan, now := setupSubscriptionPoolTest(t)
+	pool, err := model.SaveSubscriptionPool(model.SubscriptionPoolInput{SubscriptionPool: model.SubscriptionPool{Name: "carry", Enabled: true, EndTime: now + 86400}, Cycles: []model.SubscriptionCycleRule{
+		{Key: "shared", Name: "shared", Seconds: 3600, NextReset: now + 2600, Limit: 1000, Shared: true, Enabled: true},
+		{Key: "personal", Name: "personal", Seconds: 3600, NextReset: now + 2600, Limit: 1000, Enabled: true},
+	}}, 1)
+	require.NoError(t, err)
+	sub := model.UserSubscription{UserId: user.Id, PlanId: plan.Id, StartTime: now - 1000, EndTime: now + 86400, Status: "active", AmountTotal: 1000, AmountUsed: 100, LastResetTime: now - 1000, NextResetTime: now + 2600}
+	require.NoError(t, model.DB.Create(&sub).Error)
+	require.NoError(t, model.DB.Create(&model.SubscriptionPreConsumeRecord{RequestId: "carry-open", UserId: user.Id, UserSubscriptionId: sub.Id, PreConsumed: 30, Status: "consumed"}).Error)
+	preview, err := model.PreviewSubscriptionPoolAssignment(sub.Id, pool.Id, 0)
+	require.NoError(t, err)
+	assert.True(t, preview.UsageTransfer)
+	require.NoError(t, model.DB.Model(&sub).Update("amount_used", 101).Error)
+	require.ErrorContains(t, model.AssignSubscriptionPool(sub.Id, pool.Id, 0, 0, 1, true, pool.Version, preview.Carry.Digest), "Legacy usage changed")
+	require.NoError(t, model.DB.Model(&sub).Update("amount_used", 100).Error)
+	require.NoError(t, model.AssignSubscriptionPool(sub.Id, pool.Id, 0, 0, 1, true, pool.Version, preview.Carry.Digest))
+	require.NoError(t, model.AssignSubscriptionPool(sub.Id, pool.Id, 0, 0, 1, true, pool.Version))
+	stats, err := model.GetSubscriptionPoolStatistics(pool.Id)
+	require.NoError(t, err)
+	for _, c := range stats {
+		assert.EqualValues(t, 70, c.Used)
+	}
+	views, err := model.GetSubscriptionUsage(user.Id)
+	require.NoError(t, err)
+	for _, c := range views[0].Cycles {
+		assert.EqualValues(t, 70, c.Used)
+	}
+	require.NoError(t, model.RefundSubscriptionPreConsume("carry-open"))
+	require.NoError(t, model.RefundSubscriptionPreConsume("carry-open"))
+	require.NoError(t, model.DB.First(&sub, sub.Id).Error)
+	assert.EqualValues(t, 70, sub.AmountUsed)
+	stats, err = model.GetSubscriptionPoolStatistics(pool.Id)
+	require.NoError(t, err)
+	for _, c := range stats {
+		assert.EqualValues(t, 70, c.Used, "legacy inflight refunds do not undo settled carry")
+	}
+	var events int64
+	require.NoError(t, model.DB.Model(&model.SubscriptionPoolEvent{}).Where("subscription_id = ? AND action = ?", sub.Id, "legacy_carry").Count(&events).Error)
+	assert.EqualValues(t, 1, events)
+	// Equal durations alone are insufficient: copying the whole source balance
+	// into a differently aligned current window invents consumption.
+	sub.Id = 0
+	sub.LastResetTime--
+	sub.NextResetTime--
+	require.NoError(t, model.DB.Create(&sub).Error)
+	require.ErrorContains(t, model.AssignSubscriptionPool(sub.Id, pool.Id, 0, 0, 1, true, pool.Version), "Legacy usage window does not match")
+	var count int64
+	require.NoError(t, model.DB.Model(&model.SubscriptionAllocation{}).Where("subscription_id = ?", sub.Id).Count(&count).Error)
+	assert.Zero(t, count, "an ambiguous migration cannot silently start at zero")
+}
+
+func TestSubscriptionPoolCleanupRetainsLegacyInflightProvenance(t *testing.T) {
+	user, _, now := setupSubscriptionPoolTest(t)
+	for _, status := range []string{"consumed", "settled", "refunded"} {
+		record := model.SubscriptionPreConsumeRecord{RequestId: "cleanup-" + status, UserId: user.Id, Status: status, PreConsumed: 1}
+		require.NoError(t, model.DB.Create(&record).Error)
+		require.NoError(t, model.DB.Model(&record).Update("updated_at", now-1000).Error)
+	}
+	n, err := model.CleanupSubscriptionPreConsumeRecords(100)
+	require.NoError(t, err)
+	assert.EqualValues(t, 2, n)
+	var retained []model.SubscriptionPreConsumeRecord
+	require.NoError(t, model.DB.Find(&retained).Error)
+	require.Len(t, retained, 1)
+	assert.Equal(t, "consumed", retained[0].Status)
+}
+
+func TestSubscriptionPoolLegacyCarryCalibrationAndOverflowAreAtomic(t *testing.T) {
+	user, plan, now := setupSubscriptionPoolTest(t)
+	pool, err := model.SaveSubscriptionPool(model.SubscriptionPoolInput{SubscriptionPool: model.SubscriptionPool{Name: "calibrated-carry", Enabled: true, EndTime: now + 86400}, Cycles: []model.SubscriptionCycleRule{{Key: "c", Name: "c", Seconds: 3600, NextReset: now + 2600, Limit: 1000, Enabled: true}}}, 1)
+	require.NoError(t, err)
+	var state model.SubscriptionCycleState
+	require.NoError(t, model.DB.Where("owner = ?", fmt.Sprintf("pool:%d", pool.Id)).First(&state).Error)
+	aggregate := model.SubscriptionCycleUsage{StateID: state.Id, Epoch: state.Epoch, Used: 5, Adjustment: 40}
+	require.NoError(t, model.DB.Create(&aggregate).Error)
+	source := model.SubscriptionSyncSource{Name: "carry-cache", Version: 1, IntervalSeconds: 60, StaleSeconds: 300, TimeoutSeconds: 10}
+	require.NoError(t, model.DB.Create(&source).Error)
+	require.NoError(t, model.DB.Create(&model.SubscriptionSyncBinding{PoolID: pool.Id, SourceID: source.Id, AccountID: "a", Enabled: true, Version: 1, CyclesJSON: "[]"}).Error)
+	payload := fmt.Sprintf(`{"key":"c","seconds":3600,"utilization":0.6,"window_start":%d,"window_end":%d,"sampled_at":%d,"local_baseline":{"usage_id":%d,"used":5,"capacity":100}}`, now-1000, now+2600, now, aggregate.Id)
+	require.NoError(t, model.DB.Create(&model.SubscriptionSyncObservation{PoolID: pool.Id, LocalKey: "c", Payload: payload, SampledAt: now, FetchedAt: now, BindingVersion: 1, SourceVersion: 1}).Error)
+	sub := model.UserSubscription{UserId: user.Id, PlanId: plan.Id, StartTime: now - 1000, EndTime: now + 86400, Status: "active", AmountTotal: 1000, AmountUsed: 70, LastResetTime: now - 1000, NextResetTime: now + 2600}
+	require.NoError(t, model.DB.Create(&sub).Error)
+	require.NoError(t, model.AssignSubscriptionPool(sub.Id, pool.Id, 0, 0, 1, true, pool.Version))
+	stats, err := model.GetSubscriptionPoolStatistics(pool.Id)
+	require.NoError(t, err)
+	assert.EqualValues(t, 75, stats[0].Used, "existing local usage is not overwritten")
+	assert.Zero(t, stats[0].Adjustment, "known consumption replaces overlapping calibration")
+	views, err := model.GetSubscriptionSyncViews(pool.Id)
+	require.NoError(t, err)
+	require.NotNil(t, views[0].EstimatedUtilization)
+	assert.Equal(t, .6, *views[0].EstimatedUtilization, "reclassification is not another upstream request")
+	sub.Id = 0
+	sub.AmountUsed = common.MaxWalletQuota
+	sub.NextResetTime = now + 2600
+	require.NoError(t, model.DB.Create(&sub).Error)
+	require.ErrorContains(t, model.AssignSubscriptionPool(sub.Id, pool.Id, 0, 0, 1, true, pool.Version), "overflow")
+	var allocations, events int64
+	require.NoError(t, model.DB.Model(&model.SubscriptionAllocation{}).Where("subscription_id = ?", sub.Id).Count(&allocations).Error)
+	require.NoError(t, model.DB.Model(&model.SubscriptionPoolEvent{}).Where("subscription_id = ?", sub.Id).Count(&events).Error)
+	assert.Zero(t, allocations)
+	assert.Zero(t, events)
+	require.NoError(t, model.DB.First(&aggregate, aggregate.Id).Error)
+	assert.EqualValues(t, 75, aggregate.Used)
+}
+
+func TestSubscriptionPoolNaturalResetUsesLocalCapacityWithoutRefreshingUpstreamFacts(t *testing.T) {
+	user, plan, now := setupSubscriptionPoolTest(t)
+	require.NoError(t, model.DB.Create(&model.Channel{Id: 9598, Name: "local-reset"}).Error)
+	pool, err := model.SaveSubscriptionPool(model.SubscriptionPoolInput{SubscriptionPool: model.SubscriptionPool{Name: "local-reset", Enabled: true, EndTime: now + 86400}, Channels: []int{9598}, Cycles: []model.SubscriptionCycleRule{{Key: "c", Name: "c", Seconds: 3600, NextReset: now + 3599, Unlimited: true, Shared: true, Enabled: true}}}, 1)
+	require.NoError(t, err)
+	require.NoError(t, model.SaveSubscriptionPlanAllocation(model.SubscriptionPlanAllocation{PlanID: plan.Id, Mode: "fixed", PoolID: pool.Id}, nil))
+	var sub *model.UserSubscription
+	require.NoError(t, model.DB.Transaction(func(tx *gorm.DB) error {
+		var e error
+		sub, e = model.CreateUserSubscriptionFromPlanTx(tx, user.Id, &plan, "admin")
+		return e
+	}))
+	var state model.SubscriptionCycleState
+	require.NoError(t, model.DB.Where("owner = ?", fmt.Sprintf("pool:%d", pool.Id)).First(&state).Error)
+	require.NoError(t, model.DB.Model(&state).Updates(map[string]any{"start_time": now - 3601, "end_time": now - 1}).Error)
+	old := model.SubscriptionCycleUsage{StateID: state.Id, Epoch: state.Epoch, UserID: 0, Used: 40}
+	require.NoError(t, model.DB.Create(&old).Error)
+	source := model.SubscriptionSyncSource{Name: "cached-source", Version: 1, IntervalSeconds: 60, StaleSeconds: 300, TimeoutSeconds: 10}
+	require.NoError(t, model.DB.Create(&source).Error)
+	bindings, err := common.Marshal([]model.SubscriptionSyncCycleBinding{{LocalKey: "c", UpstreamKey: "c", QuotaPerFullWindow: 100}})
+	require.NoError(t, err)
+	require.NoError(t, model.DB.Create(&model.SubscriptionSyncBinding{PoolID: pool.Id, SourceID: source.Id, AccountID: "a", Enabled: true, Version: 1, CyclesJSON: string(bindings)}).Error)
+	payload := fmt.Sprintf(`{"key":"c","seconds":3600,"utilization":0.4,"window_start":%d,"window_end":%d,"sampled_at":%d,"local_baseline":{"usage_id":%d,"used":40,"capacity":100}}`, now-3601, now-1, now-10, old.Id)
+	require.NoError(t, model.DB.Create(&model.SubscriptionSyncObservation{PoolID: pool.Id, LocalKey: "c", Payload: payload, SampledAt: now - 10, FetchedAt: now, SourceVersion: 1, BindingVersion: 1}).Error)
+	_, err = model.PreConsumeUserSubscriptionForChannel("local-window", user.Id, "m", 0, 10, 9598)
+	require.NoError(t, err)
+	require.NoError(t, model.SettleSubscriptionRequest("local-window", sub.Id, 0))
+	views, err := model.GetSubscriptionSyncViews(pool.Id)
+	require.NoError(t, err)
+	raw, err := common.Marshal(views)
+	require.NoError(t, err)
+	var result []map[string]any
+	require.NoError(t, common.Unmarshal(raw, &result))
+	require.Len(t, result, 1)
+	assert.EqualValues(t, now+3599, result[0]["local_window_end"])
+	assert.Equal(t, .1, result[0]["local_estimated_utilization"])
+	assert.Equal(t, .4, result[0]["utilization"], "a local estimate never fabricates a new upstream snapshot")
+	assert.EqualValues(t, now-1, result[0]["window_end"])
+	assert.EqualValues(t, now-10, result[0]["sampled_at"])
+	require.NoError(t, model.ResetSubscriptionCycle(0, pool.Id, 0, "c", 1))
+	views, err = model.GetSubscriptionSyncViews(pool.Id)
+	require.NoError(t, err)
+	raw, err = common.Marshal(views)
+	require.NoError(t, err)
+	require.NoError(t, common.Unmarshal(raw, &result))
+	assert.Nil(t, result[0]["local_estimated_utilization"], "manual reset invalidates the baseline")
 }
 
 func TestSubscriptionPoolExpiryInheritanceAndResetHeadEditing(t *testing.T) {
@@ -786,7 +1112,7 @@ func TestSubscriptionPoolAnchorsSnapshotsAndPlanDefaults(t *testing.T) {
 	// Migrations must retain the new ledger too and preserve uniqueness.
 	require.NoError(t, model.MigrateSubscriptionPools())
 	require.NoError(t, model.MigrateSubscriptionPools())
-	require.Error(t, model.DB.Create(&model.SubscriptionPoolChannel{ChannelID: 9002, PoolID: pool.Id + 1}).Error)
+	require.Error(t, model.DB.Create(&model.SubscriptionPoolChannel{ChannelID: 9002, PoolID: pool.Id}).Error)
 	require.Error(t, model.DB.Create(&model.SubscriptionCycleReservation{RequestID: "calibration"}).Error)
 	var count int64
 	require.NoError(t, model.DB.Model(&model.SubscriptionCycleReservation{}).Where("request_id = ?", "calibration").Count(&count).Error)

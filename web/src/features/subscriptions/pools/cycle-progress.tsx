@@ -40,7 +40,15 @@ export function CycleProgress(props: {
         const observation = props.observations?.find(
           (o) => o.key === c.key && o.utilization != null
         )
-        if (props.preferObservations && observation) {
+        const currentObservation =
+          observation &&
+          !observation.stale &&
+          !observation.pending &&
+          observation.window_end === c.next_reset &&
+          observation.window_end > Date.now() / 1000 &&
+          observation.sampled_at >= c.start_time &&
+          (!observation.seconds || observation.seconds === c.seconds)
+        if (props.preferObservations && currentObservation) {
           return (
             <SyncObservations
               key={c.key}
@@ -49,6 +57,10 @@ export function CycleProgress(props: {
             />
           )
         }
+        const localEstimate =
+          observation?.local_window_end === c.next_reset
+            ? observation.local_estimated_utilization
+            : null
         let capacity = formatNumber(c.limit, locale)
         if (c.limit_unknown) capacity = t('Unknown')
         else if (c.unlimited) capacity = t('Unlimited')
@@ -75,6 +87,22 @@ export function CycleProgress(props: {
               {t('Used')}: {formatNumber(c.used + c.adjustment, locale)} /{' '}
               {capacity} {t('Quota units')}
             </p>
+            {localEstimate != null &&
+              Number.isFinite(localEstimate) &&
+              localEstimate >= 0 && (
+                <div className='space-y-2'>
+                  <p>
+                    <strong>
+                      {formatNumber(localEstimate * 100, locale)}%
+                    </strong>{' '}
+                    · <span>{t('Local estimate for current cycle')}</span>
+                  </p>
+                  <Progress
+                    value={Math.min(100, localEstimate * 100)}
+                    aria-label={t('Local estimate for current cycle')}
+                  />
+                </div>
+              )}
             {!c.unlimited && c.limit > 0 && (
               <Progress
                 value={Math.min(
@@ -104,6 +132,7 @@ export function CycleProgress(props: {
               (observation) => observation.key === c.key
             ) && (
               <SyncObservations
+                historical
                 observations={props.observations.filter(
                   (observation) => observation.key === c.key
                 )}

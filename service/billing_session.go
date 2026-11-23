@@ -385,11 +385,11 @@ func NewBillingSession(c *gin.Context, relayInfo *relaycommon.RelayInfo, preCons
 
 	// 钱包路径需要先检查用户额度
 	tryWallet := func() (*BillingSession, *types.NewAPIError) {
-		poolID, poolErr := model.SubscriptionChannelPool(relayInfo.GetChannelID())
+		pooled, poolErr := model.SubscriptionChannelRequiresSubscription(relayInfo.GetChannelID())
 		if poolErr != nil {
 			return nil, types.NewError(poolErr, types.ErrorCodeQueryDataError, types.ErrOptionWithSkipRetry())
 		}
-		if poolID > 0 {
+		if pooled {
 			return nil, types.NewErrorWithStatusCode(errors.New("Pool channels require an eligible subscription"), types.ErrorCodeInsufficientUserQuota, http.StatusForbidden, types.ErrOptionWithSkipRetry())
 		}
 		userQuota, err := model.GetUserQuota(relayInfo.UserId, false)

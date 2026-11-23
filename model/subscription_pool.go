@@ -4,9 +4,11 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/QuantumNous/new-api/common"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // Cycle durations are elapsed seconds, not calendar periods. Keys are immutable.
@@ -36,11 +38,11 @@ type SubscriptionPool struct {
 	UpdatedAt      int64  `json:"updated_at"`
 }
 
-// A channel must represent a deterministic upstream account, not a key rotation
-// across different accounts. One channel can belong to at most one resource.
+// Channels grant access to subscription resources, not physical upstream account
+// identity. A shared gateway may serve several pools and rotate upstream keys.
 type SubscriptionPoolChannel struct {
 	ChannelID int `json:"channel_id" gorm:"primaryKey;autoIncrement:false"`
-	PoolID    int `json:"pool_id" gorm:"index"`
+	PoolID    int `json:"pool_id" gorm:"primaryKey;autoIncrement:false;index"`
 }
 
 // Sidecar tables preserve the legacy subscription response contract.
@@ -126,7 +128,111 @@ type SubscriptionPoolEvent struct {
 	CreatedAt      int64  `json:"created_at"`
 }
 
-func MigrateSubscriptionPools() error { return DB.AutoMigrate(SubscriptionPoolModels()...) }
+var subscriptionPoolMigrationMu sync.Mutex
+
+func MigrateSubscriptionPools() error {
+	subscriptionPoolMigrationMu.Lock()
+	defer subscriptionPoolMigrationMu.Unlock()
+	return DB.Connection(func(db *gorm.DB) error {
+		switch db.Dialector.Name() {
+		case "mysql":
+			var acquired int
+			if err := db.Raw("SELECT GET_LOCK('new-api.subscription-pools', 30)").Scan(&acquired).Error; err != nil {
+				return err
+			}
+			if acquired != 1 {
+				return errors.New("Subscription migration lock unavailable")
+			}
+			defer db.Exec("SELECT RELEASE_LOCK('new-api.subscription-pools')")
+		case "postgres":
+			if err := db.Exec("SELECT pg_advisory_lock(hashtext(current_database()), hashtext('new-api.subscription-pools'))").Error; err != nil {
+				return err
+			}
+			defer db.Exec("SELECT pg_advisory_unlock(hashtext(current_database()), hashtext('new-api.subscription-pools'))")
+		}
+		if err := migrateSubscriptionPoolChannelKey(db); err != nil {
+			return err
+		}
+		return db.AutoMigrate(SubscriptionPoolModels()...)
+	})
+}
+
+// AutoMigrate does not replace an existing single-column primary key. Upgrade
+// only the known legacy shape, retaining the same authoritative relation table.
+func migrateSubscriptionPoolChannelKey(db *gorm.DB) error {
+	const table = "subscription_pool_channels"
+	if !db.Migrator().HasTable(table) {
+		return nil
+	}
+	columns, err := db.Migrator().ColumnTypes(table)
+	if err != nil {
+		return err
+	}
+	keys := []string{}
+	for _, column := range columns {
+		if primary, ok := column.PrimaryKey(); ok && primary {
+			keys = append(keys, column.Name())
+		}
+	}
+	if len(keys) == 2 && ((keys[0] == "channel_id" && keys[1] == "pool_id") || (keys[0] == "pool_id" && keys[1] == "channel_id")) {
+		return nil
+	}
+	if len(keys) != 1 || keys[0] != "channel_id" {
+		return errors.New("Unsupported subscription channel primary key")
+	}
+	switch db.Dialector.Name() {
+	case "mysql":
+		// A single ALTER is atomic for this key change, including on MySQL 5.7.
+		return db.Exec("ALTER TABLE subscription_pool_channels DROP PRIMARY KEY, ADD PRIMARY KEY (channel_id, pool_id)").Error
+	case "postgres":
+		return db.Transaction(func(tx *gorm.DB) error {
+			var name string
+			if err := tx.Raw("SELECT conname FROM pg_constraint WHERE conrelid = to_regclass(?) AND contype = 'p'", table).Scan(&name).Error; err != nil {
+				return err
+			}
+			if name == "" {
+				return errors.New("Subscription channel primary key is missing")
+			}
+			if err := tx.Exec("ALTER TABLE subscription_pool_channels DROP CONSTRAINT ?", clause.Column{Name: name}).Error; err != nil {
+				return err
+			}
+			return tx.Exec("ALTER TABLE subscription_pool_channels ADD PRIMARY KEY (channel_id, pool_id)").Error
+		})
+	case "sqlite":
+		return db.Transaction(func(tx *gorm.DB) error {
+			// Obtain SQLite's writer reservation before inspecting/copying rows.
+			if err := tx.Exec("UPDATE subscription_pool_channels SET pool_id = pool_id WHERE 1 = 0").Error; err != nil {
+				return err
+			}
+			const replacement = "subscription_pool_channels_upgrade"
+			if tx.Migrator().HasTable(replacement) {
+				return errors.New("Subscription channel migration requires reconciliation")
+			}
+			if err := tx.Exec("CREATE TABLE subscription_pool_channels_upgrade (channel_id integer NOT NULL, pool_id integer NOT NULL, PRIMARY KEY (channel_id, pool_id))").Error; err != nil {
+				return err
+			}
+			if err := tx.Exec("INSERT INTO subscription_pool_channels_upgrade (channel_id, pool_id) SELECT channel_id, pool_id FROM subscription_pool_channels").Error; err != nil {
+				return err
+			}
+			var original, copied int64
+			if err := tx.Table(table).Count(&original).Error; err != nil {
+				return err
+			}
+			if err := tx.Table(replacement).Count(&copied).Error; err != nil {
+				return err
+			}
+			if copied != original {
+				return errors.New("Subscription channel migration row count mismatch")
+			}
+			if err := tx.Migrator().DropTable(table); err != nil {
+				return err
+			}
+			return tx.Migrator().RenameTable(replacement, table)
+		})
+	default:
+		return errors.New("Unsupported subscription channel database")
+	}
+}
 
 func SubscriptionPoolModels() []any {
 	return []any{&SubscriptionPool{}, &SubscriptionPoolChannel{}, &SubscriptionPlanAllocation{}, &SubscriptionAllocation{}, &SubscriptionCycleState{}, &SubscriptionCycleUsage{}, &SubscriptionCycleReservation{}, &SubscriptionUpstreamSnapshot{}, &SubscriptionPoolEvent{}, &SubscriptionSyncSource{}, &SubscriptionSyncBinding{}, &SubscriptionSyncObservation{}, &SubscriptionSyncEvent{}}

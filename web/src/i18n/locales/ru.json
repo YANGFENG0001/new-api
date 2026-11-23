@@ -8353,6 +8353,16 @@
     "Currency inputs use the site exchange rate and are saved as quota units. Upstream percentages do not define a monetary capacity.": "Суммы пересчитываются по курсу сайта и сохраняются в единицах квоты. Проценты сервиса не определяют денежный лимит.",
     "Enter a positive local quota to replace the unlimited setting. Upstream synchronization will not overwrite this limit.": "Введите положительную локальную квоту вместо безлимитного режима. Синхронизация не перезапишет этот лимит.",
     "Upstream total usage": "Общее использование сервиса",
-    "Source polling only reads the upstream cache. This account has an old observation; another poll does not make it fresh. Check the upstream cache updater or per-cycle observation time mapping.": "Опрос читает только кеш сервиса. Наблюдение этого аккаунта устарело; повторный опрос его не обновит. Проверьте обновление кеша и поле времени каждого периода."
+    "Source polling only reads the upstream cache. This account has an old observation; another poll does not make it fresh. Check the upstream cache updater or per-cycle observation time mapping.": "Опрос читает только кеш сервиса. Наблюдение этого аккаунта устарело; повторный опрос его не обновит. Проверьте обновление кеша и поле времени каждого периода.",
+    "Historical upstream snapshot": "Исторический снимок вышестоящего сервиса",
+    "Local estimate for current cycle": "Локальная оценка текущего периода",
+    "Legacy subscriptions retain settled usage in exactly matching cycles. Unmatched usage requires reconciliation before migration. Legacy inflight requests remain on their original ledger.": "Использование обычной подписки переносится только в периоды с совпадающими границами. Несовпадающее использование необходимо сверить до переноса. Незавершённые запросы остаются в исходном реестре.",
+    "Settled usage to retain: {{amount}} quota units; excluded inflight reserves: {{reserved}}; target cycles: {{cycles}}.": "Сохраняемое использование: {{amount}} единиц; исключённые резервы: {{reserved}}; целевые периоды: {{cycles}}.",
+    "This pool has no allowed channels. Select at least one channel so its members can use their subscriptions.": "У пула нет разрешённых каналов. Выберите хотя бы один канал для использования подписок.",
+    "Channels can be shared by multiple pools. Each request is charged to its selected subscription pool, not to a channel account.": "Несколько пулов могут использовать общие каналы. Запрос учитывается в пуле выбранной подписки, а не аккаунта канала.",
+    "Upstream account selection is controlled by the upstream service. Channel access does not guarantee an account match; synchronization calibrates only the account selected for this pool.": "Фактический аккаунт выбирает вышестоящий сервис. Доступ к каналу не гарантирует совпадение; синхронизация сверяет только выбранный для пула аккаунт.",
+    "Legacy usage window does not match; reconcile usage before migration": "Периоды не совпадают; сверьте использование перед переносом",
+    "Legacy usage changed; preview the assignment again": "Использование изменилось; повторите предварительный просмотр",
+    "Legacy usage requires reconciliation before migration": "Перед переносом необходимо сверить использование"
   }
 }

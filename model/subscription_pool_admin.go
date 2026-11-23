@@ -1,7 +1,9 @@
 package model
 
 import (
+	"crypto/sha256"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 
@@ -145,6 +147,21 @@ func saveSubscriptionPool(db *gorm.DB, input SubscriptionPoolInput, actorID int)
 		if err := configureSubscriptionCyclesTx(tx, allocationOwner(0, pool.Id), input.Cycles, GetDBTimestamp()); err != nil {
 			return err
 		}
+		// A channel is the sentinel for its link set. Serialize relation edits
+		// with admission, without imposing a one-channel/one-account assumption.
+		var previousChannels []int
+		if err := tx.Model(&SubscriptionPoolChannel{}).Where("pool_id = ?", pool.Id).Pluck("channel_id", &previousChannels).Error; err != nil {
+			return err
+		}
+		channelIDs := append(previousChannels, input.Channels...)
+		slices.Sort(channelIDs)
+		channelIDs = slices.Compact(channelIDs)
+		var channels []Channel
+		if len(channelIDs) > 0 {
+			if err := lockForUpdate(tx).Select("id").Where("id IN ?", channelIDs).Order("id").Find(&channels).Error; err != nil {
+				return err
+			}
+		}
 		if err := tx.Where("pool_id = ?", pool.Id).Delete(&SubscriptionPoolChannel{}).Error; err != nil {
 			return err
 		}
@@ -154,15 +171,11 @@ func saveSubscriptionPool(db *gorm.DB, input SubscriptionPoolInput, actorID int)
 				continue
 			}
 			seen[id] = true
-			var channel Channel
-			if err := tx.Select("id", "channel_info").First(&channel, id).Error; err != nil {
-				return err
-			}
-			if channel.ChannelInfo.IsMultiKey {
-				return errors.New("Pool channels must identify a single upstream account")
+			if !slices.ContainsFunc(channels, func(channel Channel) bool { return channel.Id == id }) {
+				return errors.New("Upstream channel is unavailable")
 			}
 			if err := tx.Create(&SubscriptionPoolChannel{ChannelID: id, PoolID: pool.Id}).Error; err != nil {
-				return errors.New("Channel is already assigned to another upstream pool")
+				return err
 			}
 		}
 		return tx.Create(&SubscriptionPoolEvent{PoolID: pool.Id, ActorID: actorID, Action: "save", CreatedAt: GetDBTimestamp()}).Error
@@ -237,7 +250,7 @@ func SaveSubscriptionPlanAllocationTx(tx *gorm.DB, cfg SubscriptionPlanAllocatio
 
 // Assignment changes preserve both pools' existing windows and all inflight
 // reservations. Personal counters are keyed by pool+user, not subscription.
-func AssignSubscriptionPool(subID, poolID int, version, endTime int64, actorID int, confirm bool, poolVersion int64) error {
+func AssignSubscriptionPool(subID, poolID int, version, endTime int64, actorID int, confirm bool, poolVersion int64, expectedCarry ...string) error {
 	if subID <= 0 || poolID <= 0 || version < 0 || !confirm {
 		return errors.New("Confirm the subscription pool assignment impact")
 	}
@@ -302,6 +315,25 @@ func AssignSubscriptionPool(subID, poolID int, version, endTime int64, actorID i
 		if a.Version != version || a.Version != hint.Version {
 			return errors.New("Subscription assignment changed; reload before saving")
 		}
+		carry, err := legacySubscriptionCarryTx(tx, &sub, &a, pool, false)
+		if err != nil {
+			return err
+		}
+		if len(expectedCarry) > 0 && expectedCarry[0] != "" && expectedCarry[0] != carry.Digest {
+			return errors.New("Legacy usage changed; preview the assignment again")
+		}
+		if carry.Amount > 0 {
+			if _, err := legacySubscriptionCarryTx(tx, &sub, &a, pool, true); err != nil {
+				return err
+			}
+			detail, err := cycleJSON(carry)
+			if err != nil {
+				return err
+			}
+			if err := tx.Create(&SubscriptionPoolEvent{PoolID: poolID, SubscriptionID: subID, ActorID: actorID, Action: "legacy_carry", Detail: detail, CreatedAt: GetDBTimestamp()}).Error; err != nil {
+				return err
+			}
+		}
 		a.SubscriptionID = sub.Id
 		a.UserID = sub.UserId
 		a.PoolID = poolID
@@ -314,12 +346,13 @@ func AssignSubscriptionPool(subID, poolID int, version, endTime int64, actorID i
 		if err := tx.Model(&sub).Updates(map[string]any{"end_time": endTime, "next_reset_time": 0}).Error; err != nil {
 			return err
 		}
-		detail, _ := cycleJSON(map[string]any{"previous_pool_id": hint.PoolID, "end_time": endTime, "usage_transfer": false})
+		detail, _ := cycleJSON(map[string]any{"previous_pool_id": hint.PoolID, "end_time": endTime, "usage_transfer": carry.Amount > 0})
 		return tx.Create(&SubscriptionPoolEvent{PoolID: poolID, SubscriptionID: subID, ActorID: actorID, Action: "assign", Detail: detail, CreatedAt: GetDBTimestamp()}).Error
 	})
 }
 
 type SubscriptionAssignmentPreview struct {
+	Carry          SubscriptionLegacyCarry `json:"legacy_carry"`
 	SubscriptionID int                     `json:"subscription_id"`
 	Current        SubscriptionAllocation  `json:"current"`
 	TargetPoolID   int                     `json:"target_pool_id"`
@@ -385,9 +418,126 @@ func PreviewSubscriptionPoolAssignment(subID, poolID int, endTime int64) (*Subsc
 		}
 		var err error
 		view.TargetCycles, err = subscriptionCycleViewsTx(tx, allocationOwner(0, poolID), pool.Rules, sub.UserId, false, now)
+		if err != nil {
+			return err
+		}
+		view.Carry, err = legacySubscriptionCarryTx(tx, &sub, &view.Current, pool, false)
+		view.UsageTransfer = view.Carry.Amount > 0
 		return err
 	})
 	return view, err
+}
+
+// A legacy total has no per-request window history. Transfer only settled use
+// into exactly matching windows, never copy a weekly total into a short window.
+// Other transitions retain their existing ledgers without transferring balances.
+type SubscriptionLegacyCarry struct {
+	Amount           int64    `json:"amount"`
+	ExcludedReserved int64    `json:"excluded_reserved"`
+	WindowStart      int64    `json:"window_start"`
+	WindowEnd        int64    `json:"window_end"`
+	Keys             []string `json:"keys"`
+	Digest           string   `json:"digest"`
+}
+
+func legacySubscriptionCarryTx(tx *gorm.DB, sub *UserSubscription, allocation *SubscriptionAllocation, pool SubscriptionPool, apply bool) (SubscriptionLegacyCarry, error) {
+	carry := SubscriptionLegacyCarry{Keys: []string{}}
+	if allocation.SubscriptionID > 0 || sub.AmountUsed == 0 {
+		return carry, nil
+	}
+	if sub.AmountUsed < 0 || sub.AmountUsed > common.MaxWalletQuota {
+		return carry, errors.New("Invalid subscription counter")
+	}
+	var open []SubscriptionPreConsumeRecord
+	if err := lockForUpdate(tx).Where("user_subscription_id = ? AND status = ?", sub.Id, "consumed").Order("id").Find(&open).Error; err != nil {
+		return carry, err
+	}
+	for _, rec := range open {
+		if rec.PreConsumed < 0 || rec.PreConsumed > common.MaxWalletQuota-carry.ExcludedReserved {
+			return carry, errors.New("Invalid subscription counter")
+		}
+		carry.ExcludedReserved += rec.PreConsumed
+	}
+	if carry.ExcludedReserved > sub.AmountUsed {
+		return carry, errors.New("Legacy usage requires reconciliation before migration")
+	}
+	carry.Amount = sub.AmountUsed - carry.ExcludedReserved
+	if carry.Amount == 0 {
+		return carry, nil
+	}
+	now := GetDBTimestamp()
+	carry.WindowStart, carry.WindowEnd = sub.LastResetTime, sub.NextResetTime
+	if sub.LastResetTime <= 0 || sub.NextResetTime <= now || sub.LastResetTime < now-7*86400 {
+		return carry, errors.New("Legacy usage window does not match; reconcile usage before migration")
+	}
+	var rules []SubscriptionCycleRule
+	if err := common.UnmarshalJsonStr(pool.Rules, &rules); err != nil {
+		return carry, err
+	}
+	for _, rule := range rules {
+		state, err := subscriptionCycleStateTx(tx, allocationOwner(0, pool.Id), rule, now)
+		if err != nil {
+			return carry, err
+		}
+		if err := common.UnmarshalJsonStr(state.Rule, &rule); err != nil {
+			return carry, err
+		}
+		if !rule.Enabled || rule.Seconds != carry.WindowEnd-carry.WindowStart || state.StartTime != carry.WindowStart || state.EndTime != carry.WindowEnd {
+			continue
+		}
+		carry.Keys = append(carry.Keys, rule.Key)
+		if !apply {
+			continue
+		}
+		for _, userID := range []int{0, sub.UserId} {
+			usage, err := cycleUsageTx(tx, state, userID)
+			if err != nil {
+				return carry, err
+			}
+			if usage.Used+usage.Reserved > common.MaxWalletQuota-carry.Amount {
+				return carry, errors.New("Subscription counter overflow")
+			}
+			// Reclassify an existing calibration, not a new upstream request.
+			overlap := min(carry.Amount, max(int64(0), usage.Adjustment))
+			if err := tx.Model(usage).Updates(map[string]any{"used": usage.Used + carry.Amount, "adjustment": usage.Adjustment - overlap}).Error; err != nil {
+				return carry, err
+			}
+			if userID == 0 {
+				var observation SubscriptionSyncObservation
+				if err := tx.Where("pool_id = ? AND local_key = ?", pool.Id, rule.Key).Find(&observation).Error; err != nil {
+					return carry, err
+				}
+				if observation.Payload != "" {
+					var payload subscriptionSyncPayload
+					if err := common.UnmarshalJsonStr(observation.Payload, &payload); err != nil {
+						return carry, err
+					}
+					if payload.Baseline != nil && payload.Baseline.UsageID == usage.Id && payload.WindowEnd == state.EndTime {
+						if payload.Baseline.Used > common.MaxWalletQuota-carry.Amount {
+							return carry, errors.New("Subscription counter overflow")
+						}
+						payload.Baseline.Used += carry.Amount
+						raw, err := cycleJSON(payload)
+						if err != nil {
+							return carry, err
+						}
+						if err := tx.Model(&observation).Update("payload", raw).Error; err != nil {
+							return carry, err
+						}
+					}
+				}
+			}
+		}
+	}
+	if len(carry.Keys) == 0 {
+		return carry, errors.New("Legacy usage window does not match; reconcile usage before migration")
+	}
+	raw, err := cycleJSON(carry)
+	if err != nil {
+		return carry, err
+	}
+	carry.Digest = fmt.Sprintf("%x", sha256.Sum256([]byte(raw)))
+	return carry, nil
 }
 
 // Snapshot ingestion is idempotent; stale or incompatible observations fail
@@ -581,6 +731,16 @@ func DeleteSubscriptionPool(id int, version, bindingVersion int64, actorID int) 
 		}
 		if count > 0 {
 			return errors.New("Wait for in-flight requests to finish before deleting this pool")
+		}
+		var channelIDs []int
+		if err := tx.Model(&SubscriptionPoolChannel{}).Where("pool_id = ?", id).Pluck("channel_id", &channelIDs).Error; err != nil {
+			return err
+		}
+		if len(channelIDs) > 0 {
+			var channels []Channel
+			if err := lockForUpdate(tx).Select("id").Where("id IN ?", channelIDs).Order("id").Find(&channels).Error; err != nil {
+				return err
+			}
 		}
 		if err := tx.Where("pool_id = ?", id).Delete(&SubscriptionPoolChannel{}).Error; err != nil {
 			return err

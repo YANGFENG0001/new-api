@@ -112,6 +112,7 @@ export type Allocation = {
   version: number
 }
 export type Assignment = {
+  usage_digest?: string
   subscription_id: number
   pool_id: number
   version: number
@@ -120,6 +121,14 @@ export type Assignment = {
   pool_version: number
 }
 export type AssignmentPreview = {
+  legacy_carry?: {
+    amount: number
+    excluded_reserved: number
+    window_start: number
+    window_end: number
+    keys: string[]
+    digest: string
+  }
   subscription_id: number
   current: Allocation
   target_pool_id: number

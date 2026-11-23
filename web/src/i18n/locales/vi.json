@@ -8353,6 +8353,16 @@
     "Currency inputs use the site exchange rate and are saved as quota units. Upstream percentages do not define a monetary capacity.": "Số tiền được đổi theo tỷ giá của trang và lưu dưới dạng đơn vị hạn mức. Phần trăm thượng nguồn không xác định hạn mức tiền.",
     "Enter a positive local quota to replace the unlimited setting. Upstream synchronization will not overwrite this limit.": "Nhập hạn mức cục bộ dương để tắt chế độ không giới hạn. Đồng bộ thượng nguồn không ghi đè giới hạn này.",
     "Upstream total usage": "Tổng mức sử dụng thượng nguồn",
-    "Source polling only reads the upstream cache. This account has an old observation; another poll does not make it fresh. Check the upstream cache updater or per-cycle observation time mapping.": "Thăm dò chỉ đọc bộ nhớ đệm thượng nguồn. Quan sát của tài khoản này đã cũ; thăm dò lại không làm mới ảnh chụp. Kiểm tra cơ chế cập nhật bộ nhớ đệm hoặc ánh xạ thời gian của từng chu kỳ."
+    "Source polling only reads the upstream cache. This account has an old observation; another poll does not make it fresh. Check the upstream cache updater or per-cycle observation time mapping.": "Thăm dò chỉ đọc bộ nhớ đệm thượng nguồn. Quan sát của tài khoản này đã cũ; thăm dò lại không làm mới ảnh chụp. Kiểm tra cơ chế cập nhật bộ nhớ đệm hoặc ánh xạ thời gian của từng chu kỳ.",
+    "Historical upstream snapshot": "Ảnh chụp dữ liệu thượng nguồn trước đây",
+    "Local estimate for current cycle": "Ước tính cục bộ cho chu kỳ hiện tại",
+    "Legacy subscriptions retain settled usage in exactly matching cycles. Unmatched usage requires reconciliation before migration. Legacy inflight requests remain on their original ledger.": "Gói truyền thống giữ mức dùng đã quyết toán trong các chu kỳ có cửa sổ trùng khớp hoàn toàn. Cần đối soát mức dùng không khớp trước khi chuyển. Yêu cầu đang chạy vẫn thuộc sổ cũ.",
+    "Settled usage to retain: {{amount}} quota units; excluded inflight reserves: {{reserved}}; target cycles: {{cycles}}.": "Mức dùng đã quyết toán giữ lại: {{amount}} đơn vị; dự trữ đang chạy bị loại: {{reserved}}; chu kỳ đích: {{cycles}}.",
+    "This pool has no allowed channels. Select at least one channel so its members can use their subscriptions.": "Nhóm chưa có kênh được phép. Chọn ít nhất một kênh để thành viên sử dụng gói.",
+    "Channels can be shared by multiple pools. Each request is charged to its selected subscription pool, not to a channel account.": "Nhiều nhóm có thể dùng chung kênh. Yêu cầu được tính vào nhóm của gói đã chọn, không suy ra từ tài khoản của kênh.",
+    "Upstream account selection is controlled by the upstream service. Channel access does not guarantee an account match; synchronization calibrates only the account selected for this pool.": "Dịch vụ thượng nguồn chọn tài khoản thực tế. Kênh không đảm bảo khớp tài khoản; đồng bộ chỉ hiệu chỉnh tài khoản đã chọn cho nhóm.",
+    "Legacy usage window does not match; reconcile usage before migration": "Cửa sổ sử dụng không khớp; cần đối soát trước khi chuyển",
+    "Legacy usage changed; preview the assignment again": "Mức dùng đã thay đổi; hãy xem trước phân bổ lại",
+    "Legacy usage requires reconciliation before migration": "Cần đối soát mức dùng trước khi chuyển"
   }
 }

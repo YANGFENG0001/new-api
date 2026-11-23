@@ -1341,10 +1341,6 @@ func PreConsumeUserSubscriptionForChannel(requestId string, userId int, modelNam
 	returnValue := &SubscriptionPreConsumeResult{}
 
 	err := DB.Transaction(func(tx *gorm.DB) error {
-		var mapping SubscriptionPoolChannel
-		if err := tx.Where("channel_id = ?", channelID).Find(&mapping).Error; err != nil {
-			return err
-		}
 		var existing SubscriptionPreConsumeRecord
 		query := tx.Where("request_id = ?", requestId).Limit(1).Find(&existing)
 		if query.Error != nil {
@@ -1358,10 +1354,19 @@ func PreConsumeUserSubscriptionForChannel(requestId string, userId int, modelNam
 			if err := tx.Where("request_id = ?", requestId).Find(&reservation).Error; err != nil {
 				return err
 			}
-			if reservation.Id > 0 && reservation.PoolID != mapping.PoolID {
+			if reservation.PoolID > 0 {
+				if err := lockSubscriptionResource(tx, 0, reservation.PoolID); err != nil {
+					return err
+				}
+			}
+			channelPools, err := subscriptionChannelPoolsTx(tx, channelID)
+			if err != nil {
+				return err
+			}
+			if reservation.PoolID > 0 && !channelPools[reservation.PoolID] {
 				return errors.New("Subscription retries cannot change upstream pool")
 			}
-			if reservation.Id == 0 && mapping.PoolID > 0 {
+			if reservation.PoolID == 0 && len(channelPools) > 0 {
 				return errors.New("Subscription retries cannot change upstream pool")
 			}
 			if reservation.Status == "refunded" || existing.Status == "refunded" {
@@ -1423,18 +1428,42 @@ func PreConsumeUserSubscriptionForChannel(requestId string, userId int, modelNam
 				return err
 			}
 		}
+		channelPools, err := subscriptionChannelPoolsTx(tx, channelID)
+		if err != nil {
+			return err
+		}
+		var unavailable error
 		for _, candidate := range subs {
 			sub := candidate
 			var allocation SubscriptionAllocation
 			if err := tx.Where("subscription_id = ?", sub.Id).Find(&allocation).Error; err != nil {
 				return err
 			}
-			if allocation.PoolID != mapping.PoolID || allocation.Pending {
+			if allocation.Pending {
+				if unavailable == nil {
+					unavailable = errors.New("subscription quota insufficient: pool assignment pending")
+				}
+				continue
+			}
+			if (allocation.PoolID > 0 && !channelPools[allocation.PoolID]) || (allocation.PoolID == 0 && len(channelPools) > 0) {
+				if unavailable == nil {
+					unavailable = errors.New("subscription quota insufficient: selected channel does not match subscription pool")
+					if allocation.PoolID > 0 {
+						var count int64
+						if err := tx.Model(&SubscriptionPoolChannel{}).Where("pool_id = ?", allocation.PoolID).Count(&count).Error; err != nil {
+							return err
+						}
+						if count == 0 {
+							unavailable = errors.New("subscription quota insufficient: pool has no bound channels")
+						}
+					}
+				}
 				continue
 			}
 			managed, cycleErr := reserveSubscriptionCyclesTx(tx, requestId, &sub, channelID, amount, now)
 			if cycleErr != nil {
 				if strings.Contains(cycleErr.Error(), "subscription quota insufficient") {
+					unavailable = cycleErr
 					continue
 				}
 				return cycleErr
@@ -1483,6 +1512,7 @@ func PreConsumeUserSubscriptionForChannel(requestId string, userId int, modelNam
 			if !managed && sub.AmountTotal > 0 {
 				remain := sub.AmountTotal - usedBefore
 				if remain < amount {
+					unavailable = errors.New("subscription quota insufficient: cycle limit reached")
 					continue
 				}
 			}
@@ -1527,6 +1557,9 @@ func PreConsumeUserSubscriptionForChannel(requestId string, userId int, modelNam
 			returnValue.AmountUsedBefore = usedBefore
 			returnValue.AmountUsedAfter = sub.AmountUsed
 			return nil
+		}
+		if unavailable != nil {
+			return fmt.Errorf("%w, need=%d", unavailable, amount)
 		}
 		return fmt.Errorf("subscription quota insufficient, need=%d", amount)
 	})
@@ -1599,7 +1632,9 @@ func CleanupSubscriptionPreConsumeRecords(olderThanSeconds int64) (int64, error)
 		olderThanSeconds = 7 * 24 * 3600
 	}
 	cutoff := GetDBTimestamp() - olderThanSeconds
-	res := DB.Where("updated_at < ?", cutoff).Where("request_id NOT IN (?)", DB.Model(&SubscriptionCycleReservation{}).Select("request_id")).Delete(&SubscriptionPreConsumeRecord{})
+	// Outstanding legacy reservations must retain settlement/refund provenance,
+	// even when an upstream request outlives the usual cleanup retention.
+	res := DB.Where("updated_at < ? AND status IN ?", cutoff, []string{"settled", "refunded"}).Where("request_id NOT IN (?)", DB.Model(&SubscriptionCycleReservation{}).Select("request_id")).Delete(&SubscriptionPreConsumeRecord{})
 	return res.RowsAffected, res.Error
 }
 

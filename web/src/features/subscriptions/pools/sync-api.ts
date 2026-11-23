@@ -116,6 +116,8 @@ export type SyncAccount = {
   cycles: SyncCycle[]
 }
 export type SyncObservation = {
+  local_estimated_utilization?: number | null
+  local_window_end?: number
   seconds?: number
   estimated_utilization?: number | null
   local_delta?: number

@@ -8353,6 +8353,16 @@
     "Currency inputs use the site exchange rate and are saved as quota units. Upstream percentages do not define a monetary capacity.": "金額按站點匯率換算後儲存為額度單位。上游百分比不代表具體金額額度。",
     "Enter a positive local quota to replace the unlimited setting. Upstream synchronization will not overwrite this limit.": "填寫大於零的本地額度即可關閉無限制。上游同步不會覆蓋此本地額度。",
     "Upstream total usage": "上游整體用量",
-    "Source polling only reads the upstream cache. This account has an old observation; another poll does not make it fresh. Check the upstream cache updater or per-cycle observation time mapping.": "輪詢僅讀取上游快取。此帳號的觀測時間較舊，再次輪詢不會使快照變新；請檢查上游快取更新機制或各週期的觀測時間映射。"
+    "Source polling only reads the upstream cache. This account has an old observation; another poll does not make it fresh. Check the upstream cache updater or per-cycle observation time mapping.": "輪詢僅讀取上游快取。此帳號的觀測時間較舊，再次輪詢不會使快照變新；請檢查上游快取更新機制或各週期的觀測時間映射。",
+    "Historical upstream snapshot": "歷史上游快照",
+    "Local estimate for current cycle": "目前週期的本地估算",
+    "Legacy subscriptions retain settled usage in exactly matching cycles. Unmatched usage requires reconciliation before migration. Legacy inflight requests remain on their original ledger.": "傳統訂閱的已結算用量將繼承至時間窗口完全一致的週期。窗口不一致時須先核對用量，不能直接歸零；進行中的請求仍記入原帳本。",
+    "Settled usage to retain: {{amount}} quota units; excluded inflight reserves: {{reserved}}; target cycles: {{cycles}}.": "將繼承已結算用量：{{amount}} 額度單位；排除進行中預扣：{{reserved}}；目標週期：{{cycles}}。",
+    "This pool has no allowed channels. Select at least one channel so its members can use their subscriptions.": "此共乘池尚未選擇可用渠道。請至少選擇一個渠道，成員才能使用訂閱。",
+    "Channels can be shared by multiple pools. Each request is charged to its selected subscription pool, not to a channel account.": "多個共乘池可以共用渠道。每次請求按所選用戶訂閱所屬的池計量，不按渠道推斷上游帳號。",
+    "Upstream account selection is controlled by the upstream service. Channel access does not guarantee an account match; synchronization calibrates only the account selected for this pool.": "實際使用哪個上游帳號由上游調度決定。選擇渠道不保證帳號匹配；自動同步只校準此池所選帳號，不能證明請求實際消耗了該帳號。",
+    "Legacy usage window does not match; reconcile usage before migration": "傳統訂閱與目標週期的時間窗口不一致，請核對用量後再遷移",
+    "Legacy usage changed; preview the assignment again": "傳統訂閱用量已變更，請重新預覽分配",
+    "Legacy usage requires reconciliation before migration": "傳統訂閱用量帳目需要核對，暫不能遷移"
   }
 }

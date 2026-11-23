@@ -29,6 +29,98 @@ import { CycleProgress } from '../cycle-progress'
 import { SelfAlignedUsage } from '../self-usage'
 
 const clients: QueryClient[] = []
+
+test('a local current-window estimate remains separate from an expired upstream snapshot', () => {
+  const end = Math.floor(Date.now() / 1000) + 3500
+  render(
+    <CycleProgress
+      preferObservations
+      cycles={[
+        {
+          key: 'c',
+          name: 'Current local',
+          seconds: 3600,
+          shared: true,
+          unlimited: true,
+          limit: 0,
+          used: 10,
+          adjustment: 0,
+          reserved: 0,
+          start_time: end - 3600,
+          next_reset: end,
+          pending: false,
+        },
+      ]}
+      observations={[
+        {
+          key: 'c',
+          name: 'Old upstream',
+          utilization: 0.9,
+          sampled_at: end - 3700,
+          fetched_at: end - 3500,
+          window_end: end - 3600,
+          stale: true,
+          pending: '',
+          local_window_end: end,
+          local_estimated_utilization: 0.1,
+        },
+      ]}
+    />
+  )
+  const current = screen.getByRole('region', { name: 'Current local' })
+  expect(within(current).getByText('10%')).toBeVisible()
+  expect(
+    within(current).getByText('Local estimate for current cycle')
+  ).toBeVisible()
+  expect(screen.getByText('Historical upstream snapshot')).toBeVisible()
+  expect(screen.getByText('90%')).toBeVisible()
+})
+
+test.each(['expired', 'stale', 'pending'])(
+  'a %s upstream snapshot cannot replace the current local cycle',
+  (reason) => {
+    const end = Math.floor(Date.now() / 1000) + 3600
+    render(
+      <CycleProgress
+        preferObservations
+        cycles={[
+          {
+            key: 'c',
+            name: 'Current cycle',
+            seconds: 3600,
+            shared: true,
+            unlimited: false,
+            limit: 100,
+            used: 7,
+            adjustment: 0,
+            reserved: 0,
+            start_time: end - 3600,
+            next_reset: end,
+            pending: false,
+          },
+        ]}
+        observations={[
+          {
+            key: 'c',
+            name: 'Upstream cycle',
+            utilization: 0.9,
+            sampled_at: end - 3500,
+            fetched_at: end - 3490,
+            window_end: reason === 'expired' ? end - 3600 : end,
+            stale: reason === 'stale',
+            pending:
+              reason === 'pending'
+                ? 'Upstream reset shift requires confirmation'
+                : '',
+          },
+        ]}
+      />
+    )
+    const local = screen.getByRole('region', { name: 'Current cycle' })
+    expect(within(local).getByText(/7 \/ 100/)).toBeVisible()
+    expect(within(local).getByText('Local usage statistics')).toBeVisible()
+  }
+)
 afterEach(() => {
   clients.splice(0).forEach((client) => client.clear())
 })

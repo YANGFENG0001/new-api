@@ -57,7 +57,7 @@ func PreConsumeBilling(c *gin.Context, preConsumedQuota int, relayInfo *relaycom
 	if apiErr != nil {
 		return apiErr
 	}
-	allowed, blocked, pooled, err := model.SubscriptionPinnedChannels(relayInfo.GetChannelID())
+	allowed, blocked, pooled, err := model.SubscriptionPinnedChannels(relayInfo.RequestId)
 	if err != nil {
 		session.Refund(c)
 		return types.NewError(err, types.ErrorCodeQueryDataError, types.ErrOptionWithSkipRetry())

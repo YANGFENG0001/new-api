@@ -268,12 +268,13 @@ func GetUserSubscriptionAllocations(c *gin.Context) {
 }
 
 type subscriptionPoolAssignment struct {
-	SubscriptionID int   `json:"subscription_id"`
-	PoolID         int   `json:"pool_id"`
-	Version        int64 `json:"version"`
-	EndTime        int64 `json:"end_time"`
-	Confirm        bool  `json:"confirm"`
-	PoolVersion    int64 `json:"pool_version"`
+	UsageDigest    string `json:"usage_digest"`
+	SubscriptionID int    `json:"subscription_id"`
+	PoolID         int    `json:"pool_id"`
+	Version        int64  `json:"version"`
+	EndTime        int64  `json:"end_time"`
+	Confirm        bool   `json:"confirm"`
+	PoolVersion    int64  `json:"pool_version"`
 }
 
 func subscriptionAssignmentTarget(c *gin.Context, id int) error {
@@ -311,7 +312,7 @@ func AssignUserSubscriptionPool(c *gin.Context) {
 		common.ApiSuccess(c, preview)
 		return
 	}
-	if err := model.AssignSubscriptionPool(input.SubscriptionID, input.PoolID, input.Version, input.EndTime, c.GetInt("id"), true, input.PoolVersion); err != nil {
+	if err := model.AssignSubscriptionPool(input.SubscriptionID, input.PoolID, input.Version, input.EndTime, c.GetInt("id"), true, input.PoolVersion, input.UsageDigest); err != nil {
 		common.ApiError(c, err)
 		return
 	}
@@ -339,7 +340,7 @@ func BatchAssignSubscriptionPool(c *gin.Context) {
 		var preview *model.SubscriptionAssignmentPreview
 		if err == nil {
 			if item.Confirm {
-				err = model.AssignSubscriptionPool(item.SubscriptionID, item.PoolID, item.Version, item.EndTime, c.GetInt("id"), true, item.PoolVersion)
+				err = model.AssignSubscriptionPool(item.SubscriptionID, item.PoolID, item.Version, item.EndTime, c.GetInt("id"), true, item.PoolVersion, item.UsageDigest)
 			} else {
 				preview, err = model.PreviewSubscriptionPoolAssignment(item.SubscriptionID, item.PoolID, item.EndTime)
 			}

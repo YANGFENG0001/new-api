@@ -22,6 +22,7 @@ import { SyncUsageCard } from './sync-usage'
 export function SyncObservations(props: {
   observations: SyncObservation[]
   scope?: 'Shared' | 'Independent'
+  historical?: boolean
 }) {
   return (
     <div className='grid min-w-0 gap-3'>
@@ -38,6 +39,7 @@ export function SyncObservations(props: {
           estimatedUtilization={o.estimated_utilization}
           localDelta={o.local_delta}
           scope={props.scope}
+          historical={props.historical}
         />
       ))}
     </div>

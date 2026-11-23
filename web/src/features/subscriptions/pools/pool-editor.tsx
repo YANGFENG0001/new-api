@@ -245,9 +245,21 @@ export function PoolEditor(props: {
           />
           <p className='text-muted-foreground mt-2 text-xs'>
             {t(
-              'Each channel must use a single upstream account. Channels cannot belong to multiple pools.'
+              'Channels can be shared by multiple pools. Each request is charged to its selected subscription pool, not to a channel account.'
             )}
           </p>
+          <p className='text-muted-foreground mt-2 text-xs'>
+            {t(
+              'Upstream account selection is controlled by the upstream service. Channel access does not guarantee an account match; synchronization calibrates only the account selected for this pool.'
+            )}
+          </p>
+          {!values.channels.length && (
+            <p role='status' className='text-warning mt-2 text-sm'>
+              {t(
+                'This pool has no allowed channels. Select at least one channel so its members can use their subscriptions.'
+              )}
+            </p>
+          )}
         </div>
         {props.pool && props.caps?.sync_read ? (
           <PoolSyncBinding

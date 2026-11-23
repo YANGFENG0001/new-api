@@ -412,6 +412,21 @@ test('a saved pool synchronization shortcut opens unified settings with exactly 
     />
   )
   await userEvent.click(await screen.findByRole('button', { name: 'Edit' }))
+  expect(
+    screen.getByText(
+      'This pool has no allowed channels. Select at least one channel so its members can use their subscriptions.'
+    )
+  ).toBeVisible()
+  expect(
+    screen.getByText(
+      'Channels can be shared by multiple pools. Each request is charged to its selected subscription pool, not to a channel account.'
+    )
+  ).toBeVisible()
+  expect(
+    screen.getByText(
+      'Upstream account selection is controlled by the upstream service. Channel access does not guarantee an account match; synchronization calibrates only the account selected for this pool.'
+    )
+  ).toBeVisible()
   expect(screen.getByRole('tab', { name: 'Settings' })).toHaveAttribute(
     'aria-selected',
     'true'
@@ -541,7 +556,15 @@ test('single assignment requires a server preview and confirms the versions actu
           end_time: 253402300799,
           current: { version: 2 },
           target_cycles: [],
-          usage_transfer: false,
+          usage_transfer: true,
+          legacy_carry: {
+            amount: 70,
+            excluded_reserved: 30,
+            window_start: 1,
+            window_end: pool.end_time,
+            keys: ['week'],
+            digest: 'reviewed-usage',
+          },
         })
       }
       return envelope([pool])
@@ -574,6 +597,11 @@ test('single assignment requires a server preview and confirms the versions actu
   })
   expect(within(dialog).getByText('Never')).toBeVisible()
   expect(
+    within(dialog).getByText(
+      'Settled usage to retain: 70 quota units; excluded inflight reserves: 30; target cycles: week.'
+    )
+  ).toBeVisible()
+  expect(
     request.mock.calls.filter(
       ([c]) => (c.data as Assignment | undefined)?.confirm === true
     )
@@ -594,6 +622,7 @@ test('single assignment requires a server preview and confirms the versions actu
   expect(confirmed.version).toBe(2)
   expect(confirmed.pool_version).toBe(4)
   expect(confirmed.end_time).toBe(0)
+  expect(confirmed.usage_digest).toBe('reviewed-usage')
 })
 
 test('allocation load failures do not expose enabled batch controls', async () => {

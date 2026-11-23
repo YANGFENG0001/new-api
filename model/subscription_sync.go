@@ -797,18 +797,20 @@ func applySubscriptionSyncAccountTx(tx *gorm.DB, source SubscriptionSyncSource, 
 }
 
 type SubscriptionSyncObservationView struct {
-	Seconds              int64    `json:"seconds"`
-	EstimatedUtilization *float64 `json:"estimated_utilization"`
-	LocalDelta           int64    `json:"local_delta"`
-	Key                  string   `json:"key"`
-	Name                 string   `json:"name"`
-	Utilization          *float64 `json:"utilization"`
-	SampledAt            int64    `json:"sampled_at"`
-	FetchedAt            int64    `json:"fetched_at"`
-	WindowEnd            int64    `json:"window_end"`
-	Stale                bool     `json:"stale"`
-	Pending              string   `json:"pending"`
-	Digest               string   `json:"digest,omitempty"`
+	LocalEstimatedUtilization *float64 `json:"local_estimated_utilization"`
+	LocalWindowEnd            int64    `json:"local_window_end"`
+	Seconds                   int64    `json:"seconds"`
+	EstimatedUtilization      *float64 `json:"estimated_utilization"`
+	LocalDelta                int64    `json:"local_delta"`
+	Key                       string   `json:"key"`
+	Name                      string   `json:"name"`
+	Utilization               *float64 `json:"utilization"`
+	SampledAt                 int64    `json:"sampled_at"`
+	FetchedAt                 int64    `json:"fetched_at"`
+	WindowEnd                 int64    `json:"window_end"`
+	Stale                     bool     `json:"stale"`
+	Pending                   string   `json:"pending"`
+	Digest                    string   `json:"digest,omitempty"`
 }
 
 func subscriptionSyncViewsTx(tx *gorm.DB, poolID int, now int64) ([]SubscriptionSyncObservationView, error) {
@@ -886,13 +888,73 @@ func subscriptionSyncViewsTx(tx *gorm.DB, poolID int, now int64) ([]Subscription
 		if err != nil {
 			return nil, err
 		}
-		views = append(views, SubscriptionSyncObservationView{EstimatedUtilization: estimate, LocalDelta: delta, Key: r.LocalKey, Name: SubscriptionCycleName(c.Name, c.Seconds), Seconds: c.Seconds, Utilization: c.Utilization, SampledAt: r.SampledAt, FetchedAt: r.FetchedAt, WindowEnd: c.WindowEnd, Stale: b.LastError != "" || r.LastError != "" || now-r.SampledAt > SubscriptionSyncStaleSeconds(source) || c.WindowEnd <= now, Pending: r.Pending, Digest: r.Digest})
+		localEstimate, localEnd, err := subscriptionSyncCurrentWindowEstimateTx(tx, poolID, r, now)
+		if err != nil {
+			return nil, err
+		}
+		views = append(views, SubscriptionSyncObservationView{LocalEstimatedUtilization: localEstimate, LocalWindowEnd: localEnd, EstimatedUtilization: estimate, LocalDelta: delta, Key: r.LocalKey, Name: SubscriptionCycleName(c.Name, c.Seconds), Seconds: c.Seconds, Utilization: c.Utilization, SampledAt: r.SampledAt, FetchedAt: r.FetchedAt, WindowEnd: c.WindowEnd, Stale: b.LastError != "" || r.LastError != "" || now-r.SampledAt > SubscriptionSyncStaleSeconds(source) || c.WindowEnd <= now, Pending: r.Pending, Digest: r.Digest})
 	}
 	return views, nil
 }
 
 func GetSubscriptionSyncViews(poolID int) ([]SubscriptionSyncObservationView, error) {
-	return subscriptionSyncViewsTx(DB, poolID, GetDBTimestamp())
+	var views []SubscriptionSyncObservationView
+	err := DB.Transaction(func(tx *gorm.DB) error {
+		if err := lockSubscriptionResource(tx, 0, poolID); err != nil {
+			return err
+		}
+		var err error
+		views, err = subscriptionSyncViewsTx(tx, poolID, GetDBTimestamp())
+		return err
+	})
+	return views, err
+}
+
+// Advancing a local window is not an upstream observation. Report the two
+// separately so an expired upstream bar cannot hide a locally reset ledger.
+func subscriptionSyncCurrentWindowEstimateTx(tx *gorm.DB, poolID int, observation SubscriptionSyncObservation, now int64) (*float64, int64, error) {
+	var payload subscriptionSyncPayload
+	if err := common.UnmarshalJsonStr(observation.Payload, &payload); err != nil {
+		return nil, 0, err
+	}
+	b := payload.Baseline
+	if b == nil || b.Capacity <= 0 || b.Capacity > common.MaxWalletQuota || payload.Error != "" || payload.Seconds <= 0 || observation.Pending == "Upstream reset shift requires confirmation" {
+		return nil, 0, nil
+	}
+	var state SubscriptionCycleState
+	if err := tx.Where("owner = ? AND cycle_key = ?", allocationOwner(0, poolID), observation.LocalKey).First(&state).Error; err != nil {
+		return nil, 0, err
+	}
+	var rule SubscriptionCycleRule
+	if err := common.UnmarshalJsonStr(state.Rule, &rule); err != nil {
+		return nil, 0, err
+	}
+	effective, err := subscriptionCycleStateTx(tx, state.Owner, rule, now)
+	if err != nil {
+		return nil, 0, err
+	}
+	if err := common.UnmarshalJsonStr(effective.Rule, &rule); err != nil {
+		return nil, 0, err
+	}
+	if !rule.Enabled || rule.Seconds != payload.Seconds {
+		return nil, 0, nil
+	}
+	if effective.EndTime == payload.WindowEnd {
+		estimate, _, _, err := subscriptionSyncEstimateTx(tx, poolID, observation, now)
+		return estimate, effective.EndTime, err
+	}
+	if payload.WindowEnd <= 0 || effective.StartTime < payload.WindowEnd || (effective.StartTime-payload.WindowEnd)%payload.Seconds != 0 || effective.EndTime-effective.StartTime != payload.Seconds {
+		return nil, 0, nil
+	}
+	usage, err := cycleUsageTx(tx, effective, 0)
+	if err != nil {
+		return nil, 0, err
+	}
+	if usage.Generation != 0 {
+		return nil, 0, nil
+	} // manual resets are not natural rollovers
+	ratio := max(float64(0), (float64(usage.Used)+float64(usage.Adjustment))/float64(b.Capacity))
+	return &ratio, effective.EndTime, nil
 }
 
 func enforceSubscriptionSyncTx(tx *gorm.DB, poolID int, now int64, amount int64) error {

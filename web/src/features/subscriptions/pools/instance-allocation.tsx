@@ -29,6 +29,8 @@ import { Button } from '@/components/ui/button'
 import { Combobox } from '@/components/ui/combobox'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
+import { toIntlLocale } from '@/i18n/languages'
+import { formatNumber } from '@/lib/format'
 
 import {
   poolAPI,
@@ -49,7 +51,8 @@ export function InstanceAllocations(props: {
     plan_title?: string
   }[]
 }) {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
+  const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
   const client = useQueryClient()
   const caps = useQuery({
     queryKey: ['subscription-pools', 'capabilities'],
@@ -121,6 +124,7 @@ export function InstanceAllocations(props: {
         pool_version: p.pool_version,
         end_time: customExpiry ? p.end_time : 0,
         confirm: true,
+        usage_digest: p.legacy_carry?.digest,
       }))
       if (items.length === 1) {
         await poolAPI.assign(items[0])
@@ -251,6 +255,11 @@ export function InstanceAllocations(props: {
           )}
           <p className='text-muted-foreground text-sm'>
             {t(
+              'Legacy subscriptions retain settled usage in exactly matching cycles. Unmatched usage requires reconciliation before migration. Legacy inflight requests remain on their original ledger.'
+            )}
+          </p>
+          <p className='text-muted-foreground text-sm'>
+            {t(
               'Moving members keeps old pool usage and target pool usage unchanged. No quota is transferred or cleared. Inflight requests remain with their original pool.'
             )}
           </p>
@@ -299,6 +308,21 @@ export function InstanceAllocations(props: {
                       fallback='Never'
                     />
                   </p>
+                  {!!p.legacy_carry?.amount && (
+                    <p className='text-sm'>
+                      {t(
+                        'Settled usage to retain: {{amount}} quota units; excluded inflight reserves: {{reserved}}; target cycles: {{cycles}}.',
+                        {
+                          amount: formatNumber(p.legacy_carry.amount, locale),
+                          reserved: formatNumber(
+                            p.legacy_carry.excluded_reserved,
+                            locale
+                          ),
+                          cycles: p.legacy_carry.keys.join(' / '),
+                        }
+                      )}
+                    </p>
+                  )}
                   <CycleProgress cycles={p.target_cycles} />
                 </div>
               ))}
