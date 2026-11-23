@@ -154,16 +154,28 @@ func GetSubscriptionPoolDetail(c *gin.Context) {
 	// Admin own resource overview; membership is deliberately not joined into
 	// user-facing DTOs or returned by the external quota endpoint.
 	var members []struct {
-		SubscriptionID int    `json:"subscription_id"`
-		UserID         int    `json:"user_id"`
-		Username       string `json:"username"`
-		EndTime        int64  `json:"end_time"`
-		Status         string `json:"status"`
-		Version        int64  `json:"version"`
+		SubscriptionID     int                               `json:"subscription_id"`
+		UserID             int                               `json:"user_id"`
+		Username           string                            `json:"username"`
+		EndTime            int64                             `json:"end_time"`
+		Status             string                            `json:"status"`
+		Version            int64                             `json:"version"`
+		QuotaMultiplier    float64                           `json:"quota_multiplier"`
+		CycleOverridesJSON string                            `json:"-" gorm:"column:cycle_overrides"`
+		CycleOverrides     []model.SubscriptionCycleOverride `json:"cycle_overrides" gorm:"-"`
 	}
-	if err := model.DB.Table("subscription_allocations AS a").Select("a.subscription_id, a.user_id, a.version, u.username, s.end_time, s.status").Joins("JOIN user_subscriptions AS s ON s.id = a.subscription_id").Joins("LEFT JOIN users AS u ON u.id = a.user_id").Where("a.pool_id = ?", id).Order("a.subscription_id desc").Limit(1000).Scan(&members).Error; err != nil {
+	if err := model.DB.Table("subscription_allocations AS a").Select("a.subscription_id, a.user_id, a.version, a.quota_multiplier, a.cycle_overrides, u.username, s.end_time, s.status").Joins("JOIN user_subscriptions AS s ON s.id = a.subscription_id").Joins("LEFT JOIN users AS u ON u.id = a.user_id").Where("a.pool_id = ?", id).Order("a.subscription_id desc").Limit(1000).Scan(&members).Error; err != nil {
 		common.ApiError(c, err)
 		return
+	}
+	for i := range members {
+		members[i].QuotaMultiplier = model.NormalizeSubscriptionQuotaMultiplier(members[i].QuotaMultiplier)
+		overrides, err := model.ParseSubscriptionCycleOverrides(members[i].CycleOverridesJSON)
+		if err != nil {
+			common.ApiError(c, err)
+			return
+		}
+		members[i].CycleOverrides = overrides
 	}
 	events := []model.SubscriptionPoolEvent{}
 	syncEvents := []model.SubscriptionSyncEvent{}
@@ -214,6 +226,10 @@ func GetSubscriptionPlanAllocation(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	if err := model.HydrateSubscriptionPlanAllocation(&cfg); err != nil {
+		common.ApiError(c, err)
+		return
+	}
 	cycles := []model.SubscriptionCycleRule{}
 	if cfg.Rules != "" {
 		if err := common.UnmarshalJsonStr(cfg.Rules, &cycles); err != nil {
@@ -259,6 +275,12 @@ func GetUserSubscriptionAllocations(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	for i := range rows {
+		if err := model.HydrateSubscriptionAllocation(&rows[i]); err != nil {
+			common.ApiError(c, err)
+			return
+		}
+	}
 	usage, err := model.GetSubscriptionUsage(userID)
 	if err != nil {
 		common.ApiError(c, err)
@@ -268,13 +290,15 @@ func GetUserSubscriptionAllocations(c *gin.Context) {
 }
 
 type subscriptionPoolAssignment struct {
-	UsageDigest    string `json:"usage_digest"`
-	SubscriptionID int    `json:"subscription_id"`
-	PoolID         int    `json:"pool_id"`
-	Version        int64  `json:"version"`
-	EndTime        int64  `json:"end_time"`
-	Confirm        bool   `json:"confirm"`
-	PoolVersion    int64  `json:"pool_version"`
+	UsageDigest     string                             `json:"usage_digest"`
+	SubscriptionID  int                                `json:"subscription_id"`
+	PoolID          int                                `json:"pool_id"`
+	Version         int64                              `json:"version"`
+	EndTime         int64                              `json:"end_time"`
+	Confirm         bool                               `json:"confirm"`
+	PoolVersion     int64                              `json:"pool_version"`
+	QuotaMultiplier *float64                           `json:"quota_multiplier,omitempty"`
+	CycleOverrides  *[]model.SubscriptionCycleOverride `json:"cycle_overrides,omitempty"`
 }
 
 func subscriptionAssignmentTarget(c *gin.Context, id int) error {
@@ -303,8 +327,12 @@ func AssignUserSubscriptionPool(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	opts := model.SubscriptionPoolAssignmentOptions{
+		QuotaMultiplier: input.QuotaMultiplier,
+		CycleOverrides:  input.CycleOverrides,
+	}
 	if !input.Confirm {
-		preview, err := model.PreviewSubscriptionPoolAssignment(input.SubscriptionID, input.PoolID, input.EndTime)
+		preview, err := model.PreviewSubscriptionPoolAssignmentWithOptions(input.SubscriptionID, input.PoolID, input.EndTime, opts)
 		if err != nil {
 			common.ApiError(c, err)
 			return
@@ -312,7 +340,7 @@ func AssignUserSubscriptionPool(c *gin.Context) {
 		common.ApiSuccess(c, preview)
 		return
 	}
-	if err := model.AssignSubscriptionPool(input.SubscriptionID, input.PoolID, input.Version, input.EndTime, c.GetInt("id"), true, input.PoolVersion, input.UsageDigest); err != nil {
+	if err := model.AssignSubscriptionPoolWithOptions(input.SubscriptionID, input.PoolID, input.Version, input.EndTime, c.GetInt("id"), true, input.PoolVersion, opts, input.UsageDigest); err != nil {
 		common.ApiError(c, err)
 		return
 	}
@@ -339,10 +367,14 @@ func BatchAssignSubscriptionPool(c *gin.Context) {
 		err := subscriptionAssignmentTarget(c, item.SubscriptionID)
 		var preview *model.SubscriptionAssignmentPreview
 		if err == nil {
+			opts := model.SubscriptionPoolAssignmentOptions{
+				QuotaMultiplier: item.QuotaMultiplier,
+				CycleOverrides:  item.CycleOverrides,
+			}
 			if item.Confirm {
-				err = model.AssignSubscriptionPool(item.SubscriptionID, item.PoolID, item.Version, item.EndTime, c.GetInt("id"), true, item.PoolVersion, item.UsageDigest)
+				err = model.AssignSubscriptionPoolWithOptions(item.SubscriptionID, item.PoolID, item.Version, item.EndTime, c.GetInt("id"), true, item.PoolVersion, opts, item.UsageDigest)
 			} else {
-				preview, err = model.PreviewSubscriptionPoolAssignment(item.SubscriptionID, item.PoolID, item.EndTime)
+				preview, err = model.PreviewSubscriptionPoolAssignmentWithOptions(item.SubscriptionID, item.PoolID, item.EndTime, opts)
 			}
 		}
 		message := ""

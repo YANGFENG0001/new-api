@@ -8388,6 +8388,18 @@
     "Cycle quota": "Hạn mức chu kỳ",
     "Stored as {{quota}} quota units": "Được lưu là {{quota}} đơn vị hạn mức",
     "Equivalent to {{amount}}": "Tương đương {{amount}}",
-    "Existing cycle keys cannot be removed. Disable them instead. Quota changes and reset time adjustments apply immediately while preserving usage; duration and scope changes apply at the next boundary.": "Không thể xóa khóa chu kỳ hiện có; hãy tắt thay thế. Thay đổi hạn mức và thời điểm đặt lại có hiệu lực ngay và giữ nguyên mức đã dùng; thay đổi thời lượng và phạm vi chia sẻ áp dụng từ chu kỳ tiếp theo."
+    "Existing cycle keys cannot be removed. Disable them instead. Quota changes and reset time adjustments apply immediately while preserving usage; duration and scope changes apply at the next boundary.": "Không thể xóa khóa chu kỳ hiện có; hãy tắt thay thế. Thay đổi hạn mức và thời điểm đặt lại có hiệu lực ngay và giữ nguyên mức đã dùng; thay đổi thời lượng và phạm vi chia sẻ áp dụng từ chu kỳ tiếp theo.",
+    "Independent cycle quota multiplier": "Hệ số hạn mức chu kỳ độc lập",
+    "Scales independent cycle limits for members in this pool (for example, 2× grants double weekly quota). Shared cycles always follow the pool.": "Nhân hệ số giới hạn chu kỳ độc lập cho thành viên trong nhóm này (ví dụ: 2× cấp gấp đôi hạn mức tuần). Chu kỳ dùng chung luôn tuân theo nhóm.",
+    "Effective pool cycle quotas": "Hạn mức chu kỳ nhóm hiệu lực",
+    "Shared across the upstream pool": "Dùng chung trên toàn nhóm thượng nguồn",
+    "Custom override": "Ghi đè tùy chỉnh",
+    "Override cycle quota": "Ghi đè hạn mức chu kỳ",
+    "Cycle schedules and shared windows are managed in the upstream pool. You can scale or override independent cycle quotas for this plan below.": "Lịch chu kỳ và cửa sổ dùng chung được quản lý trong nhóm thượng nguồn. Bạn có thể nhân hệ số hoặc ghi đè hạn mức chu kỳ độc lập cho gói này bên dưới.",
+    "Quota share": "Tỷ lệ hạn mức",
+    "Customize member quota share": "Tùy chỉnh tỷ lệ hạn mức thành viên",
+    "Invalid quota multiplier": "Hệ số hạn mức không hợp lệ",
+    "Invalid subscription cycle override": "Ghi đè chu kỳ gói đăng ký không hợp lệ",
+    "Shared cycles cannot have per-plan quota overrides": "Chu kỳ dùng chung không thể ghi đè hạn mức theo gói"
   }
 }

@@ -8388,6 +8388,18 @@
     "Cycle quota": "Quota du cycle",
     "Stored as {{quota}} quota units": "Enregistré comme {{quota}} unités de quota",
     "Equivalent to {{amount}}": "Équivalent à {{amount}}",
-    "Existing cycle keys cannot be removed. Disable them instead. Quota changes and reset time adjustments apply immediately while preserving usage; duration and scope changes apply at the next boundary.": "Les clés de cycle existantes ne peuvent pas être supprimées ; désactivez-les à la place. Les modifications de quota et d’heure de réinitialisation s’appliquent immédiatement tout en conservant l’utilisation ; les modifications de durée et de portée s’appliquent au prochain cycle."
+    "Existing cycle keys cannot be removed. Disable them instead. Quota changes and reset time adjustments apply immediately while preserving usage; duration and scope changes apply at the next boundary.": "Les clés de cycle existantes ne peuvent pas être supprimées ; désactivez-les à la place. Les modifications de quota et d’heure de réinitialisation s’appliquent immédiatement tout en conservant l’utilisation ; les modifications de durée et de portée s’appliquent au prochain cycle.",
+    "Independent cycle quota multiplier": "Multiplicateur de quota des cycles indépendants",
+    "Scales independent cycle limits for members in this pool (for example, 2× grants double weekly quota). Shared cycles always follow the pool.": "Met à l'échelle les limites des cycles indépendants pour les membres de ce pool (par exemple, 2× accorde le double du quota hebdomadaire). Les cycles partagés suivent toujours le pool.",
+    "Effective pool cycle quotas": "Quotas effectifs des cycles du pool",
+    "Shared across the upstream pool": "Partagé sur tout le pool en amont",
+    "Custom override": "Remplacement personnalisé",
+    "Override cycle quota": "Remplacer le quota du cycle",
+    "Cycle schedules and shared windows are managed in the upstream pool. You can scale or override independent cycle quotas for this plan below.": "Les calendriers de cycles et les fenêtres partagées sont gérés dans le pool en amont. Vous pouvez ajuster ou remplacer les quotas des cycles indépendants pour ce forfait ci-dessous.",
+    "Quota share": "Part de quota",
+    "Customize member quota share": "Personnaliser la part de quota du membre",
+    "Invalid quota multiplier": "Multiplicateur de quota invalide",
+    "Invalid subscription cycle override": "Remplacement de cycle d'abonnement invalide",
+    "Shared cycles cannot have per-plan quota overrides": "Les cycles partagés ne peuvent pas avoir de remplacements de quota par forfait"
   }
 }

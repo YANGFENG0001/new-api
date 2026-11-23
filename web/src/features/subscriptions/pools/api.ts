@@ -52,11 +52,18 @@ export type PoolSyncCreation = {
   account_id: string
   sync_expiry: boolean
 }
+export type CycleOverride = {
+  key: string
+  limit: number
+  unlimited: boolean
+}
 export type AllocationConfig = {
   plan_id: number
   mode: string
   pool_id: number
   fixed_end_time: number
+  quota_multiplier?: number
+  cycle_overrides?: CycleOverride[]
   version: number
   cycles: CycleRule[]
 }
@@ -117,6 +124,8 @@ export type Allocation = {
   user_id: number
   pool_id: number
   pending: boolean
+  quota_multiplier?: number
+  cycle_overrides?: CycleOverride[]
   version: number
 }
 export type Assignment = {
@@ -127,6 +136,8 @@ export type Assignment = {
   end_time: number
   confirm: boolean
   pool_version: number
+  quota_multiplier?: number
+  cycle_overrides?: CycleOverride[]
 }
 export type AssignmentPreview = {
   legacy_carry?: {
@@ -142,6 +153,8 @@ export type AssignmentPreview = {
   target_pool_id: number
   pool_version: number
   end_time: number
+  quota_multiplier?: number
+  cycle_overrides?: CycleOverride[]
   target_cycles: CycleView[]
   usage_transfer: boolean
 }
@@ -161,6 +174,8 @@ export type PoolDetail = {
     end_time: number
     status: string
     version: number
+    quota_multiplier?: number
+    cycle_overrides?: CycleOverride[]
   }[]
   events: {
     id: number
@@ -250,10 +265,18 @@ export const poolAPI = {
   },
   config: async (id: number): Promise<AllocationConfig> => {
     const config = await poolRequest<
-      Omit<AllocationConfig, 'cycles'> & { cycles?: CycleRule[] | null }
+      Omit<AllocationConfig, 'cycles' | 'cycle_overrides'> & {
+        cycles?: CycleRule[] | null
+        cycle_overrides?: CycleOverride[] | null
+      }
     >('get', `${base}/plans/${id}/allocation`)
     // Also tolerate older servers during rolling deployments.
-    return { ...config, cycles: config.cycles ?? [] }
+    return {
+      ...config,
+      cycles: config.cycles ?? [],
+      quota_multiplier: config.quota_multiplier || 1,
+      cycle_overrides: config.cycle_overrides ?? [],
+    }
   },
   saveConfig: (id: number, data: AllocationConfig) =>
     poolRequest<null>('put', `${base}/plans/${id}/allocation`, data),

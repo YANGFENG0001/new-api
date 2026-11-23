@@ -8388,6 +8388,18 @@
     "Cycle quota": "Квота цикла",
     "Stored as {{quota}} quota units": "Сохраняется как {{quota}} ед. квоты",
     "Equivalent to {{amount}}": "Эквивалентно {{amount}}",
-    "Existing cycle keys cannot be removed. Disable them instead. Quota changes and reset time adjustments apply immediately while preserving usage; duration and scope changes apply at the next boundary.": "Существующие ключи циклов нельзя удалить — отключите их. Изменения квоты и времени сброса вступают в силу немедленно с сохранением расхода; изменения длительности и области действия применяются со следующего цикла."
+    "Existing cycle keys cannot be removed. Disable them instead. Quota changes and reset time adjustments apply immediately while preserving usage; duration and scope changes apply at the next boundary.": "Существующие ключи циклов нельзя удалить — отключите их. Изменения квоты и времени сброса вступают в силу немедленно с сохранением расхода; изменения длительности и области действия применяются со следующего цикла.",
+    "Independent cycle quota multiplier": "Множитель квоты независимых циклов",
+    "Scales independent cycle limits for members in this pool (for example, 2× grants double weekly quota). Shared cycles always follow the pool.": "Масштабирует лимиты независимых циклов для участников этого пула (например, 2× даёт двойную недельную квоту). Общие циклы всегда следуют правилам пула.",
+    "Effective pool cycle quotas": "Действующие квоты циклов пула",
+    "Shared across the upstream pool": "Общий для всего вышестоящего пула",
+    "Custom override": "Пользовательское переопределение",
+    "Override cycle quota": "Переопределить квоту цикла",
+    "Cycle schedules and shared windows are managed in the upstream pool. You can scale or override independent cycle quotas for this plan below.": "Расписания циклов и общие окна управляются в вышестоящем пуле. Ниже можно масштабировать или переопределить квоты независимых циклов для этого тарифа.",
+    "Quota share": "Доля квоты",
+    "Customize member quota share": "Настроить долю квоты участника",
+    "Invalid quota multiplier": "Недопустимый множитель квоты",
+    "Invalid subscription cycle override": "Недопустимое переопределение цикла подписки",
+    "Shared cycles cannot have per-plan quota overrides": "Общие циклы не могут иметь индивидуальных переопределений квоты"
   }
 }

@@ -27,6 +27,7 @@ import { Switch } from '@/components/ui/switch'
 
 import { poolAPI, type AllocationConfig } from './api'
 import { CycleEditor } from './cycle-editor'
+import { PoolQuotaAllocationFields } from './pool-quota-allocation'
 
 // Controlled fields are shared by plan creation and editing. The parent saves
 // the plan and these defaults together; editing fields never writes to the API.
@@ -43,71 +44,128 @@ export function PlanAllocationFields(props: {
     staleTime: 10000,
   })
   const value = props.value
+  const selectedPool = pools.data?.find((pool) => pool.id === value.pool_id)
+
   return (
     <fieldset
       disabled={props.disabled}
       className='space-y-4 rounded-lg border p-4'
     >
-      <Label htmlFor='plan-allocation-mode'>{t('Allocation mode')}</Label>
-      <Combobox
-        id='plan-allocation-mode'
-        value={value.mode}
-        options={[
-          { value: 'legacy', label: t('Traditional subscription') },
-          {
-            value: 'independent',
-            label: t('Independent multi-cycle subscription'),
-          },
-          { value: 'fixed', label: t('Default upstream pool') },
-          { value: 'assign', label: t('Administrator assignment required') },
-        ]}
-        onValueChange={(mode) => {
-          if (mode) props.onChange({ ...value, mode })
-        }}
-      />
-      <p className='text-muted-foreground text-xs'>
-        {t(
-          'Defaults only affect new subscriptions. Existing members keep their assigned pool.'
-        )}
-      </p>
-      {value.mode === 'fixed' && (
-        <>
-          <Label htmlFor='plan-default-pool'>
-            {t('Default upstream pool')}
-          </Label>
-          <Combobox
-            id='plan-default-pool'
-            value={value.pool_id ? String(value.pool_id) : ''}
-            disabled={pools.isPending || pools.isError}
-            options={(pools.data ?? []).map((pool) => ({
-              value: String(pool.id),
-              label: pool.name,
-            }))}
-            onValueChange={(id) =>
-              props.onChange({ ...value, pool_id: Number(id) })
-            }
-          />
-          {pools.isError && <ErrorState onRetry={() => void pools.refetch()} />}
-          <p className='text-muted-foreground text-xs'>
-            {t(
-              'Cycle settings are managed in the upstream pool, not copied into the plan.'
-            )}
-          </p>
-          {(
-            pools.data?.find((pool) => pool.id === value.pool_id)?.cycles ?? []
-          ).map((cycle) => (
-            <p key={cycle.key} className='text-sm'>
-              {cycle.name} · {cycle.shared ? t('Shared') : t('Independent')}
-            </p>
-          ))}
-        </>
-      )}
-      {value.mode === 'assign' && (
-        <p className='text-sm'>
+      <div className='space-y-1.5'>
+        <Label htmlFor='plan-allocation-mode'>{t('Allocation mode')}</Label>
+        <Combobox
+          id='plan-allocation-mode'
+          value={value.mode}
+          options={[
+            { value: 'legacy', label: t('Traditional subscription') },
+            {
+              value: 'independent',
+              label: t('Independent multi-cycle subscription'),
+            },
+            { value: 'fixed', label: t('Default upstream pool') },
+            { value: 'assign', label: t('Administrator assignment required') },
+          ]}
+          onValueChange={(mode) => {
+            if (!mode) return
+            props.onChange({
+              ...value,
+              mode,
+              quota_multiplier:
+                mode === 'fixed' || mode === 'assign'
+                  ? value.quota_multiplier || 1
+                  : undefined,
+              cycle_overrides:
+                mode === 'fixed' || mode === 'assign'
+                  ? (value.cycle_overrides ?? [])
+                  : [],
+            })
+          }}
+        />
+        <p className='text-muted-foreground text-xs'>
           {t(
-            'Purchased subscriptions stay pending and cannot relay until an administrator assigns a pool.'
+            'Defaults only affect new subscriptions. Existing members keep their assigned pool.'
           )}
         </p>
+      </div>
+      {value.mode === 'fixed' && (
+        <div className='space-y-3'>
+          <div className='space-y-1.5'>
+            <Label htmlFor='plan-default-pool'>
+              {t('Default upstream pool')}
+            </Label>
+            <Combobox
+              id='plan-default-pool'
+              value={value.pool_id ? String(value.pool_id) : ''}
+              disabled={pools.isPending || pools.isError}
+              options={(pools.data ?? []).map((pool) => ({
+                value: String(pool.id),
+                label: pool.name,
+              }))}
+              onValueChange={(id) => {
+                const nextPoolId = Number(id)
+                const nextPool = pools.data?.find((p) => p.id === nextPoolId)
+                const validKeys = new Set(
+                  (nextPool?.cycles ?? [])
+                    .filter((c) => !c.shared)
+                    .map((c) => c.key)
+                )
+                props.onChange({
+                  ...value,
+                  pool_id: nextPoolId,
+                  cycle_overrides: (value.cycle_overrides ?? []).filter((ov) =>
+                    validKeys.has(ov.key)
+                  ),
+                })
+              }}
+            />
+            {pools.isError && (
+              <ErrorState onRetry={() => void pools.refetch()} />
+            )}
+            <p className='text-muted-foreground text-xs'>
+              {t(
+                'Cycle schedules and shared windows are managed in the upstream pool. You can scale or override independent cycle quotas for this plan below.'
+              )}
+            </p>
+          </div>
+          {selectedPool && (
+            <PoolQuotaAllocationFields
+              idPrefix='plan-pool-quota'
+              multiplier={value.quota_multiplier || 1}
+              overrides={value.cycle_overrides ?? []}
+              poolCycles={selectedPool.cycles}
+              disabled={props.disabled}
+              onChange={(next) =>
+                props.onChange({
+                  ...value,
+                  quota_multiplier: next.quota_multiplier,
+                  cycle_overrides: next.cycle_overrides,
+                })
+              }
+            />
+          )}
+        </div>
+      )}
+      {value.mode === 'assign' && (
+        <div className='space-y-3'>
+          <p className='text-sm'>
+            {t(
+              'Purchased subscriptions stay pending and cannot relay until an administrator assigns a pool.'
+            )}
+          </p>
+          <PoolQuotaAllocationFields
+            idPrefix='assign-plan-quota'
+            multiplier={value.quota_multiplier || 1}
+            overrides={value.cycle_overrides ?? []}
+            disabled={props.disabled}
+            onChange={(next) =>
+              props.onChange({
+                ...value,
+                quota_multiplier: next.quota_multiplier,
+                cycle_overrides: next.cycle_overrides,
+              })
+            }
+          />
+        </div>
       )}
       {value.mode === 'independent' && (
         <CycleEditor
@@ -116,8 +174,8 @@ export function PlanAllocationFields(props: {
         />
       )}
       {value.mode !== 'legacy' && (
-        <>
-          <Label>
+        <div className='space-y-2'>
+          <Label className='flex items-center gap-2'>
             <Switch
               checked={value.fixed_end_time > 0}
               onCheckedChange={(on) =>
@@ -143,10 +201,12 @@ export function PlanAllocationFields(props: {
             />
           ) : (
             value.mode === 'fixed' && (
-              <p className='text-sm'>{t('Follow pool expiry')}</p>
+              <p className='text-muted-foreground text-sm'>
+                {t('Follow pool expiry')}
+              </p>
             )
           )}
-        </>
+        </div>
       )}
     </fieldset>
   )

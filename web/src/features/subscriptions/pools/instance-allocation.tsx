@@ -34,12 +34,16 @@ import { formatNumber } from '@/lib/format'
 
 import {
   poolAPI,
+  type Allocation,
   type Assignment,
   type AssignmentPreview,
   type AssignmentResult,
+  type CycleOverride,
   type Usage,
 } from './api'
 import { CycleProgress } from './cycle-progress'
+import { PoolQuotaAllocationFields } from './pool-quota-allocation'
+import { formatMultiplier } from './quota-share'
 import { SyncTimestamp } from './sync-usage'
 
 export function InstanceAllocations(props: {
@@ -72,6 +76,9 @@ export function InstanceAllocations(props: {
   const [poolID, setPoolID] = useState('')
   const [end, setEnd] = useState<Date>()
   const [customExpiry, setCustomExpiry] = useState(false)
+  const [customQuota, setCustomQuota] = useState(false)
+  const [quotaMultiplier, setQuotaMultiplier] = useState(1)
+  const [cycleOverrides, setCycleOverrides] = useState<CycleOverride[]>([])
   const [previews, setPreviews] = useState<AssignmentPreview[] | null>(null)
   const [results, setResults] = useState<AssignmentResult[]>([])
   const [reset, setReset] = useState<{ id: number; key: string } | null>(null)
@@ -89,6 +96,12 @@ export function InstanceAllocations(props: {
         pools.data?.find((p) => p.id === Number(poolID))?.version ?? 0,
       end_time: customExpiry && end ? Math.floor(end.getTime() / 1000) : 0,
       confirm,
+      ...(customQuota
+        ? {
+            quota_multiplier: quotaMultiplier,
+            cycle_overrides: cycleOverrides,
+          }
+        : {}),
     }))
   }
   const preview = useMutation({
@@ -125,6 +138,12 @@ export function InstanceAllocations(props: {
         end_time: customExpiry ? p.end_time : 0,
         confirm: true,
         usage_digest: p.legacy_carry?.digest,
+        ...(customQuota
+          ? {
+              quota_multiplier: p.quota_multiplier ?? quotaMultiplier,
+              cycle_overrides: p.cycle_overrides ?? cycleOverrides,
+            }
+          : {}),
       }))
       if (items.length === 1) {
         await poolAPI.assign(items[0])
@@ -187,26 +206,24 @@ export function InstanceAllocations(props: {
       )}
       {(allocations.data?.subscriptions ?? [])
         .filter((u) => u.managed)
-        .map((u) => (
-          <InstanceUsage
-            key={u.subscription_id}
-            usage={u}
-            poolName={
-              pools.data?.find(
-                (p) =>
-                  p.id ===
-                  allocations.data?.allocations.find(
-                    (a) => a.subscription_id === u.subscription_id
-                  )?.pool_id
-              )?.name
-            }
-            onReset={
-              caps.data.personal_reset && u.status === 'active'
-                ? (key) => setReset({ id: u.subscription_id, key })
-                : undefined
-            }
-          />
-        ))}
+        .map((u) => {
+          const alloc = allocations.data?.allocations.find(
+            (a) => a.subscription_id === u.subscription_id
+          )
+          return (
+            <InstanceUsage
+              key={u.subscription_id}
+              usage={u}
+              allocation={alloc}
+              poolName={pools.data?.find((p) => p.id === alloc?.pool_id)?.name}
+              onReset={
+                caps.data.personal_reset && u.status === 'active'
+                  ? (key) => setReset({ id: u.subscription_id, key })
+                  : undefined
+              }
+            />
+          )
+        })}
       {caps.data.assign && (
         <div className='space-y-3'>
           <div className='space-y-1.5'>
@@ -238,7 +255,21 @@ export function InstanceAllocations(props: {
               options={(pools.data ?? [])
                 .filter((p) => p.enabled && p.end_time > Date.now() / 1000)
                 .map((p) => ({ value: String(p.id), label: p.name }))}
-              onValueChange={(v) => setPoolID(v ?? '')}
+              onValueChange={(v) => {
+                const nextPoolID = v ?? ''
+                setPoolID(nextPoolID)
+                const nextPool = pools.data?.find(
+                  (p) => p.id === Number(nextPoolID)
+                )
+                const validKeys = new Set(
+                  (nextPool?.cycles ?? [])
+                    .filter((c) => !c.shared)
+                    .map((c) => c.key)
+                )
+                setCycleOverrides((prev) =>
+                  prev.filter((ov) => validKeys.has(ov.key))
+                )
+              }}
             />
           </div>
           <Label className='flex items-center gap-2'>
@@ -247,15 +278,56 @@ export function InstanceAllocations(props: {
           </Label>
           {customExpiry && <DateTimePicker value={end} onChange={setEnd} />}
           {selectedPool && (
-            <p className='text-muted-foreground text-sm'>
-              {t('Target cycle scopes')}:{' '}
-              {selectedPool.cycles
-                .map(
-                  (c) =>
-                    `${c.name} · ${c.shared ? t('Shared') : t('Independent')}`
-                )
-                .join(' / ')}
-            </p>
+            <div className='space-y-2'>
+              <p className='text-muted-foreground text-sm'>
+                {t('Target cycle scopes')}:{' '}
+                {selectedPool.cycles
+                  .map(
+                    (c) =>
+                      `${c.name} · ${c.shared ? t('Shared') : t('Independent')}`
+                  )
+                  .join(' / ')}
+              </p>
+              <Label className='flex items-center gap-2'>
+                <Switch
+                  checked={customQuota}
+                  onCheckedChange={(checked) => {
+                    setCustomQuota(checked)
+                    if (checked && selected.length > 0) {
+                      const first = allocations.data?.allocations.find(
+                        (a) => a.subscription_id === Number(selected[0])
+                      )
+                      if (first) {
+                        setQuotaMultiplier(first.quota_multiplier || 1)
+                        const validKeys = new Set(
+                          selectedPool.cycles
+                            .filter((c) => !c.shared)
+                            .map((c) => c.key)
+                        )
+                        setCycleOverrides(
+                          (first.cycle_overrides ?? []).filter((ov) =>
+                            validKeys.has(ov.key)
+                          )
+                        )
+                      }
+                    }
+                  }}
+                />
+                {t('Customize member quota share')}
+              </Label>
+              {customQuota && (
+                <PoolQuotaAllocationFields
+                  idPrefix='member-pool-quota'
+                  multiplier={quotaMultiplier}
+                  overrides={cycleOverrides}
+                  poolCycles={selectedPool.cycles}
+                  onChange={(next) => {
+                    setQuotaMultiplier(next.quota_multiplier)
+                    setCycleOverrides(next.cycle_overrides)
+                  }}
+                />
+              )}
+            </div>
           )}
           <p className='text-muted-foreground text-sm'>
             {t(
@@ -311,6 +383,9 @@ export function InstanceAllocations(props: {
                       value={p.end_time === 253402300799 ? 0 : p.end_time}
                       fallback='Never'
                     />
+                    {p.quota_multiplier && p.quota_multiplier !== 1
+                      ? ` · ${formatMultiplier(p.quota_multiplier)}`
+                      : ''}
                   </p>
                   {!!p.legacy_carry?.amount && (
                     <p className='text-sm'>
@@ -359,14 +434,23 @@ export function InstanceAllocations(props: {
 
 function InstanceUsage(props: {
   usage: Usage
+  allocation?: Allocation
   poolName?: string
   onReset?: (key: string) => void
 }) {
   const { t } = useTranslation()
+  const multiplier = props.allocation?.quota_multiplier
+  const overrideCount = props.allocation?.cycle_overrides?.length ?? 0
   return (
     <div className='space-y-2'>
       <p className='text-sm font-medium'>
         #{props.usage.subscription_id} · {props.poolName ?? t('Independent')}
+        {props.allocation?.pool_id && multiplier && multiplier !== 1
+          ? ` · ${formatMultiplier(multiplier)}`
+          : ''}
+        {overrideCount > 0
+          ? ` · ${t('Custom override')} (${overrideCount})`
+          : ''}
         {props.usage.pending && ` · ${t('Pending assignment')}`}
       </p>
       <CycleProgress cycles={props.usage.cycles} />

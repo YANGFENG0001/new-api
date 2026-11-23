@@ -62,12 +62,24 @@ export const poolSchema = z
     path: ['end_time'],
     message: 'Subscription expiry is in the past',
   })
+export const cycleOverrideSchema = z
+  .object({
+    key: z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/),
+    limit: quota,
+    unlimited: z.boolean(),
+  })
+  .refine((v) => v.unlimited || v.limit > 0, {
+    message: 'A limited cycle requires a positive quota',
+    path: ['limit'],
+  })
 export const allocationSchema = z
   .object({
     plan_id: z.number(),
     mode: z.enum(['legacy', 'independent', 'fixed', 'assign']),
     pool_id: z.number(),
     fixed_end_time: z.number().int().min(0),
+    quota_multiplier: z.number().min(0.01).max(100).optional(),
+    cycle_overrides: z.array(cycleOverrideSchema).max(32).optional(),
     version: z.number(),
     cycles: z.array(cycleSchema).max(32),
   })
@@ -79,6 +91,16 @@ export const allocationSchema = z
     path: ['cycles'],
     message: 'At least one subscription cycle is required',
   })
+  .refine(
+    (v) =>
+      !v.cycle_overrides ||
+      new Set(v.cycle_overrides.map((c) => c.key)).size ===
+        v.cycle_overrides.length,
+    {
+      path: ['cycle_overrides'],
+      message: 'Invalid or duplicate cycle key',
+    }
+  )
 export function newCycle(name: string): z.infer<typeof cycleSchema> {
   return {
     key: crypto.randomUUID(),

@@ -2809,3 +2809,193 @@ func TestSubscriptionPoolQuotaEditsApplyImmediatelyWhileStructuralEditsDefer(t *
 	}
 }
 
+func TestSubscriptionPoolSharedWindowWithMultiPlanQuotaMultiplierAndOverrides(t *testing.T) {
+	userA, plan1x, now := setupSubscriptionPoolTest(t)
+	userB := model.User{Username: "carpool_user_b", Password: "p", AffCode: "cp_b", Role: common.RoleCommonUser, Status: common.UserStatusEnabled}
+	userC := model.User{Username: "carpool_user_c", Password: "p", AffCode: "cp_c", Role: common.RoleCommonUser, Status: common.UserStatusEnabled}
+	userD := model.User{Username: "carpool_user_d", Password: "p", AffCode: "cp_d", Role: common.RoleCommonUser, Status: common.UserStatusEnabled}
+	require.NoError(t, model.DB.Create(&userB).Error)
+	require.NoError(t, model.DB.Create(&userC).Error)
+	require.NoError(t, model.DB.Create(&userD).Error)
+
+	plan2x := model.SubscriptionPlan{Title: "3-seat x2", PriceAmount: 20, DurationUnit: model.SubscriptionDurationMonth, DurationValue: 1, Enabled: true}
+	planOverride := model.SubscriptionPlan{Title: "3-seat custom", PriceAmount: 15, DurationUnit: model.SubscriptionDurationMonth, DurationValue: 1, Enabled: true}
+	require.NoError(t, model.DB.Create(&plan2x).Error)
+	require.NoError(t, model.DB.Create(&planOverride).Error)
+
+	require.NoError(t, model.DB.Create(&model.Channel{Id: 9650, Name: "carpool-shared-upstream"}).Error)
+	rules := []model.SubscriptionCycleRule{
+		{Key: "5h", Name: "5h", Seconds: 18000, NextReset: now + 18000, Limit: 80, Shared: true, Enabled: true},
+		{Key: "7d", Name: "7d", Seconds: 604800, NextReset: now + 604800, Limit: 100, UpstreamLimit: 500, EnforceUpstream: true, Shared: false, Enabled: true},
+	}
+	pool, err := model.SaveSubscriptionPool(model.SubscriptionPoolInput{
+		SubscriptionPool: model.SubscriptionPool{Name: "upstream-vm01", Enabled: true, EndTime: now + 30*86400},
+		Channels:         []int{9650},
+		Cycles:           rules,
+	}, 1)
+	require.NoError(t, err)
+
+	// Validation: shared cycles cannot be overridden and invalid multipliers are rejected.
+	require.ErrorContains(t, model.SaveSubscriptionPlanAllocation(model.SubscriptionPlanAllocation{
+		PlanID:         plan2x.Id,
+		Mode:           "fixed",
+		PoolID:         pool.Id,
+		CycleOverrides: []model.SubscriptionCycleOverride{{Key: "5h", Limit: 200}},
+	}, nil), "Shared cycles cannot have per-plan quota overrides")
+	require.ErrorContains(t, model.SaveSubscriptionPlanAllocation(model.SubscriptionPlanAllocation{
+		PlanID:          plan2x.Id,
+		Mode:            "fixed",
+		PoolID:          pool.Id,
+		QuotaMultiplier: -1,
+	}, nil), "Invalid quota multiplier")
+
+	// Plan 1 (1x), Plan 2 (2x multiplier), Plan 3 (2x multiplier + explicit 7d override = 150).
+	require.NoError(t, model.SaveSubscriptionPlanAllocation(model.SubscriptionPlanAllocation{
+		PlanID:          plan1x.Id,
+		Mode:            "fixed",
+		PoolID:          pool.Id,
+		QuotaMultiplier: 1,
+	}, nil))
+	require.NoError(t, model.SaveSubscriptionPlanAllocation(model.SubscriptionPlanAllocation{
+		PlanID:          plan2x.Id,
+		Mode:            "fixed",
+		PoolID:          pool.Id,
+		QuotaMultiplier: 2,
+	}, nil))
+	require.NoError(t, model.SaveSubscriptionPlanAllocation(model.SubscriptionPlanAllocation{
+		PlanID:          planOverride.Id,
+		Mode:            "fixed",
+		PoolID:          pool.Id,
+		QuotaMultiplier: 2,
+		CycleOverrides:  []model.SubscriptionCycleOverride{{Key: "7d", Limit: 150}},
+	}, nil))
+
+	// Plan summaries immediately reflect effective limits while keeping shared 5h identical.
+	summaries, err := model.GetSubscriptionPlanAllocationSummaries([]int{plan1x.Id, plan2x.Id, planOverride.Id})
+	require.NoError(t, err)
+	cycleLimitByName := func(cycles []model.SubscriptionPlanCycleSummary) map[string]int64 {
+		out := map[string]int64{}
+		for _, c := range cycles {
+			out[c.Name] = c.Limit
+		}
+		return out
+	}
+	assert.Equal(t, map[string]int64{"5h": 80, "7d": 100}, cycleLimitByName(summaries[plan1x.Id].Cycles))
+	assert.Equal(t, map[string]int64{"5h": 80, "7d": 200}, cycleLimitByName(summaries[plan2x.Id].Cycles))
+	assert.Equal(t, map[string]int64{"5h": 80, "7d": 150}, cycleLimitByName(summaries[planOverride.Id].Cycles))
+
+	var subA, subB, subC *model.UserSubscription
+	require.NoError(t, model.DB.Transaction(func(tx *gorm.DB) error {
+		var e error
+		subA, e = model.CreateUserSubscriptionFromPlanTx(tx, userA.Id, &plan2x, "admin")
+		if e != nil {
+			return e
+		}
+		subB, e = model.CreateUserSubscriptionFromPlanTx(tx, userB.Id, &plan1x, "admin")
+		if e != nil {
+			return e
+		}
+		subC, e = model.CreateUserSubscriptionFromPlanTx(tx, userC.Id, &planOverride, "admin")
+		return e
+	}))
+
+	// Usage views report exact per-member effective limits.
+	usageLimitByKey := func(uid int) map[string]int64 {
+		views, e := model.GetSubscriptionUsage(uid)
+		require.NoError(t, e)
+		require.Len(t, views, 1)
+		out := map[string]int64{}
+		for _, c := range views[0].Cycles {
+			out[c.Key] = c.Limit
+		}
+		return out
+	}
+	assert.Equal(t, map[string]int64{"5h": 80, "7d": 200}, usageLimitByKey(userA.Id))
+	assert.Equal(t, map[string]int64{"5h": 80, "7d": 100}, usageLimitByKey(userB.Id))
+	assert.Equal(t, map[string]int64{"5h": 80, "7d": 150}, usageLimitByKey(userC.Id))
+
+	// Shared 5h pool is shared across User A (2x) and User B (1x).
+	_, err = model.PreConsumeUserSubscriptionForChannel("req-a-1", userA.Id, "claude", 0, 60, 9650)
+	require.NoError(t, err)
+	require.NoError(t, model.SettleSubscriptionRequest("req-a-1", subA.Id, 0))
+	_, err = model.PreConsumeUserSubscriptionForChannel("req-b-overflow-5h", userB.Id, "claude", 0, 25, 9650)
+	require.ErrorContains(t, err, "cycle limit reached")
+	_, err = model.PreConsumeUserSubscriptionForChannel("req-b-1", userB.Id, "claude", 0, 20, 9650)
+	require.NoError(t, err)
+	require.NoError(t, model.SettleSubscriptionRequest("req-b-1", subB.Id, 0))
+
+	// Reset shared 5h so we can test independent 7d caps cleanly.
+	require.NoError(t, model.ResetSubscriptionCycle(0, pool.Id, 0, "5h", 1))
+	_, err = model.PreConsumeUserSubscriptionForChannel("req-b-2", userB.Id, "claude", 0, 80, 9650)
+	require.NoError(t, err)
+	require.NoError(t, model.SettleSubscriptionRequest("req-b-2", subB.Id, 0))
+	// User B is now at 20+80 = 100 on 7d (1x cap reached).
+	require.NoError(t, model.ResetSubscriptionCycle(0, pool.Id, 0, "5h", 1))
+	_, err = model.PreConsumeUserSubscriptionForChannel("req-b-3", userB.Id, "claude", 0, 1, 9650)
+	require.ErrorContains(t, err, "cycle limit reached")
+
+	// User A (2x) can still consume up to 200 total on 7d (already at 60 -> +70 +70 = 200).
+	_, err = model.PreConsumeUserSubscriptionForChannel("req-a-2", userA.Id, "claude", 0, 70, 9650)
+	require.NoError(t, err)
+	require.NoError(t, model.SettleSubscriptionRequest("req-a-2", subA.Id, 0))
+	require.NoError(t, model.ResetSubscriptionCycle(0, pool.Id, 0, "5h", 1))
+	_, err = model.PreConsumeUserSubscriptionForChannel("req-a-3", userA.Id, "claude", 0, 70, 9650)
+	require.NoError(t, err)
+	require.NoError(t, model.SettleSubscriptionRequest("req-a-3", subA.Id, 0))
+	require.NoError(t, model.ResetSubscriptionCycle(0, pool.Id, 0, "5h", 1))
+	_, err = model.PreConsumeUserSubscriptionForChannel("req-a-4", userA.Id, "claude", 0, 1, 9650)
+	require.ErrorContains(t, err, "cycle limit reached")
+
+	// Editing the pool's 7d base limit (100 -> 120) immediately scales 1x (120) and 2x (240), while explicit override stays 150.
+	rules[1].Limit = 120
+	rules[1].UpstreamLimit = 900
+	pool, err = model.SaveSubscriptionPool(model.SubscriptionPoolInput{SubscriptionPool: *pool, Channels: []int{9650}, Cycles: rules}, 1)
+	require.NoError(t, err)
+	assert.Equal(t, map[string]int64{"5h": 80, "7d": 240}, usageLimitByKey(userA.Id))
+	assert.Equal(t, map[string]int64{"5h": 80, "7d": 120}, usageLimitByKey(userB.Id))
+	assert.Equal(t, map[string]int64{"5h": 80, "7d": 150}, usageLimitByKey(userC.Id))
+	_ = subC
+
+	// Admin updates User B's existing subscription in-place with an explicit 7d override = 175.
+	mult15 := 1.5
+	ov175 := []model.SubscriptionCycleOverride{{Key: "7d", Limit: 175}}
+	preview, err := model.PreviewSubscriptionPoolAssignmentWithOptions(subB.Id, pool.Id, 0, model.SubscriptionPoolAssignmentOptions{
+		QuotaMultiplier: &mult15,
+		CycleOverrides:  &ov175,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 1.5, preview.QuotaMultiplier)
+	require.Len(t, preview.CycleOverrides, 1)
+	assert.EqualValues(t, 175, preview.CycleOverrides[0].Limit)
+	for _, c := range preview.TargetCycles {
+		if c.Key == "7d" {
+			assert.EqualValues(t, 175, c.Limit)
+		}
+	}
+	require.NoError(t, model.AssignSubscriptionPoolWithOptions(subB.Id, pool.Id, preview.Current.Version, 0, 1, true, preview.PoolVersion, model.SubscriptionPoolAssignmentOptions{
+		QuotaMultiplier: &mult15,
+		CycleOverrides:  &ov175,
+	}))
+	assert.Equal(t, map[string]int64{"5h": 80, "7d": 175}, usageLimitByKey(userB.Id))
+
+	// User D holds both 1x (120) and 2x (240) in the same pool: personal counter is shared,
+	// so after hitting 1x's 120 limit, admission falls through to 2x up to 240 without stacking to 360.
+	require.NoError(t, model.DB.Transaction(func(tx *gorm.DB) error {
+		if _, e := model.CreateUserSubscriptionFromPlanTx(tx, userD.Id, &plan1x, "admin"); e != nil {
+			return e
+		}
+		_, e := model.CreateUserSubscriptionFromPlanTx(tx, userD.Id, &plan2x, "admin")
+		return e
+	}))
+	for i := range 3 {
+		require.NoError(t, model.ResetSubscriptionCycle(0, pool.Id, 0, "5h", 1))
+		res, e := model.PreConsumeUserSubscriptionForChannel(fmt.Sprintf("req-d-%d", i), userD.Id, "claude", 0, 80, 9650)
+		require.NoError(t, e)
+		require.NoError(t, model.SettleSubscriptionRequest(fmt.Sprintf("req-d-%d", i), res.UserSubscriptionId, 0))
+	}
+	require.NoError(t, model.ResetSubscriptionCycle(0, pool.Id, 0, "5h", 1))
+	_, err = model.PreConsumeUserSubscriptionForChannel("req-d-over", userD.Id, "claude", 0, 1, 9650)
+	require.ErrorContains(t, err, "cycle limit reached")
+}
+
+

@@ -185,6 +185,8 @@ func initializeSubscriptionAllocationTx(tx *gorm.DB, sub *UserSubscription) erro
 	a := SubscriptionAllocation{SubscriptionID: sub.Id, UserID: sub.UserId, Rules: cfg.Rules, Version: 1}
 	if cfg.Mode == "assign" {
 		a.Pending = true
+		a.QuotaMultiplier = NormalizeSubscriptionQuotaMultiplier(cfg.QuotaMultiplier)
+		a.CycleOverridesJSON = cfg.CycleOverridesJSON
 	}
 	if cfg.Mode == "fixed" {
 		var p SubscriptionPool
@@ -195,6 +197,8 @@ func initializeSubscriptionAllocationTx(tx *gorm.DB, sub *UserSubscription) erro
 			return errors.New("Upstream pool is unavailable")
 		}
 		a.PoolID = p.Id
+		a.QuotaMultiplier = NormalizeSubscriptionQuotaMultiplier(cfg.QuotaMultiplier)
+		a.CycleOverridesJSON = cfg.CycleOverridesJSON
 		sub.EndTime = p.EndTime
 		a.FollowPoolEnd = cfg.FixedEndTime == 0
 		if cfg.FixedEndTime > 0 {
@@ -294,6 +298,16 @@ func reserveSubscriptionCyclesTx(tx *gorm.DB, requestID string, sub *UserSubscri
 			return true, err
 		}
 	}
+	var currentOverrides map[string]SubscriptionCycleOverride
+	currentMultiplier := float64(1)
+	if a.PoolID > 0 {
+		ov, ovErr := ParseSubscriptionCycleOverrides(current.CycleOverridesJSON)
+		if ovErr != nil {
+			return true, ovErr
+		}
+		currentOverrides = cycleOverridesMap(ov)
+		currentMultiplier = NormalizeSubscriptionQuotaMultiplier(current.QuotaMultiplier)
+	}
 	owner := allocationOwner(sub.Id, a.PoolID)
 	ids := []int{}
 	rows := []*SubscriptionCycleUsage{}
@@ -317,10 +331,13 @@ func reserveSubscriptionCyclesTx(tx *gorm.DB, requestID string, sub *UserSubscri
 			return true, e
 		}
 		effective := personal
+		effectiveRule := r
 		if r.Shared {
 			effective = aggregate
+		} else if a.PoolID > 0 {
+			effectiveRule = applySubscriptionCycleAllocation(r, currentMultiplier, currentOverrides)
 		}
-		if !r.Unlimited && effective.Used+effective.Reserved+effective.Adjustment > r.Limit-amount {
+		if !effectiveRule.Unlimited && effective.Used+effective.Reserved+effective.Adjustment > effectiveRule.Limit-amount {
 			return true, errors.New("subscription quota insufficient: cycle limit reached")
 		}
 		if r.EnforceUpstream && aggregate.Used+aggregate.Reserved+aggregate.Adjustment > r.UpstreamLimit-amount {

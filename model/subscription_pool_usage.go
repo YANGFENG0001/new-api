@@ -142,6 +142,14 @@ func GetSubscriptionPlanAllocationSummaries(ids []int) (map[int]SubscriptionPlan
 				return nil, err
 			}
 		}
+		var overrideMap map[string]SubscriptionCycleOverride
+		if cfg.Mode == "fixed" {
+			overrides, err := ParseSubscriptionCycleOverrides(cfg.CycleOverridesJSON)
+			if err != nil {
+				return nil, err
+			}
+			overrideMap = cycleOverridesMap(overrides)
+		}
 		for _, rule := range rules {
 			if cfg.Mode == "fixed" {
 				if state, found := byOwner[allocationOwner(0, cfg.PoolID)][rule.Key]; found {
@@ -165,6 +173,7 @@ func GetSubscriptionPlanAllocationSummaries(ids []int) (map[int]SubscriptionPlan
 						return nil, err
 					}
 				}
+				rule = applySubscriptionCycleAllocation(rule, cfg.QuotaMultiplier, overrideMap)
 			}
 			if rule.Enabled {
 				summary.Cycles = append(summary.Cycles, SubscriptionPlanCycleSummary{Name: rule.Name, Seconds: rule.Seconds, Limit: rule.Limit, Unlimited: rule.Unlimited, Shared: rule.Shared})
@@ -176,6 +185,10 @@ func GetSubscriptionPlanAllocationSummaries(ids []int) (map[int]SubscriptionPlan
 }
 
 func subscriptionCycleViewsTx(tx *gorm.DB, owner string, raw string, userID int, aggregateOnly bool, now int64) ([]SubscriptionCycleView, error) {
+	return subscriptionCycleViewsWithAllocationTx(tx, owner, raw, userID, aggregateOnly, now, 1, nil)
+}
+
+func subscriptionCycleViewsWithAllocationTx(tx *gorm.DB, owner string, raw string, userID int, aggregateOnly bool, now int64, multiplier float64, overrides map[string]SubscriptionCycleOverride) ([]SubscriptionCycleView, error) {
 	var rules []SubscriptionCycleRule
 	if raw != "" {
 		if err := common.UnmarshalJsonStr(raw, &rules); err != nil {
@@ -202,8 +215,12 @@ func subscriptionCycleViewsTx(tx *gorm.DB, owner string, raw string, userID int,
 		if err != nil {
 			return nil, err
 		}
-		limit := r.Limit
-		unlimited := r.Unlimited
+		effectiveRule := r
+		if !aggregateOnly {
+			effectiveRule = applySubscriptionCycleAllocation(r, multiplier, overrides)
+		}
+		limit := effectiveRule.Limit
+		unlimited := effectiveRule.Unlimited
 		if aggregateOnly && !r.Shared {
 			limit = r.UpstreamLimit
 			unlimited = limit == 0
@@ -214,7 +231,11 @@ func subscriptionCycleViewsTx(tx *gorm.DB, owner string, raw string, userID int,
 			if err := common.UnmarshalJsonStr(state.PendingRule, &next); err != nil {
 				return nil, err
 			}
-			limit, unlimited := next.Limit, next.Unlimited
+			effectiveNext := next
+			if !aggregateOnly {
+				effectiveNext = applySubscriptionCycleAllocation(next, multiplier, overrides)
+			}
+			limit, unlimited := effectiveNext.Limit, effectiveNext.Unlimited
 			if aggregateOnly && !next.Shared {
 				limit, unlimited = next.UpstreamLimit, next.UpstreamLimit == 0
 			}
@@ -261,6 +282,8 @@ func GetSubscriptionUsage(userID int) ([]SubscriptionUsageView, error) {
 					return errors.New("Subscription assignment changed; retry the request")
 				}
 				raw := a.Rules
+				var multiplier float64 = 1
+				var overrideMap map[string]SubscriptionCycleOverride
 				if a.PoolID > 0 {
 					var pool SubscriptionPool
 					if err := tx.First(&pool, a.PoolID).Error; err != nil {
@@ -275,9 +298,15 @@ func GetSubscriptionUsage(userID int) ([]SubscriptionUsageView, error) {
 					if !pool.Enabled {
 						view.Pending = true
 					}
+					multiplier = NormalizeSubscriptionQuotaMultiplier(current.QuotaMultiplier)
+					overrides, err := ParseSubscriptionCycleOverrides(current.CycleOverridesJSON)
+					if err != nil {
+						return err
+					}
+					overrideMap = cycleOverridesMap(overrides)
 				}
 				var err error
-				view.Cycles, err = subscriptionCycleViewsTx(tx, allocationOwner(sub.Id, a.PoolID), raw, sub.UserId, false, GetDBTimestamp())
+				view.Cycles, err = subscriptionCycleViewsWithAllocationTx(tx, allocationOwner(sub.Id, a.PoolID), raw, sub.UserId, false, GetDBTimestamp(), multiplier, overrideMap)
 				return err
 			})
 			if err != nil {

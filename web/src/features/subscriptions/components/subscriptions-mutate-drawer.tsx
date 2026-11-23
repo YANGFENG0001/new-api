@@ -132,6 +132,8 @@ export function SubscriptionsMutateDrawer({
         mode: 'legacy',
         pool_id: 0,
         fixed_end_time: 0,
+        quota_multiplier: 1,
+        cycle_overrides: [],
         version: 0,
         cycles: [],
       })
@@ -139,6 +141,8 @@ export function SubscriptionsMutateDrawer({
       setAllocation({
         ...allocationQuery.data,
         mode: allocationQuery.data.mode || 'legacy',
+        quota_multiplier: allocationQuery.data.quota_multiplier || 1,
+        cycle_overrides: allocationQuery.data.cycle_overrides ?? [],
       })
     }
   }, [

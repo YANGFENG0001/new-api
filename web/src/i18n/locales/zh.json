@@ -8388,6 +8388,18 @@
     "Cycle quota": "周期额度",
     "Stored as {{quota}} quota units": "按 {{quota}} 额度单位保存",
     "Equivalent to {{amount}}": "约等于 {{amount}}",
-    "Existing cycle keys cannot be removed. Disable them instead. Quota changes and reset time adjustments apply immediately while preserving usage; duration and scope changes apply at the next boundary.": "已有周期键不可删除，请改为禁用。额度和重置时间修改立即生效并保留已用记录；时长和共享范围修改在下一周期生效。"
+    "Existing cycle keys cannot be removed. Disable them instead. Quota changes and reset time adjustments apply immediately while preserving usage; duration and scope changes apply at the next boundary.": "已有周期键不可删除，请改为禁用。额度和重置时间修改立即生效并保留已用记录；时长和共享范围修改在下一周期生效。",
+    "Independent cycle quota multiplier": "独立周期额度倍率",
+    "Scales independent cycle limits for members in this pool (for example, 2× grants double weekly quota). Shared cycles always follow the pool.": "按倍率缩放该拼车池中成员的独立周期额度上限（例如 2× 表示双倍周额度）。共享周期始终沿用上游拼车池配置。",
+    "Effective pool cycle quotas": "生效的拼车池周期额度",
+    "Shared across the upstream pool": "同上游拼车池共享",
+    "Custom override": "自定义覆盖",
+    "Override cycle quota": "覆盖周期额度",
+    "Cycle schedules and shared windows are managed in the upstream pool. You can scale or override independent cycle quotas for this plan below.": "周期时间与共享窗口由上游拼车池统一管理。你可以在下方按倍率缩放或覆盖该方案的独立周期额度。",
+    "Quota share": "额度份额",
+    "Customize member quota share": "自定义成员额度份额",
+    "Invalid quota multiplier": "额度倍率无效",
+    "Invalid subscription cycle override": "订阅周期额度覆盖无效",
+    "Shared cycles cannot have per-plan quota overrides": "共享周期不支持按方案或成员单独覆盖额度"
   }
 }

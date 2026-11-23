@@ -45,6 +45,7 @@ import { toIntlLocale } from '@/i18n/languages'
 import { poolAPI, type Pool, type Capabilities, type CycleView } from './api'
 import { CycleProgress } from './cycle-progress'
 import { QuotaAmountInput } from './quota-amount-input'
+import { formatMultiplier } from './quota-share'
 import { snapshotSchema } from './schema'
 import { syncAPI } from './sync-api'
 import { PoolSyncBinding } from './sync-binding'
@@ -220,6 +221,17 @@ export function PoolDetail(props: {
                 id: 'name',
                 header: t('Username'),
                 cell: (m) => m.username || `#${m.user_id}`,
+              },
+              {
+                id: 'share',
+                header: t('Quota share'),
+                cell: (m) => {
+                  const mult = formatMultiplier(m.quota_multiplier)
+                  const overrideCount = m.cycle_overrides?.length ?? 0
+                  return overrideCount > 0
+                    ? `${mult} · ${t('Custom override')} (${overrideCount})`
+                    : mult
+                },
               },
               {
                 id: 'end',

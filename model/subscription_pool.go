@@ -3,6 +3,7 @@ package model
 import (
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"sync"
 
@@ -45,24 +46,36 @@ type SubscriptionPoolChannel struct {
 	PoolID    int `json:"pool_id" gorm:"primaryKey;autoIncrement:false;index"`
 }
 
+type SubscriptionCycleOverride struct {
+	Key       string `json:"key"`
+	Limit     int64  `json:"limit"`
+	Unlimited bool   `json:"unlimited"`
+}
+
 // Sidecar tables preserve the legacy subscription response contract.
 type SubscriptionPlanAllocation struct {
-	PlanID       int    `json:"plan_id" gorm:"primaryKey;autoIncrement:false"`
-	Mode         string `json:"mode" gorm:"type:varchar(16)"` // legacy/independent/fixed/assign
-	PoolID       int    `json:"pool_id"`
-	FixedEndTime int64  `json:"fixed_end_time"`
-	Rules        string `json:"-" gorm:"type:text"`
-	Version      int64  `json:"version"`
+	PlanID             int                         `json:"plan_id" gorm:"primaryKey;autoIncrement:false"`
+	Mode               string                      `json:"mode" gorm:"type:varchar(16)"` // legacy/independent/fixed/assign
+	PoolID             int                         `json:"pool_id"`
+	FixedEndTime       int64                       `json:"fixed_end_time"`
+	Rules              string                      `json:"-" gorm:"type:text"`
+	QuotaMultiplier    float64                     `json:"quota_multiplier"`
+	CycleOverridesJSON string                      `json:"-" gorm:"column:cycle_overrides;type:text"`
+	CycleOverrides     []SubscriptionCycleOverride `json:"cycle_overrides" gorm:"-"`
+	Version            int64                       `json:"version"`
 }
 
 type SubscriptionAllocation struct {
-	FollowPoolEnd  bool   `json:"follow_pool_end"`
-	SubscriptionID int    `json:"subscription_id" gorm:"primaryKey;autoIncrement:false"`
-	UserID         int    `json:"user_id" gorm:"index"`
-	PoolID         int    `json:"pool_id" gorm:"index"`
-	Pending        bool   `json:"pending"`
-	Rules          string `json:"-" gorm:"type:text"`
-	Version        int64  `json:"version"`
+	FollowPoolEnd      bool                        `json:"follow_pool_end"`
+	SubscriptionID     int                         `json:"subscription_id" gorm:"primaryKey;autoIncrement:false"`
+	UserID             int                         `json:"user_id" gorm:"index"`
+	PoolID             int                         `json:"pool_id" gorm:"index"`
+	Pending            bool                        `json:"pending"`
+	Rules              string                      `json:"-" gorm:"type:text"`
+	QuotaMultiplier    float64                     `json:"quota_multiplier"`
+	CycleOverridesJSON string                      `json:"-" gorm:"column:cycle_overrides;type:text"`
+	CycleOverrides     []SubscriptionCycleOverride `json:"cycle_overrides" gorm:"-"`
+	Version            int64                       `json:"version"`
 }
 
 type SubscriptionCycleState struct {
@@ -258,6 +271,176 @@ func ValidateSubscriptionCycles(rules []SubscriptionCycleRule, pooled bool) erro
 }
 
 func cycleJSON(v any) (string, error) { b, e := common.Marshal(v); return string(b), e }
+
+func validSubscriptionCycleKey(key string) bool {
+	return len(key) > 0 && len(key) <= 64 && strings.IndexFunc(key, func(c rune) bool {
+		return !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '_' || c == '-')
+	}) < 0
+}
+
+func NormalizeSubscriptionQuotaMultiplier(multiplier float64) float64 {
+	if multiplier == 0 {
+		return 1
+	}
+	return multiplier
+}
+
+func ParseSubscriptionCycleOverrides(raw string) ([]SubscriptionCycleOverride, error) {
+	if strings.TrimSpace(raw) == "" {
+		return []SubscriptionCycleOverride{}, nil
+	}
+	var overrides []SubscriptionCycleOverride
+	if err := common.UnmarshalJsonStr(raw, &overrides); err != nil {
+		return nil, err
+	}
+	if overrides == nil {
+		return []SubscriptionCycleOverride{}, nil
+	}
+	return overrides, nil
+}
+
+func encodeSubscriptionCycleOverrides(overrides []SubscriptionCycleOverride) (string, error) {
+	if len(overrides) == 0 {
+		return "", nil
+	}
+	return cycleJSON(overrides)
+}
+
+func HydrateSubscriptionPlanAllocation(cfg *SubscriptionPlanAllocation) error {
+	if cfg == nil {
+		return nil
+	}
+	overrides, err := ParseSubscriptionCycleOverrides(cfg.CycleOverridesJSON)
+	if err != nil {
+		return err
+	}
+	cfg.CycleOverrides = overrides
+	if cfg.Mode == "fixed" || cfg.Mode == "assign" {
+		cfg.QuotaMultiplier = NormalizeSubscriptionQuotaMultiplier(cfg.QuotaMultiplier)
+	}
+	return nil
+}
+
+func HydrateSubscriptionAllocation(a *SubscriptionAllocation) error {
+	if a == nil {
+		return nil
+	}
+	overrides, err := ParseSubscriptionCycleOverrides(a.CycleOverridesJSON)
+	if err != nil {
+		return err
+	}
+	a.CycleOverrides = overrides
+	if a.PoolID > 0 || a.Pending {
+		a.QuotaMultiplier = NormalizeSubscriptionQuotaMultiplier(a.QuotaMultiplier)
+	}
+	return nil
+}
+
+func ValidateSubscriptionQuotaAllocation(multiplier float64, overrides []SubscriptionCycleOverride, poolRules []SubscriptionCycleRule) (float64, []SubscriptionCycleOverride, error) {
+	normalized := NormalizeSubscriptionQuotaMultiplier(multiplier)
+	if math.IsNaN(normalized) || math.IsInf(normalized, 0) || normalized < 0.01 || normalized > 100 {
+		return 0, nil, errors.New("Invalid quota multiplier")
+	}
+	if len(overrides) > 32 {
+		return 0, nil, errors.New("Too many subscription cycles")
+	}
+	var poolByKey map[string]SubscriptionCycleRule
+	if poolRules != nil {
+		poolByKey = make(map[string]SubscriptionCycleRule, len(poolRules))
+		for _, r := range poolRules {
+			poolByKey[r.Key] = r
+		}
+	}
+	seen := make(map[string]bool, len(overrides))
+	cleaned := make([]SubscriptionCycleOverride, 0, len(overrides))
+	for _, ov := range overrides {
+		if !validSubscriptionCycleKey(ov.Key) || seen[ov.Key] {
+			return 0, nil, errors.New("Invalid or duplicate cycle key")
+		}
+		seen[ov.Key] = true
+		if ov.Limit < 0 || ov.Limit > common.MaxWalletQuota || (!ov.Unlimited && ov.Limit == 0) {
+			return 0, nil, errors.New("Invalid subscription cycle override")
+		}
+		if ov.Unlimited {
+			ov.Limit = 0
+		}
+		if poolByKey != nil {
+			poolRule, ok := poolByKey[ov.Key]
+			if !ok {
+				return 0, nil, errors.New("Invalid subscription cycle override")
+			}
+			if poolRule.Shared {
+				return 0, nil, errors.New("Shared cycles cannot have per-plan quota overrides")
+			}
+		}
+		cleaned = append(cleaned, ov)
+	}
+	return normalized, cleaned, nil
+}
+
+func filterSubscriptionCycleOverridesForPool(overrides []SubscriptionCycleOverride, poolRules []SubscriptionCycleRule) []SubscriptionCycleOverride {
+	if len(overrides) == 0 || len(poolRules) == 0 {
+		return []SubscriptionCycleOverride{}
+	}
+	poolByKey := make(map[string]SubscriptionCycleRule, len(poolRules))
+	for _, r := range poolRules {
+		poolByKey[r.Key] = r
+	}
+	filtered := make([]SubscriptionCycleOverride, 0, len(overrides))
+	for _, ov := range overrides {
+		rule, ok := poolByKey[ov.Key]
+		if !ok || rule.Shared {
+			continue
+		}
+		filtered = append(filtered, ov)
+	}
+	return filtered
+}
+
+func cycleOverridesMap(overrides []SubscriptionCycleOverride) map[string]SubscriptionCycleOverride {
+	if len(overrides) == 0 {
+		return nil
+	}
+	m := make(map[string]SubscriptionCycleOverride, len(overrides))
+	for _, ov := range overrides {
+		m[ov.Key] = ov
+	}
+	return m
+}
+
+func scaleSubscriptionQuota(limit int64, multiplier float64) int64 {
+	if limit <= 0 || multiplier <= 0 || multiplier == 1 {
+		return limit
+	}
+	scaled := math.Round(float64(limit) * multiplier)
+	if scaled < 1 {
+		return 1
+	}
+	if scaled >= float64(common.MaxWalletQuota) {
+		return common.MaxWalletQuota
+	}
+	return int64(scaled)
+}
+
+func applySubscriptionCycleAllocation(rule SubscriptionCycleRule, multiplier float64, overrides map[string]SubscriptionCycleOverride) SubscriptionCycleRule {
+	if rule.Shared {
+		return rule
+	}
+	if ov, ok := overrides[rule.Key]; ok {
+		rule.Unlimited = ov.Unlimited
+		if ov.Unlimited {
+			rule.Limit = 0
+		} else {
+			rule.Limit = ov.Limit
+		}
+		return rule
+	}
+	if !rule.Unlimited {
+		rule.Limit = scaleSubscriptionQuota(rule.Limit, NormalizeSubscriptionQuotaMultiplier(multiplier))
+	}
+	return rule
+}
+
 func allocationOwner(subID, poolID int) string {
 	if poolID > 0 {
 		return fmt.Sprintf("pool:%d", poolID)

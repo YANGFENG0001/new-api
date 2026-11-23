@@ -241,16 +241,86 @@ func SaveSubscriptionPlanAllocationTx(tx *gorm.DB, cfg SubscriptionPlanAllocatio
 			if !pool.Enabled || pool.EndTime <= GetDBTimestamp() {
 				return errors.New("Upstream pool is unavailable")
 			}
+			var poolRules []SubscriptionCycleRule
+			if pool.Rules != "" {
+				if err := common.UnmarshalJsonStr(pool.Rules, &poolRules); err != nil {
+					return err
+				}
+			}
+			multiplier, overrides, err := ValidateSubscriptionQuotaAllocation(cfg.QuotaMultiplier, cfg.CycleOverrides, poolRules)
+			if err != nil {
+				return err
+			}
+			encoded, err := encodeSubscriptionCycleOverrides(overrides)
+			if err != nil {
+				return err
+			}
+			cfg.QuotaMultiplier = multiplier
+			cfg.CycleOverrides = overrides
+			cfg.CycleOverridesJSON = encoded
+		} else if cfg.Mode == "assign" {
+			cfg.PoolID = 0
+			multiplier, overrides, err := ValidateSubscriptionQuotaAllocation(cfg.QuotaMultiplier, cfg.CycleOverrides, nil)
+			if err != nil {
+				return err
+			}
+			encoded, err := encodeSubscriptionCycleOverrides(overrides)
+			if err != nil {
+				return err
+			}
+			cfg.QuotaMultiplier = multiplier
+			cfg.CycleOverrides = overrides
+			cfg.CycleOverridesJSON = encoded
 		} else {
 			cfg.PoolID = 0
+			cfg.QuotaMultiplier = 0
+			cfg.CycleOverrides = nil
+			cfg.CycleOverridesJSON = ""
 		}
 		return tx.Save(&cfg).Error
 	})
 }
 
+type SubscriptionPoolAssignmentOptions struct {
+	QuotaMultiplier *float64
+	CycleOverrides  *[]SubscriptionCycleOverride
+}
+
+func resolveAssignmentQuotaAllocation(current SubscriptionAllocation, poolRules []SubscriptionCycleRule, opts SubscriptionPoolAssignmentOptions) (float64, []SubscriptionCycleOverride, string, error) {
+	multiplier := current.QuotaMultiplier
+	if opts.QuotaMultiplier != nil {
+		multiplier = *opts.QuotaMultiplier
+	}
+	var overrides []SubscriptionCycleOverride
+	var err error
+	if opts.CycleOverrides != nil {
+		overrides = *opts.CycleOverrides
+		multiplier, overrides, err = ValidateSubscriptionQuotaAllocation(multiplier, overrides, poolRules)
+	} else {
+		existing, parseErr := ParseSubscriptionCycleOverrides(current.CycleOverridesJSON)
+		if parseErr != nil {
+			return 0, nil, "", parseErr
+		}
+		overrides = filterSubscriptionCycleOverridesForPool(existing, poolRules)
+		multiplier, overrides, err = ValidateSubscriptionQuotaAllocation(multiplier, overrides, poolRules)
+	}
+	if err != nil {
+		return 0, nil, "", err
+	}
+	encoded, err := encodeSubscriptionCycleOverrides(overrides)
+	if err != nil {
+		return 0, nil, "", err
+	}
+	return multiplier, overrides, encoded, nil
+}
+
 // Assignment changes preserve both pools' existing windows and all inflight
 // reservations. Personal counters are keyed by pool+user, not subscription.
 func AssignSubscriptionPool(subID, poolID int, version, endTime int64, actorID int, confirm bool, poolVersion int64, expectedCarry ...string) error {
+	return AssignSubscriptionPoolWithOptions(subID, poolID, version, endTime, actorID, confirm, poolVersion, SubscriptionPoolAssignmentOptions{}, expectedCarry...)
+}
+
+func AssignSubscriptionPoolWithOptions(subID, poolID int, version, endTime int64, actorID int, confirm bool, poolVersion int64, opts SubscriptionPoolAssignmentOptions, expectedCarry ...string) error {
 	if subID <= 0 || poolID <= 0 || version < 0 || !confirm {
 		return errors.New("Confirm the subscription pool assignment impact")
 	}
@@ -306,10 +376,20 @@ func AssignSubscriptionPool(subID, poolID int, version, endTime int64, actorID i
 		if endTime <= GetDBTimestamp() || endTime > pool.EndTime {
 			return errors.New("Member expiry must not exceed pool expiry")
 		}
+		var poolRules []SubscriptionCycleRule
+		if pool.Rules != "" {
+			if err := common.UnmarshalJsonStr(pool.Rules, &poolRules); err != nil {
+				return err
+			}
+		}
+		multiplier, overrides, encodedOverrides, err := resolveAssignmentQuotaAllocation(a, poolRules, opts)
+		if err != nil {
+			return err
+		}
 		// A lost HTTP response may be retried with the same optimistic version.
 		// Only an identical completed assignment is replayed without an audit or
 		// any counter mutation; unrelated changes still require a new preview.
-		if a.Version == version+1 && a.PoolID == poolID && !a.Pending && a.FollowPoolEnd == followPoolEnd && sub.EndTime == endTime {
+		if a.Version == version+1 && a.PoolID == poolID && !a.Pending && a.FollowPoolEnd == followPoolEnd && sub.EndTime == endTime && NormalizeSubscriptionQuotaMultiplier(a.QuotaMultiplier) == multiplier && a.CycleOverridesJSON == encodedOverrides {
 			return nil
 		}
 		if a.Version != version || a.Version != hint.Version {
@@ -339,6 +419,9 @@ func AssignSubscriptionPool(subID, poolID int, version, endTime int64, actorID i
 		a.PoolID = poolID
 		a.Pending = false
 		a.FollowPoolEnd = followPoolEnd
+		a.QuotaMultiplier = multiplier
+		a.CycleOverrides = overrides
+		a.CycleOverridesJSON = encodedOverrides
 		a.Version++
 		if err := tx.Save(&a).Error; err != nil {
 			return err
@@ -346,24 +429,30 @@ func AssignSubscriptionPool(subID, poolID int, version, endTime int64, actorID i
 		if err := tx.Model(&sub).Updates(map[string]any{"end_time": endTime, "next_reset_time": 0}).Error; err != nil {
 			return err
 		}
-		detail, _ := cycleJSON(map[string]any{"previous_pool_id": hint.PoolID, "end_time": endTime, "usage_transfer": carry.Amount > 0})
+		detail, _ := cycleJSON(map[string]any{"previous_pool_id": hint.PoolID, "end_time": endTime, "usage_transfer": carry.Amount > 0, "quota_multiplier": multiplier, "cycle_overrides": overrides})
 		return tx.Create(&SubscriptionPoolEvent{PoolID: poolID, SubscriptionID: subID, ActorID: actorID, Action: "assign", Detail: detail, CreatedAt: GetDBTimestamp()}).Error
 	})
 }
 
 type SubscriptionAssignmentPreview struct {
-	Carry          SubscriptionLegacyCarry `json:"legacy_carry"`
-	SubscriptionID int                     `json:"subscription_id"`
-	Current        SubscriptionAllocation  `json:"current"`
-	TargetPoolID   int                     `json:"target_pool_id"`
-	PoolVersion    int64                   `json:"pool_version"`
-	EndTime        int64                   `json:"end_time"`
-	TargetCycles   []SubscriptionCycleView `json:"target_cycles"`
-	UsageTransfer  bool                    `json:"usage_transfer"`
+	Carry           SubscriptionLegacyCarry     `json:"legacy_carry"`
+	SubscriptionID  int                         `json:"subscription_id"`
+	Current         SubscriptionAllocation      `json:"current"`
+	TargetPoolID    int                         `json:"target_pool_id"`
+	PoolVersion     int64                       `json:"pool_version"`
+	EndTime         int64                       `json:"end_time"`
+	QuotaMultiplier float64                     `json:"quota_multiplier"`
+	CycleOverrides  []SubscriptionCycleOverride `json:"cycle_overrides"`
+	TargetCycles    []SubscriptionCycleView     `json:"target_cycles"`
+	UsageTransfer   bool                        `json:"usage_transfer"`
 }
 
 func PreviewSubscriptionPoolAssignment(subID, poolID int, endTime int64) (*SubscriptionAssignmentPreview, error) {
-	view := &SubscriptionAssignmentPreview{SubscriptionID: subID, TargetPoolID: poolID}
+	return PreviewSubscriptionPoolAssignmentWithOptions(subID, poolID, endTime, SubscriptionPoolAssignmentOptions{})
+}
+
+func PreviewSubscriptionPoolAssignmentWithOptions(subID, poolID int, endTime int64, opts SubscriptionPoolAssignmentOptions) (*SubscriptionAssignmentPreview, error) {
+	view := &SubscriptionAssignmentPreview{SubscriptionID: subID, TargetPoolID: poolID, CycleOverrides: []SubscriptionCycleOverride{}}
 	if subID <= 0 || poolID <= 0 {
 		return nil, errors.New("Invalid parameters")
 	}
@@ -408,6 +497,9 @@ func PreviewSubscriptionPoolAssignment(subID, poolID int, endTime int64) (*Subsc
 		if view.Current.Version != hint.Version || view.Current.PoolID != hint.PoolID {
 			return errors.New("Subscription assignment changed; retry the request")
 		}
+		if err := HydrateSubscriptionAllocation(&view.Current); err != nil {
+			return err
+		}
 		view.PoolVersion = pool.Version
 		view.EndTime = endTime
 		if endTime == 0 {
@@ -416,8 +508,19 @@ func PreviewSubscriptionPoolAssignment(subID, poolID int, endTime int64) (*Subsc
 		if view.EndTime <= now || view.EndTime > pool.EndTime {
 			return errors.New("Member expiry must not exceed pool expiry")
 		}
-		var err error
-		view.TargetCycles, err = subscriptionCycleViewsTx(tx, allocationOwner(0, poolID), pool.Rules, sub.UserId, false, now)
+		var poolRules []SubscriptionCycleRule
+		if pool.Rules != "" {
+			if err := common.UnmarshalJsonStr(pool.Rules, &poolRules); err != nil {
+				return err
+			}
+		}
+		multiplier, overrides, _, err := resolveAssignmentQuotaAllocation(view.Current, poolRules, opts)
+		if err != nil {
+			return err
+		}
+		view.QuotaMultiplier = multiplier
+		view.CycleOverrides = overrides
+		view.TargetCycles, err = subscriptionCycleViewsWithAllocationTx(tx, allocationOwner(0, poolID), pool.Rules, sub.UserId, false, now, multiplier, cycleOverridesMap(overrides))
 		if err != nil {
 			return err
 		}
