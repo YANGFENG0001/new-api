@@ -231,8 +231,13 @@ export const poolAPI = {
       channels: saved.channels ?? pool.channels,
     }
   },
-  config: (id: number) =>
-    poolRequest<AllocationConfig>('get', `${base}/plans/${id}/allocation`),
+  config: async (id: number): Promise<AllocationConfig> => {
+    const config = await poolRequest<
+      Omit<AllocationConfig, 'cycles'> & { cycles?: CycleRule[] | null }
+    >('get', `${base}/plans/${id}/allocation`)
+    // Also tolerate older servers during rolling deployments.
+    return { ...config, cycles: config.cycles ?? [] }
+  },
   saveConfig: (id: number, data: AllocationConfig) =>
     poolRequest<null>('put', `${base}/plans/${id}/allocation`, data),
   allocations: (id: number) =>

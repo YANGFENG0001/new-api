@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"net/http"
@@ -264,6 +265,71 @@ func TestSubscriptionPoolPlanSaveIsAtomicAndPreservesExistingMembers(t *testing.
 	assert.Zero(t, count, "future legacy subscriptions must not enter the multi-cycle engine")
 	denied := request(http.MethodPut, fmt.Sprint(created.Data.Id), `{"plan":{"title":"denied"},"allocation":{"mode":"legacy","version":2}}`, common.RoleCommonUser)
 	assert.Equal(t, http.StatusForbidden, denied.Code)
+}
+
+func TestSubscriptionPoolPlanAllocationEmptyCyclesRoundTrip(t *testing.T) {
+	for _, mode := range []string{"legacy", "independent"} {
+		t.Run(mode, func(t *testing.T) {
+			user, plan, now := setupSubscriptionPoolTest(t)
+			previous := *operation_setting.GetPaymentSetting()
+			t.Cleanup(func() { *operation_setting.GetPaymentSetting() = previous })
+			operation_setting.GetPaymentSetting().ComplianceConfirmed = true
+			operation_setting.GetPaymentSetting().ComplianceTermsVersion = operation_setting.CurrentComplianceTermsVersion
+			pool, err := model.SaveSubscriptionPool(model.SubscriptionPoolInput{SubscriptionPool: model.SubscriptionPool{Name: "round-trip", Enabled: true, EndTime: now + 86400}, Cycles: []model.SubscriptionCycleRule{{Key: "short", Name: "Short", Seconds: 25200, NextReset: now + 25200, Limit: 100, Shared: true, Enabled: true}}}, user.Id)
+			require.NoError(t, err)
+			require.NoError(t, model.SaveSubscriptionPlanAllocation(model.SubscriptionPlanAllocation{PlanID: plan.Id, Mode: "fixed", PoolID: pool.Id}, nil))
+			// Existing installations persist JSON null for unused plan cycles.
+			require.NoError(t, model.DB.Model(&model.SubscriptionPlanAllocation{}).Where("plan_id = ?", plan.Id).Update("rules", "null").Error)
+			var member *model.UserSubscription
+			require.NoError(t, model.DB.Transaction(func(tx *gorm.DB) error {
+				var err error
+				member, err = model.CreateUserSubscriptionFromPlanTx(tx, user.Id, &plan, "admin")
+				return err
+			}))
+			var original model.SubscriptionAllocation
+			require.NoError(t, model.DB.First(&original, "subscription_id = ?", member.Id).Error)
+			w := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(w)
+			c.Set("id", user.Id)
+			c.Set("role", common.RoleRootUser)
+			c.Params = gin.Params{{Key: "id", Value: fmt.Sprint(plan.Id)}}
+			GetSubscriptionPlanAllocation(c)
+			var response struct {
+				Success bool                            `json:"success"`
+				Data    subscriptionPlanAllocationInput `json:"data"`
+			}
+			require.NoError(t, common.Unmarshal(w.Body.Bytes(), &response))
+			require.True(t, response.Success, w.Body.String())
+			require.NotNil(t, response.Data.Cycles, "unused cycles must be an empty JSON array, not null")
+			assert.Empty(t, response.Data.Cycles)
+			response.Data.Mode = mode
+			if mode == "independent" {
+				response.Data.Cycles = []model.SubscriptionCycleRule{{Key: "personal", Name: "Personal", Seconds: 25200, NextReset: now + 25200, Limit: 200, Enabled: true}}
+			}
+			payload, err := common.Marshal(AdminUpsertSubscriptionPlanRequest{Plan: plan, Allocation: &response.Data})
+			require.NoError(t, err)
+			w = httptest.NewRecorder()
+			c, _ = gin.CreateTestContext(w)
+			c.Set("id", user.Id)
+			c.Set("role", common.RoleRootUser)
+			c.Params = gin.Params{{Key: "id", Value: fmt.Sprint(plan.Id)}}
+			c.Request = httptest.NewRequest(http.MethodPut, "/api/subscription/admin/plans", bytes.NewReader(payload))
+			c.Request.Header.Set("Content-Type", "application/json")
+			AdminUpdateSubscriptionPlan(c)
+			assert.Contains(t, w.Body.String(), `"success":true`)
+			var saved model.SubscriptionPlanAllocation
+			require.NoError(t, model.DB.First(&saved, "plan_id = ?", plan.Id).Error)
+			assert.Equal(t, mode, saved.Mode)
+			assert.Zero(t, saved.PoolID)
+			assert.EqualValues(t, 2, saved.Version)
+			var retained model.SubscriptionAllocation
+			require.NoError(t, model.DB.First(&retained, "subscription_id = ?", member.Id).Error)
+			assert.Equal(t, original, retained, "editing plan defaults must not migrate existing purchased subscriptions")
+			var retainedMember model.UserSubscription
+			require.NoError(t, model.DB.First(&retainedMember, member.Id).Error)
+			assert.Equal(t, *member, retainedMember)
+		})
+	}
 }
 
 func TestSubscriptionPoolSaveReturnsEditableConfiguration(t *testing.T) {

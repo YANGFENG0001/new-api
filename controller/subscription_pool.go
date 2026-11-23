@@ -221,6 +221,11 @@ func GetSubscriptionPlanAllocation(c *gin.Context) {
 			return
 		}
 	}
+	// Unused cycles were persisted as JSON null for pooled/legacy plans.
+	// The editor contract always requires an array, including after decoding.
+	if cycles == nil {
+		cycles = []model.SubscriptionCycleRule{}
+	}
 	common.ApiSuccess(c, subscriptionPlanAllocationInput{SubscriptionPlanAllocation: cfg, Cycles: cycles})
 }
 func PutSubscriptionPlanAllocation(c *gin.Context) {

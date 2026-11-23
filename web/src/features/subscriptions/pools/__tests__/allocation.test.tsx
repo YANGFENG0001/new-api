@@ -283,6 +283,100 @@ test('a new multi-cycle plan submits its terms and allocation once and never sav
   await waitFor(() => expect(close).toHaveBeenCalledWith(false))
 })
 
+test.each([
+  { target: 'Traditional subscription', mode: 'legacy', cycles: null },
+  { target: 'Traditional subscription', mode: 'legacy', cycles: undefined },
+  {
+    target: 'Independent multi-cycle subscription',
+    mode: 'independent',
+    cycles: null,
+  },
+  {
+    target: 'Independent multi-cycle subscription',
+    mode: 'independent',
+    cycles: undefined,
+  },
+])(
+  'editing a saved pooled plan with $cycles cycles can switch to $mode',
+  async ({ target, mode, cycles }) => {
+    vi.spyOn(api, 'get').mockResolvedValue(envelope([]))
+    vi.spyOn(api, 'request').mockImplementation(async (config) => {
+      if (config.url?.endsWith('/pool-capabilities')) return envelope(caps)
+      if (config.url?.endsWith('/allocation')) {
+        return envelope({
+          plan_id: 11,
+          mode: 'fixed',
+          pool_id: pool.id,
+          fixed_end_time: 0,
+          version: 4,
+          cycles,
+        })
+      }
+      return envelope([pool])
+    })
+    const update = vi.spyOn(api, 'put').mockResolvedValue(envelope(null))
+    const close = vi.fn()
+    mount(
+      <SubscriptionsMutateDrawer
+        open
+        onOpenChange={close}
+        currentRow={{
+          plan: subscriptionPlanSchema.parse({
+            id: 11,
+            title: 'Existing pooled plan',
+            price_amount: 1,
+            duration_unit: 'month',
+            duration_value: 1,
+            quota_reset_period: 'never',
+            enabled: true,
+            sort_order: 0,
+            max_purchase_per_user: 0,
+            total_amount: 0,
+          }),
+          allocation: {
+            mode: 'fixed',
+            available: true,
+            fixed_end_time: pool.end_time,
+            cycles: [],
+          },
+        }}
+      />
+    )
+    await userEvent.click(
+      await screen.findByRole('combobox', { name: 'Allocation mode' })
+    )
+    await userEvent.click(await screen.findByRole('option', { name: target }))
+    if (mode === 'independent') {
+      await userEvent.click(
+        screen.getByRole('button', { name: 'Save changes' })
+      )
+      expect(update).not.toHaveBeenCalled()
+      await userEvent.click(screen.getByRole('button', { name: 'Add cycle' }))
+      const duration = screen.getByRole('spinbutton', {
+        name: 'Cycle duration',
+      })
+      await userEvent.clear(duration)
+      await userEvent.type(duration, '7')
+    } else {
+      expect(
+        screen.getByRole('spinbutton', { name: /^Quota \(/ })
+      ).toBeVisible()
+      expect(screen.getByText('Quota Reset')).toBeVisible()
+    }
+    await userEvent.click(screen.getByRole('button', { name: 'Save changes' }))
+    await waitFor(() => expect(update).toHaveBeenCalledTimes(1))
+    expect(update.mock.calls[0][1]).toMatchObject({
+      plan: { title: 'Existing pooled plan' },
+      allocation: {
+        mode,
+        version: 4,
+        cycles: mode === 'legacy' ? [] : [{ seconds: 25200, shared: false }],
+      },
+    })
+    await waitFor(() => expect(close).toHaveBeenCalledWith(false))
+  }
+)
+
 test('a saved pool synchronization shortcut opens unified settings with exactly four main tabs', async () => {
   vi.spyOn(api, 'request').mockImplementation(async (config) => {
     if (config.url?.endsWith('/pools')) return envelope([pool])
