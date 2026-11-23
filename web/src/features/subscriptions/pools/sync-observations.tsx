@@ -33,6 +33,8 @@ export function SyncObservations(props: {
           utilization={o.utilization}
           windowEnd={o.window_end}
           sampledAt={o.sampled_at}
+          sampleTimeQuality={o.sample_time_quality}
+          issueCode={o.issue_code}
           fetchedAt={o.fetched_at}
           stale={o.stale}
           issue={o.pending}

@@ -2414,3 +2414,168 @@ func TestSubscriptionPoolSourceDeleteRequiresScopedSingleUseProof(t *testing.T) 
 	replay := securityEnrollmentRequest("DELETE", "/sync", body, proof, identity, handler)
 	assert.Equal(t, 403, replay.Code)
 }
+
+func TestSubscriptionPoolSyncVM2APIMixedResetFormatsAndObjectProbe(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	end := now.Add(time.Hour).Unix()
+	for _, reset := range []string{fmt.Sprintf(`"%d"`, end), fmt.Sprint(end), fmt.Sprintf(`"%d"`, end*1000), fmt.Sprint(end * 1000), fmt.Sprintf(`%q`, time.Unix(end, 0).UTC().Format(time.RFC3339Nano))} {
+		t.Run(reset, func(t *testing.T) {
+			body := fmt.Sprintf(`{"ok":true,"data":{"accounts":[{"account_id":"a","vm_id":"vm-01","utilization_5h":0.19,"reset_5h":%s,"last_probe":{"at":%q},"probe_source":"headers"}]}}`, reset, now.Add(-10*time.Minute).Format(time.RFC3339Nano))
+			accounts, err := service.ParseSubscriptionSyncResponse([]byte(body), model.PanelSubscriptionSyncMapping(), now.Unix())
+			require.NoError(t, err)
+			require.Len(t, accounts, 1)
+			require.Len(t, accounts[0].Cycles, 1)
+			cycle := accounts[0].Cycles[0]
+			assert.Equal(t, end, cycle.WindowEnd)
+			assert.Equal(t, now.Add(-10*time.Minute).Unix(), cycle.SampledAt, "fetch time must never impersonate a sample")
+			assert.Empty(t, cycle.Error, "a valid reset and timestamp hint should remain a displayable candidate")
+		})
+	}
+}
+
+func TestSubscriptionPoolSyncVM2APIProfileIsNarrowAndCycleQualityIsSeparate(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	mapping := model.PanelSubscriptionSyncMapping()
+	mapping.Profile = "" // deployed pre-profile built-in mapping, do not rewrite storage
+	body := fmt.Sprintf(`{"ok":true,"data":{"accounts":[{"account_id":"a","vm_id":"vm-02","utilization_5h":0.2,"reset_5h":"%d","utilization_7d":0.3,"reset_7d":%q,"last_probe":{"at":%q}},{"account_id":"shell","utilization_5h":null}]}}`, now.Add(-time.Hour).Unix(), now.Add(24*time.Hour).Format(time.RFC3339), now.Add(-time.Minute).Format(time.RFC3339))
+	accounts, err := service.ParseSubscriptionSyncResponse([]byte(body), mapping, now.Unix())
+	require.NoError(t, err)
+	require.Len(t, accounts, 1)
+	require.Len(t, accounts[0].Cycles, 2)
+	assert.Equal(t, "expired_reset", accounts[0].Cycles[0].IssueCode)
+	assert.Equal(t, "hint", accounts[0].Cycles[1].SampleTimeQuality)
+	assert.Equal(t, "sample_time_incomplete", accounts[0].Cycles[1].IssueCode)
+	assert.Empty(t, accounts[0].Cycles[1].Error, "one expired window must not invalidate a usable weekly candidate")
+	mapping.SampledAtPath = "custom_time"
+	assert.False(t, model.IsVM2APISubscriptionSyncMapping(mapping), "one customized field prevents implicit migration")
+	body = fmt.Sprintf(`{"ok":true,"data":{"accounts":[{"account_id":"a","utilization_5h":0.1,"reset_5h":"%d","custom_time":%q}]}}`, now.Add(time.Hour).Unix(), now.Format(time.RFC3339))
+	accounts, err = service.ParseSubscriptionSyncResponse([]byte(body), mapping, now.Unix())
+	require.NoError(t, err)
+	require.Len(t, accounts, 1)
+	assert.Zero(t, accounts[0].Cycles[0].WindowEnd, "generic RFC3339 sources must stay strict")
+	for _, reset := range []string{`"1e12"`, `"1795452000.5"`, `-1`, `null`, `1.5`, `"+1795452000"`, `100000000000000000000`} {
+		mapping = model.PanelSubscriptionSyncMapping()
+		body = fmt.Sprintf(`{"ok":true,"data":{"accounts":[{"account_id":"a","utilization_5h":0.1,"reset_5h":%s,"last_probe":{"at":%q}}]}}`, reset, now.Format(time.RFC3339))
+		accounts, err = service.ParseSubscriptionSyncResponse([]byte(body), mapping, now.Unix())
+		require.NoError(t, err)
+		require.Len(t, accounts, 1)
+		assert.Zero(t, accounts[0].Cycles[0].WindowEnd, reset)
+		assert.NotEmpty(t, accounts[0].Cycles[0].Error, reset)
+	}
+}
+
+func TestSubscriptionPoolSyncHintsNeverOverwriteTrustedBaseline(t *testing.T) {
+	_, _, now := setupSubscriptionPoolTest(t)
+	rule := model.SubscriptionCycleRule{Key: "short", Name: "7h", Seconds: 25200, NextReset: now + 1000, Limit: 60, Shared: true, Enabled: true}
+	pool, err := model.SaveSubscriptionPool(model.SubscriptionPoolInput{SubscriptionPool: model.SubscriptionPool{Name: "hints", Enabled: true, EndTime: now + 86400}, Cycles: []model.SubscriptionCycleRule{rule}}, 1)
+	require.NoError(t, err)
+	source, err := service.SaveSubscriptionSyncSource(model.SubscriptionSyncSourceInput{SubscriptionSyncSource: model.SubscriptionSyncSource{Name: "hint-source", URL: "https://example.com/usage", Method: "GET", IntervalSeconds: 60, StaleSeconds: 300, TimeoutSeconds: 10}, Mapping: model.PanelSubscriptionSyncMapping()}, 1, true)
+	require.NoError(t, err)
+	binding := model.SubscriptionSyncBindingInput{SubscriptionSyncBinding: model.SubscriptionSyncBinding{PoolID: pool.Id, SourceID: source.Id, AccountID: "a", Enabled: true, StalePolicy: "calibration"}, Cycles: []model.SubscriptionSyncCycleBinding{{LocalKey: "short", UpstreamKey: "5h", AlignReset: true, Threshold: 1, MaxShiftSeconds: 300, QuotaPerFullWindow: 100}}}
+	require.NoError(t, model.SaveSubscriptionSyncBinding(binding, 1))
+	binding, err = model.GetSubscriptionSyncBinding(pool.Id)
+	require.NoError(t, err)
+	ratio := 0.2
+	account := model.SubscriptionSyncAccount{ID: "a", SampledAt: now, Cycles: []model.SubscriptionSyncCycle{{Key: "5h", Name: "5h", Seconds: 25200, WindowStart: now + 1060 - 25200, WindowEnd: now + 1060, SampledAt: now - 600, SampleTimeQuality: "hint", IssueCode: "sample_time_incomplete", Utilization: &ratio}}}
+	apply := func(token string) {
+		t.Helper()
+		claimed, e := model.ClaimSubscriptionSyncSource(source.Id, token, true)
+		require.NoError(t, e)
+		_, e = model.ApplySubscriptionSyncAccount(*claimed, token, binding, account, 1, false)
+		require.NoError(t, e)
+		require.NoError(t, model.FinishSubscriptionSyncSource(*claimed, token, []model.SubscriptionSyncAccount{account}, "", true, 1))
+	}
+	apply("hint-only")
+	var count int64
+	require.NoError(t, model.DB.Model(&model.SubscriptionSyncObservation{}).Where("pool_id = ?", pool.Id).Count(&count).Error)
+	assert.Zero(t, count, "candidate is catalog data, not a trusted observation")
+	var state model.SubscriptionCycleState
+	require.NoError(t, model.DB.Where("cycle_key = ?", rule.Key).First(&state).Error)
+	assert.Equal(t, now+1060, state.EndTime, "safe reset correction does not require a fabricated usage sample")
+	views, err := model.GetSubscriptionSyncViews(pool.Id)
+	require.NoError(t, err)
+	require.Len(t, views, 1)
+	assert.Equal(t, "hint", views[0].SampleTimeQuality)
+	assert.Empty(t, views[0].Digest)
+	assert.Nil(t, views[0].EstimatedUtilization)
+	// Legacy exact samples retain compatibility; only exact observations create baselines.
+	account.Cycles[0].SampleTimeQuality = ""
+	account.Cycles[0].IssueCode = ""
+	account.Cycles[0].SampledAt = now
+	apply("exact")
+	var original model.SubscriptionSyncObservation
+	require.NoError(t, model.DB.Where("pool_id = ?", pool.Id).First(&original).Error)
+	assert.Contains(t, original.Payload, "local_baseline")
+	ratio = 0.7
+	account.Cycles[0].SampleTimeQuality = "hint"
+	account.Cycles[0].IssueCode = "sample_time_incomplete"
+	apply("same-stamp-changed-hint")
+	var after model.SubscriptionSyncObservation
+	require.NoError(t, model.DB.First(&after, original.Id).Error)
+	assert.Equal(t, original.Payload, after.Payload)
+	assert.Equal(t, original.Digest, after.Digest)
+	assert.Equal(t, original.SampledAt, after.SampledAt)
+	views, err = model.GetSubscriptionSyncViews(pool.Id)
+	require.NoError(t, err)
+	require.Len(t, views, 1)
+	assert.InDelta(t, 0.7, *views[0].Utilization, 1e-9)
+	assert.Nil(t, views[0].EstimatedUtilization)
+	apply("duplicate-hint-1")
+	apply("duplicate-hint-2")
+	var beforeCount int64
+	require.NoError(t, model.DB.Model(&model.SubscriptionSyncEvent{}).Count(&beforeCount).Error)
+	apply("duplicate-hint-3")
+	require.NoError(t, model.DB.Model(&model.SubscriptionSyncEvent{}).Count(&count).Error)
+	assert.Equal(t, beforeCount, count, "identical polling cannot evict failure history")
+	account.Cycles[0].WindowEnd = now - 60
+	account.Cycles[0].WindowStart = now - 60 - 25200
+	account.Cycles[0].Error = "Missing or inconsistent upstream cycle data"
+	account.Cycles[0].IssueCode = "expired_reset"
+	apply("expired-hint")
+	require.NoError(t, model.DB.First(&after, original.Id).Error)
+	assert.Equal(t, original.Payload, after.Payload)
+	require.NoError(t, model.DB.First(&state, state.Id).Error)
+	assert.Equal(t, now+1060, state.EndTime)
+}
+
+func TestSubscriptionPoolSyncAdmissionCapacityReferencesEffectiveTerms(t *testing.T) {
+	_, _, now := setupSubscriptionPoolTest(t)
+	for _, shared := range []bool{true, false} {
+		t.Run(fmt.Sprint(shared), func(t *testing.T) {
+			rule := model.SubscriptionCycleRule{Key: "custom", Name: "7h", Seconds: 25200, NextReset: now + 1000, Limit: 60, UpstreamLimit: 60, Shared: shared, Enabled: true}
+			pool, err := model.SaveSubscriptionPool(model.SubscriptionPoolInput{SubscriptionPool: model.SubscriptionPool{Name: "capacity", Enabled: true, EndTime: now + 86400}, Cycles: []model.SubscriptionCycleRule{rule}}, 1)
+			require.NoError(t, err)
+			rule.Limit = 82500000
+			rule.UpstreamLimit = 82500000
+			_, err = model.SaveSubscriptionPool(model.SubscriptionPoolInput{SubscriptionPool: *pool, Cycles: []model.SubscriptionCycleRule{rule}}, 1)
+			require.NoError(t, err)
+			stats, err := model.GetSubscriptionPoolStatistics(pool.Id)
+			require.NoError(t, err)
+			require.Len(t, stats, 1)
+			assert.EqualValues(t, 60, stats[0].Limit)
+			require.NotNil(t, stats[0].PendingRule)
+			assert.EqualValues(t, 82500000, stats[0].PendingRule.Limit)
+			source, err := service.SaveSubscriptionSyncSource(model.SubscriptionSyncSourceInput{SubscriptionSyncSource: model.SubscriptionSyncSource{Name: "capacity-source", URL: "https://example.com/usage", Method: "GET", IntervalSeconds: 60, StaleSeconds: 300, TimeoutSeconds: 10}, Mapping: model.PanelSubscriptionSyncMapping()}, 1, true)
+			require.NoError(t, err)
+			binding := model.SubscriptionSyncBindingInput{SubscriptionSyncBinding: model.SubscriptionSyncBinding{PoolID: pool.Id, SourceID: source.Id, AccountID: fmt.Sprint(pool.Id), Enabled: true, StalePolicy: "calibration"}, Cycles: []model.SubscriptionSyncCycleBinding{{LocalKey: "custom", UpstreamKey: "5h", Threshold: 1, MaxShiftSeconds: 300, CapacityMode: "admission"}}}
+			require.NoError(t, model.SaveSubscriptionSyncBinding(binding, 1))
+			binding, err = model.GetSubscriptionSyncBinding(pool.Id)
+			require.NoError(t, err)
+			ratio := 0.4
+			account := model.SubscriptionSyncAccount{ID: binding.AccountID, Cycles: []model.SubscriptionSyncCycle{{Key: "5h", Seconds: 25200, WindowStart: now + 1000 - 25200, WindowEnd: now + 1000, SampledAt: now, Utilization: &ratio}}}
+			claimed, err := model.ClaimSubscriptionSyncSource(source.Id, "capacity", true)
+			require.NoError(t, err)
+			_, err = model.ApplySubscriptionSyncAccount(*claimed, "capacity", binding, account, 1, false)
+			require.NoError(t, err)
+			var observation model.SubscriptionSyncObservation
+			require.NoError(t, model.DB.Where("pool_id = ?", pool.Id).First(&observation).Error)
+			var payload struct {
+				Baseline struct {
+					Capacity int64 `json:"capacity"`
+				} `json:"local_baseline"`
+			}
+			require.NoError(t, common.UnmarshalJsonStr(observation.Payload, &payload))
+			assert.EqualValues(t, 60, payload.Baseline.Capacity, "pending draft is not current conversion capacity")
+		})
+	}
+}

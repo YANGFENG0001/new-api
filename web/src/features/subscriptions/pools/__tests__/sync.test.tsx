@@ -452,6 +452,127 @@ test('binding validation accepts the calibration-only stale policy', () => {
   expect(syncBindingSchema.safeParse(base).success).toBe(true)
 })
 
+test('estimation capacity references local admission only after an explicit user choice', async () => {
+  const pool = {
+    id: 8,
+    name: 'Pool',
+    version: 1,
+    cycles: [
+      {
+        key: 'local',
+        name: 'Shared window',
+        seconds: 3600,
+        shared: true,
+        unlimited: false,
+        limit: 500000,
+      },
+    ],
+  } as Pool
+  const request = vi
+    .spyOn(api, 'request')
+    .mockImplementation(async (config) => {
+      if (config.method === 'put') return envelope(null)
+      if (config.url?.endsWith('/sync-sources')) {
+        return envelope({
+          sources: [source],
+          template: mapping,
+          privileged: true,
+        })
+      }
+      if (config.url?.endsWith('/state')) {
+        return envelope({ accounts: [], events: [] })
+      }
+      return envelope({
+        binding: {
+          pool_id: 8,
+          source_id: 4,
+          account_id: 'stable-id',
+          enabled: true,
+          sync_expiry: false,
+          stale_policy: 'calibration',
+          grace_seconds: 0,
+          version: 0,
+          cycles: [
+            {
+              local_key: 'local',
+              upstream_key: 'short',
+              align_reset: false,
+              enforce: false,
+              threshold: 1,
+              max_shift_seconds: 300,
+              quota_per_full_window: 123,
+            },
+          ],
+        },
+        observations: [
+          {
+            key: 'local',
+            name: 'Shared window',
+            utilization: 0.4,
+            sampled_at: 0,
+            sample_time_quality: 'hint',
+            issue_code: 'sample_time_incomplete',
+            fetched_at: Math.floor(Date.now() / 1000),
+            window_end: Math.floor(Date.now() / 1000) + 3600,
+            stale: false,
+            pending: 'Upstream reset shift requires confirmation',
+            digest: '',
+          },
+        ],
+      })
+    })
+
+  mount(<PoolSyncBinding pool={pool} caps={caps} />)
+  await screen.findByRole('combobox', { name: 'When upstream data is stale' })
+  await userEvent.click(
+    screen.getByRole('button', { name: 'Advanced synchronization settings' })
+  )
+  expect(
+    screen.getByRole('radio', { name: 'Enter an explicit estimation capacity' })
+  ).toBeChecked()
+  expect(
+    screen.getByRole('spinbutton', {
+      name: 'Quota units per full upstream window (optional)',
+    })
+  ).toBeVisible()
+  expect(
+    screen.queryByRole('button', { name: /Confirm reset alignment/ })
+  ).not.toBeInTheDocument()
+
+  await userEvent.click(
+    screen.getByRole('radio', { name: 'Use current local admission capacity' })
+  )
+  expect(
+    screen.queryByRole('spinbutton', {
+      name: 'Quota units per full upstream window (optional)',
+    })
+  ).not.toBeInTheDocument()
+  expect(
+    screen.getByText(
+      "The server references this cycle's current effective local admission capacity; it does not copy a value. Independent cycles use the upstream limit; finite shared cycles use the shared limit."
+    )
+  ).toBeVisible()
+
+  await userEvent.click(screen.getByRole('button', { name: 'Save' }))
+  await userEvent.click(
+    within(await screen.findByRole('alertdialog')).getByRole('button', {
+      name: 'Continue',
+    })
+  )
+  await waitFor(() =>
+    expect(request.mock.calls.some(([config]) => config.method === 'put')).toBe(
+      true
+    )
+  )
+  const payload = request.mock.calls.find(
+    ([config]) => config.method === 'put'
+  )?.[0].data as { cycles: Array<Record<string, unknown>> }
+  expect(payload.cycles[0]).toMatchObject({
+    capacity_mode: 'admission',
+    quota_per_full_window: 123,
+  })
+})
+
 test('calibration-only binding disables upstream admission, hides grace, and preserves saved values', async () => {
   const pool = {
     id: 8,

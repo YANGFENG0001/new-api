@@ -10,19 +10,20 @@ import (
 // Public usage DTOs intentionally do not embed pools, channels, external IDs,
 // membership lists, or administrator notes.
 type SubscriptionCycleView struct {
-	LimitUnknown bool   `json:"limit_unknown,omitempty"`
-	Key          string `json:"key"`
-	Name         string `json:"name"`
-	Seconds      int64  `json:"seconds"`
-	Shared       bool   `json:"shared"`
-	Unlimited    bool   `json:"unlimited"`
-	Limit        int64  `json:"limit"`
-	Used         int64  `json:"used"`
-	Reserved     int64  `json:"reserved"`
-	Adjustment   int64  `json:"adjustment"`
-	StartTime    int64  `json:"start_time"`
-	NextReset    int64  `json:"next_reset"`
-	Pending      bool   `json:"pending"`
+	PendingRule  *SubscriptionPlanCycleSummary `json:"pending_rule,omitempty"`
+	LimitUnknown bool                          `json:"limit_unknown,omitempty"`
+	Key          string                        `json:"key"`
+	Name         string                        `json:"name"`
+	Seconds      int64                         `json:"seconds"`
+	Shared       bool                          `json:"shared"`
+	Unlimited    bool                          `json:"unlimited"`
+	Limit        int64                         `json:"limit"`
+	Used         int64                         `json:"used"`
+	Reserved     int64                         `json:"reserved"`
+	Adjustment   int64                         `json:"adjustment"`
+	StartTime    int64                         `json:"start_time"`
+	NextReset    int64                         `json:"next_reset"`
+	Pending      bool                          `json:"pending"`
 }
 
 type SubscriptionUsageView struct {
@@ -197,7 +198,19 @@ func subscriptionCycleViewsTx(tx *gorm.DB, owner string, raw string, userID int,
 			limit = r.UpstreamLimit
 			unlimited = limit == 0
 		}
-		views = append(views, SubscriptionCycleView{Key: r.Key, Name: r.Name, LimitUnknown: aggregateOnly && !r.Shared && r.UpstreamLimit == 0, Seconds: r.Seconds, Shared: r.Shared, Unlimited: unlimited, Limit: limit, Used: usage.Used, Reserved: usage.Reserved, Adjustment: usage.Adjustment, StartTime: state.StartTime, NextReset: state.EndTime, Pending: state.PendingRule != ""})
+		var pending *SubscriptionPlanCycleSummary
+		if state.PendingRule != "" {
+			var next SubscriptionCycleRule
+			if err := common.UnmarshalJsonStr(state.PendingRule, &next); err != nil {
+				return nil, err
+			}
+			limit, unlimited := next.Limit, next.Unlimited
+			if aggregateOnly && !next.Shared {
+				limit, unlimited = next.UpstreamLimit, next.UpstreamLimit == 0
+			}
+			pending = &SubscriptionPlanCycleSummary{Name: SubscriptionCycleName(next.Name, next.Seconds), Seconds: next.Seconds, Limit: limit, Unlimited: unlimited, Shared: next.Shared}
+		}
+		views = append(views, SubscriptionCycleView{PendingRule: pending, Key: r.Key, Name: r.Name, LimitUnknown: aggregateOnly && !r.Shared && r.UpstreamLimit == 0, Seconds: r.Seconds, Shared: r.Shared, Unlimited: unlimited, Limit: limit, Used: usage.Used, Reserved: usage.Reserved, Adjustment: usage.Adjustment, StartTime: state.StartTime, NextReset: state.EndTime, Pending: state.PendingRule != ""})
 	}
 	return views, nil
 }

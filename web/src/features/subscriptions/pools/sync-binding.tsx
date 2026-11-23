@@ -38,6 +38,7 @@ import { Combobox } from '@/components/ui/combobox'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 
 import type { Pool, Capabilities } from './api'
 import { QuotaAmountInput } from './quota-amount-input'
@@ -407,32 +408,50 @@ function BindingEditor(props: {
                               {t('Advanced synchronization settings')}
                             </AccordionTrigger>
                             <AccordionContent className='space-y-3'>
-                              <Label htmlFor={`capacity-${local.key}`}>
-                                {t(
-                                  'Quota units per full upstream window (optional)'
-                                )}
-                              </Label>
-                              <QuotaAmountInput
-                                id={`capacity-${local.key}`}
-                                label={t(
-                                  'Quota units per full upstream window (optional)'
-                                )}
-                                disabled={
-                                  !props.caps.sync_binding ||
-                                  !props.caps.sync_apply
-                                }
-                                value={mapping.quota_per_full_window ?? 0}
-                                onChange={(quota_per_full_window) =>
-                                  updateCycle(local.key, {
-                                    quota_per_full_window,
-                                  })
-                                }
-                              />
-                              <p className='text-muted-foreground text-xs'>
-                                {t(
-                                  'Set an explicit capacity to estimate upstream progress from local settled usage between polls. Zero keeps the upstream percentage unchanged. Billing remains separate.'
-                                )}
-                              </p>
+                              <fieldset className='space-y-2'>
+                                <Label>{t('Estimation capacity source')}</Label>
+                                <RadioGroup
+                                  value={mapping.capacity_mode ?? 'explicit'}
+                                  onValueChange={(value) => {
+                                    if (value === 'explicit' || value === 'admission') {
+                                      updateCycle(local.key, { capacity_mode: value })
+                                    }
+                                  }}
+                                  disabled={!props.caps.sync_binding || !props.caps.sync_apply}
+                                >
+                                  <Label className='flex items-center gap-2 font-normal'>
+                                    <RadioGroupItem value='explicit' />
+                                    {t('Enter an explicit estimation capacity')}
+                                  </Label>
+                                  <Label className='flex items-center gap-2 font-normal'>
+                                    <RadioGroupItem value='admission' />
+                                    {t('Use current local admission capacity')}
+                                  </Label>
+                                </RadioGroup>
+                              </fieldset>
+                              {(mapping.capacity_mode ?? 'explicit') === 'explicit' ? (
+                                <>
+                                  <Label htmlFor={`capacity-${local.key}`}>
+                                    {t('Quota units per full upstream window (optional)')}
+                                  </Label>
+                                  <QuotaAmountInput
+                                    id={`capacity-${local.key}`}
+                                    label={t('Quota units per full upstream window (optional)')}
+                                    disabled={!props.caps.sync_binding || !props.caps.sync_apply}
+                                    value={mapping.quota_per_full_window ?? 0}
+                                    onChange={(quota_per_full_window) =>
+                                      updateCycle(local.key, { quota_per_full_window })
+                                    }
+                                  />
+                                  <p className='text-muted-foreground text-xs'>
+                                    {t('Set an explicit capacity to estimate upstream progress from local settled usage between polls. Zero keeps the upstream percentage unchanged. Billing remains separate.')}
+                                  </p>
+                                </>
+                              ) : (
+                                <p className='text-muted-foreground text-xs'>
+                                  {t("The server references this cycle's current effective local admission capacity; it does not copy a value. Independent cycles use the upstream limit; finite shared cycles use the shared limit.")}
+                                </p>
+                              )}
                               {mapping.align_reset && (
                                 <>
                                   <Label htmlFor={`shift-${local.key}`}>
@@ -566,6 +585,9 @@ function BindingEditor(props: {
           .filter(
             (o) =>
               o.pending === 'Upstream reset shift requires confirmation' &&
+              o.sample_time_quality !== 'hint' &&
+              o.sampled_at > 0 &&
+              !!o.digest &&
               !o.stale
           )
           .map((o) => (

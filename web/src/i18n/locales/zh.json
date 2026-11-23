@@ -3130,7 +3130,7 @@
     "footer.columns.related.links.oneApi": "One API",
     "footer.columns.related.title": "相关项目",
     "footer.defaultCopyright": "版权所有。",
-    "footer.new\u0061pi.projectAttributionSuffix": "版权所有，由项目贡献者设计与开发。",
+    "footer.newapi.projectAttributionSuffix": "版权所有，由项目贡献者设计与开发。",
     "For advanced custom channels this applies only to /v1/responses routes without protocol conversion.": "高级自定义渠道仅对 /v1/responses 且不做协议转换的路由生效。",
     "For channels added after May 10, 2025, no need to remove \".\" from model names during deployment": "对于 2025 年 5 月 10 日之后添加的渠道，在部署时无需从模型名称中移除 \".\"",
     "For private deployments, format: https://fastgpt.run/api/openapi": "对于私有部署，格式为：https://fastgpt.run/api/openapi",
@@ -8367,5 +8367,8 @@
     "Calibration only": "仅校准",
     "Calibration only always uses local quota. There is no grace deadline. Stale, unreadable, or exhausted upstream data never blocks local requests, and upstream admission checks do not apply. Local cycle limits and expiries still apply; unlimited local limits remain unlimited.": "仅校准模式始终使用本地额度，无宽限截止；上游数据过期、读取失败或快照耗尽均不会阻断本地请求，上游准入检查不生效；本地周期、限额和有效期仍会执行，本地无限制则仍无限制。",
     "Upstream admission checks are disabled in calibration-only mode. The saved enforcement setting is retained.": "仅校准模式下不进行上游准入判断，已保存的准入设置将被保留。"
-  }
+  },
+  "Active terms: {{duration}} · {{amount}} · {{scope}}": "当前生效条款：{{duration}} · {{amount}} · {{scope}}",
+  "Next cycle: {{duration}} · {{amount}} · {{scope}}": "下一周期：{{duration}} · {{amount}} · {{scope}}",
+  "Local delta: {{amount}}": "本地增量：{{amount}}"
 }

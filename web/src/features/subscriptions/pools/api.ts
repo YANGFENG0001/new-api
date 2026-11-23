@@ -60,6 +60,13 @@ export type AllocationConfig = {
   version: number
   cycles: CycleRule[]
 }
+export type PendingCycleRule = {
+  name: string
+  seconds: number
+  shared: boolean
+  unlimited: boolean
+  limit: number
+}
 export type CycleView = {
   limit_unknown?: boolean
   key: string
@@ -74,6 +81,7 @@ export type CycleView = {
   start_time: number
   next_reset: number
   pending: boolean
+  pending_rule?: PendingCycleRule
 }
 export type Usage = {
   subscription_id: number

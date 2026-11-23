@@ -26,18 +26,25 @@ import {
   useSystemConfigStore,
 } from '@/stores/system-config-store'
 
+import { useQuotaInputUnit } from './use-quota-input-unit'
+
 // Currency is an input convenience, never an inferred upstream capacity or unit.
 // Values crossing the API boundary remain exact integer site quota units.
 export function QuotaAmountInput(props: {
   id: string
+  name?: string
+  preferenceKey?: string
   label: string
   value: number
   onChange: (quota: number) => void
   disabled?: boolean
 }) {
   const { t } = useTranslation()
-  const currency = useSystemConfigStore((s) => s.config.currency)
-  const [unit, setUnit] = useState('quota')
+  const currency = useSystemConfigStore((state) => state.config.currency)
+  const { unit, setUnit } = useQuotaInputUnit(
+    props.preferenceKey || props.name || props.id,
+    currency.quotaDisplayType
+  )
   const [draft, setDraft] = useState<string | null>(null)
   const quotaPerUnit =
     currency.quotaPerUnit > 0 && Number.isFinite(currency.quotaPerUnit)
@@ -50,30 +57,35 @@ export function QuotaAmountInput(props: {
   let factor = 1
   if (unit === 'USD') factor = quotaPerUnit
   if (unit === 'CNY') factor = quotaPerUnit / rate
-  const amount = Number.isFinite(props.value)
-    ? String(props.value / factor)
+  const displayedAmount = Number.isFinite(props.value)
+    ? Number((props.value / factor).toFixed(10)).toString()
     : ''
+  const amount = draft ?? displayedAmount
   return (
     <div className='space-y-2'>
       <div className='grid min-w-0 grid-cols-[minmax(0,1fr)_minmax(7rem,auto)] gap-2'>
         <Input
           id={props.id}
+          name={props.name ?? props.preferenceKey ?? props.id}
           aria-label={props.label}
           type='number'
           min={0}
           max={Number.MAX_SAFE_INTEGER / factor}
           step={unit === 'quota' ? 1 : 'any'}
           disabled={props.disabled}
-          value={draft ?? amount}
-          onFocus={() => setDraft(amount)}
+          value={amount}
+          onFocus={() => setDraft(displayedAmount)}
           onBlur={() => setDraft(null)}
-          onChange={(e) => {
-            setDraft(e.target.value)
-            const input = Number(e.target.value)
+          onChange={(event) => {
+            const text = event.target.value
+            setDraft(text)
+            const input = text.trim() === '' ? Number.NaN : Number(text)
             const quota = Math.round(input * factor)
             const valid =
+              Number.isFinite(input) &&
               input >= 0 &&
               Number.isSafeInteger(quota) &&
+              quota >= 0 &&
               (unit !== 'quota' || Number.isInteger(input))
             props.onChange(valid ? quota : Number.NaN)
           }}
@@ -87,8 +99,10 @@ export function QuotaAmountInput(props: {
             { value: 'USD', label: t('USD ($)') },
             { value: 'CNY', label: t('CNY (￥)') },
           ]}
-          onValueChange={(v) => {
-            if (v) setUnit(v)
+          onValueChange={(value) => {
+            if (value === 'quota' || value === 'USD' || value === 'CNY') {
+              setUnit(value)
+            }
             setDraft(null)
           }}
         />

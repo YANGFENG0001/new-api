@@ -20,9 +20,13 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { act, render, screen, within } from '@testing-library/react'
 import { createInstance } from 'i18next'
 import { I18nextProvider } from 'react-i18next'
-import { afterEach, expect, test, vi } from 'vitest'
+import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 
 import { api } from '@/lib/api'
+import {
+  DEFAULT_CURRENCY_CONFIG,
+  useSystemConfigStore,
+} from '@/stores/system-config-store'
 
 import type { Usage } from '../api'
 import { CycleProgress } from '../cycle-progress'
@@ -30,6 +34,11 @@ import { SelfAlignedUsage } from '../self-usage'
 
 const clients: QueryClient[] = []
 
+beforeEach(() => {
+  useSystemConfigStore.getState().setConfig({
+    currency: { ...DEFAULT_CURRENCY_CONFIG, quotaDisplayType: 'TOKENS' },
+  })
+})
 test('a local current-window estimate remains separate from an expired upstream snapshot', () => {
   const end = Math.floor(Date.now() / 1000) + 3500
   render(
@@ -123,6 +132,9 @@ test.each(['expired', 'stale', 'pending'])(
 )
 afterEach(() => {
   clients.splice(0).forEach((client) => client.clear())
+  useSystemConfigStore.getState().setConfig({
+    currency: { ...DEFAULT_CURRENCY_CONFIG },
+  })
 })
 
 function mount(subscription?: Usage) {

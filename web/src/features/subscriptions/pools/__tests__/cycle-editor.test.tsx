@@ -174,6 +174,12 @@ test('invalid or unsafe quota amounts cannot be turned into valid saved integers
   await userEvent.clear(input)
   await userEvent.type(input, '9007199254740992')
   expect(change.mock.lastCall?.[0]).toBeNaN()
+  await userEvent.click(
+    screen.getByRole('combobox', { name: 'Capacity · Input unit' })
+  )
+  await userEvent.click(
+    await screen.findByRole('option', { name: 'Quota units' })
+  )
   await userEvent.clear(input)
   await userEvent.type(input, '1.5')
   expect(change.mock.lastCall?.[0]).toBeNaN()

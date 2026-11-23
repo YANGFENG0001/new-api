@@ -29,6 +29,7 @@ import { emptySyncSource, type SyncMapping } from '../sync-api'
 import { SyncObservations } from '../sync-observations'
 import { SyncSourcesPanel } from '../sync-sources-panel'
 import { SyncUsageCard, SyncSourceStatus, SyncAccounts } from '../sync-usage'
+import { formatQuota } from '@/lib/format'
 
 const now = Math.floor(Date.now() / 1000)
 const mapping = { cycles: [] } as unknown as SyncMapping
@@ -277,7 +278,43 @@ test('a recent successful poll and an old upstream snapshot have distinct status
   ).toBeVisible()
 })
 
-test('a calibrated progress card shows the local estimate and retains the original upstream snapshot', () => {
+test('a hinted sample can show a valid percentage without presenting an exact latest observation', () => {
+  render(
+    <SyncUsageCard
+      name='Hinted window'
+      utilization={0.26}
+      windowEnd={now + 3600}
+      sampledAt={0}
+      sampleTimeQuality='hint'
+      issueCode='sample_time_incomplete'
+      stale={false}
+    />
+  )
+
+  expect(screen.getByText('26%')).toBeVisible()
+  expect(screen.getByText('Sampling time incomplete')).toBeVisible()
+  expect(screen.queryByText('Up to date')).not.toBeInTheDocument()
+  expect(screen.queryByText(/1970/)).not.toBeInTheDocument()
+})
+
+test('source status reports an incomplete sample separately from a successful poll', () => {
+  render(
+    <SyncSourceStatus
+      source={{
+        ...source,
+        last_fetch: now,
+        fetch_status: 'Synchronization is on schedule',
+        observation_status: 'Upstream sample time is incomplete',
+      }}
+    />
+  )
+
+  expect(screen.getByText('Synchronization is on schedule')).toBeVisible()
+  expect(screen.getByText('Upstream sample time is incomplete')).toBeVisible()
+  expect(screen.queryByText('Snapshot within freshness window')).not.toBeInTheDocument()
+})
+
+test('a calibrated progress card separates upstream quality from local quota metering', () => {
   render(
     <SyncObservations
       observations={[
@@ -298,12 +335,11 @@ test('a calibrated progress card shows the local estimate and retains the origin
   )
   expect(screen.getByRole('progressbar', { name: '5h' })).toHaveAttribute(
     'aria-valuenow',
-    '45'
+    '40'
   )
-  expect(screen.getByText('Estimated usage after calibration')).toBeVisible()
-  expect(
-    screen.getByText(
-      'Upstream snapshot: 40%; local usage since calibration: 50 quota units.'
-    )
-  ).toBeVisible()
+  expect(screen.getByText('Upstream utilization')).toBeVisible()
+  expect(screen.getByText('Local metering since calibration')).toBeVisible()
+  expect(screen.getByText(formatQuota(50))).toBeVisible()
+  expect(screen.getByText('Estimated utilization after local metering')).toBeVisible()
+  expect(screen.getByText('45%')).toBeVisible()
 })

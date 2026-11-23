@@ -31,7 +31,7 @@ func ListSubscriptionSyncSources(c *gin.Context) {
 			view.FetchStatus = s.LastError
 		} else if s.LastFetch > 0 {
 			view.FetchStatus = "Synchronization is on schedule"
-			if model.GetDBTimestamp()-s.LastFetch > view.EffectiveStaleSeconds {
+			if model.GetDBTimestamp()-s.LastFetch > model.SubscriptionSyncFetchLateSeconds(s) {
 				view.FetchStatus = "Synchronization is delayed"
 			}
 		}
@@ -53,7 +53,9 @@ func ListSubscriptionSyncSources(c *gin.Context) {
 			}
 		}
 		accounts = model.ReportedSubscriptionSyncAccounts(accounts)
-		total, fresh := 0, 0
+		total, fresh, incomplete := 0, 0, 0
+		cycleStatus := map[string]*model.SubscriptionSyncCycleStatus{}
+		statusKeys := []string{}
 		view.StaleAccounts = []string{}
 		now := model.GetDBTimestamp()
 		for _, account := range accounts {
@@ -63,12 +65,31 @@ func ListSubscriptionSyncSources(c *gin.Context) {
 					continue
 				}
 				total++
+				status, ok := cycleStatus[cycle.Key]
+				if !ok {
+					status = &model.SubscriptionSyncCycleStatus{Key: cycle.Key, Name: cycle.Name, IssueCodes: map[string]int{}}
+					cycleStatus[cycle.Key] = status
+					statusKeys = append(statusKeys, cycle.Key)
+				}
+				status.ReportedCycles++
+				if cycle.HasExactSampleTime() {
+					status.ExactSamples++
+				} else {
+					status.HintSamples++
+				}
+				if cycle.IssueCode != "" {
+					status.IssueCodes[cycle.IssueCode]++
+				}
 				view.ObservedAt = max(view.ObservedAt, cycle.SampledAt)
 				if view.OldestObservedAt == 0 || cycle.SampledAt < view.OldestObservedAt {
 					view.OldestObservedAt = cycle.SampledAt
 				}
-				if cycle.Error == "" && cycle.SampledAt > 0 && cycle.SampledAt <= now+60 && now-cycle.SampledAt <= view.EffectiveStaleSeconds && cycle.WindowEnd > now {
+				if !cycle.HasExactSampleTime() {
+					incomplete++
+				}
+				if cycle.HasExactSampleTime() && cycle.Error == "" && cycle.SampledAt > 0 && cycle.SampledAt <= now+60 && now-cycle.SampledAt <= view.EffectiveStaleSeconds && cycle.WindowEnd > now {
 					fresh++
+					status.FreshCycles++
 				} else {
 					accountStale = true
 				}
@@ -81,11 +102,17 @@ func ListSubscriptionSyncSources(c *gin.Context) {
 				view.StaleAccounts = append(view.StaleAccounts, name)
 			}
 		}
+		view.CycleStatuses = []model.SubscriptionSyncCycleStatus{}
+		for _, key := range statusKeys {
+			view.CycleStatuses = append(view.CycleStatuses, *cycleStatus[key])
+		}
 		view.FreshCycles = fresh
 		view.ReportedCycles = total
 		switch {
 		case total == 0:
 			view.ObservationStatus = "No upstream observation"
+		case incomplete == total:
+			view.ObservationStatus = "Upstream sample time is incomplete"
 		case fresh == 0:
 			view.ObservationStatus = "Upstream observation is stale"
 		case fresh < total:

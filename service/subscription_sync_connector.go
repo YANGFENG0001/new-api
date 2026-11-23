@@ -58,7 +58,7 @@ func ValidateSubscriptionSyncSource(input model.SubscriptionSyncSourceInput) err
 		return errors.New("Synchronization destination is not allowed")
 	}
 	m := input.Mapping
-	if len(m.Cycles) == 0 || len(m.Cycles) > 32 || m.AccountsPath == "" || m.IDPath == "" || m.SampledAtPath == "" || !slices.Contains([]string{"rfc3339", "unix_s", "unix_ms"}, m.TimeFormat) {
+	if (m.Profile != "" && m.Profile != "vm2api") || len(m.Cycles) == 0 || len(m.Cycles) > 32 || m.AccountsPath == "" || m.IDPath == "" || m.SampledAtPath == "" || !slices.Contains([]string{"rfc3339", "unix_s", "unix_ms"}, m.TimeFormat) {
 		return errors.New("Invalid synchronization field mapping")
 	}
 	paths := []string{m.SuccessPath, m.AccountsPath, m.IDPath, m.NamePath, m.SampledAtPath, m.SourcePath, m.ExpiryPath}
@@ -338,6 +338,47 @@ func syncTimestamp(v any, format string) int64 {
 	return n
 }
 
+// vm2api combines RFC3339 official resets with Unix seconds/milliseconds
+// (including digit strings) from response headers. Do not relax custom sources.
+func vm2apiSyncTimestamp(v any) int64 {
+	if n := syncTimestamp(v, "rfc3339"); n > 0 {
+		return n
+	}
+	var n int64
+	switch value := v.(type) {
+	case string:
+		if len(value) != 10 && len(value) != 13 {
+			return 0
+		}
+		for _, ch := range value {
+			if ch < '0' || ch > '9' {
+				return 0
+			}
+		}
+		parsed, err := strconv.ParseInt(value, 10, 64)
+		if err != nil {
+			return 0
+		}
+		n = parsed
+	case float64:
+		if math.IsNaN(value) || math.IsInf(value, 0) || math.Trunc(value) != value || value < 1000000000 || value > 9999999999999 {
+			return 0
+		}
+		n = int64(value)
+	default:
+		return 0
+	}
+	if n >= 1000000000000 {
+		n /= 1000
+	} else if n > 9999999999 {
+		return 0
+	}
+	if n < 1000000000 || n > 9999999999 {
+		return 0
+	}
+	return n
+}
+
 func ParseSubscriptionSyncResponse(raw []byte, m model.SubscriptionSyncMapping, now int64) ([]model.SubscriptionSyncAccount, error) {
 	var root any
 	if len(raw) > 8*1024*1024 || common.Unmarshal(raw, &root) != nil {
@@ -349,6 +390,25 @@ func ParseSubscriptionSyncResponse(raw []byte, m model.SubscriptionSyncMapping, 
 	list, ok := syncPath(root, m.AccountsPath).([]any)
 	if !ok || len(list) > 1000 {
 		return nil, errors.New("Invalid synchronization account list")
+	}
+	timestamp := func(v any) int64 { return syncTimestamp(v, m.TimeFormat) }
+	vm2api := model.IsVM2APISubscriptionSyncMapping(m)
+	if vm2api {
+		timestamp = vm2apiSyncTimestamp
+	}
+	sample := func(item any, field string) (int64, string) {
+		value := syncPath(item, field)
+		quality := ""
+		if vm2api && (field == "last_probe" || field == "last_probe.at") {
+			if probe, ok := syncPath(item, "last_probe").(map[string]any); ok {
+				value = probe["at"]
+				// The flattened utilization may come from headers, not last_probe.
+				quality = "hint"
+			} else if field == "last_probe.at" {
+				value = syncPath(item, "last_probe")
+			}
+		}
+		return timestamp(value), quality
 	}
 	accounts := make([]model.SubscriptionSyncAccount, 0, len(list))
 	ids := map[string]bool{}
@@ -362,8 +422,12 @@ func ParseSubscriptionSyncResponse(raw []byte, m model.SubscriptionSyncMapping, 
 		if len(name) > 128 {
 			name = id
 		}
-		expiry := syncTimestamp(syncPath(item, m.ExpiryPath), m.TimeFormat)
-		account := model.SubscriptionSyncAccount{ID: id, Name: name, Expiry: expiry, SampledAt: syncTimestamp(syncPath(item, m.SampledAtPath), m.TimeFormat), Cycles: []model.SubscriptionSyncCycle{}}
+		expiry := timestamp(syncPath(item, m.ExpiryPath))
+		sampledAt, accountQuality := sample(item, m.SampledAtPath)
+		if accountQuality == "hint" {
+			expiry = 0
+		} // No account-wide authoritative expiry sample.
+		account := model.SubscriptionSyncAccount{ID: id, Name: name, Expiry: expiry, SampledAt: sampledAt, Cycles: []model.SubscriptionSyncCycle{}}
 		source, _ := syncPath(item, m.SourcePath).(string)
 		if len(source) > 64 {
 			source = ""
@@ -376,7 +440,8 @@ func ParseSubscriptionSyncResponse(raw []byte, m model.SubscriptionSyncMapping, 
 			if c.SampledAtPath != "" {
 				timestampPath = c.SampledAtPath
 			}
-			cycle := model.SubscriptionSyncCycle{Key: c.Key, Name: model.SubscriptionCycleName(c.Name, c.Seconds), Seconds: c.Seconds, WindowEnd: syncTimestamp(syncPath(item, c.ResetPath), m.TimeFormat), SampledAt: syncTimestamp(syncPath(item, timestampPath), m.TimeFormat), Source: source}
+			sampledAt, quality := sample(item, timestampPath)
+			cycle := model.SubscriptionSyncCycle{SampleTimeQuality: quality, Key: c.Key, Name: model.SubscriptionCycleName(c.Name, c.Seconds), Seconds: c.Seconds, WindowEnd: timestamp(syncPath(item, c.ResetPath)), SampledAt: sampledAt, Source: source}
 			value, valid := syncPath(item, c.UtilizationPath).(float64)
 			if c.Scale == "percent" {
 				value /= 100
@@ -385,8 +450,27 @@ func ParseSubscriptionSyncResponse(raw []byte, m model.SubscriptionSyncMapping, 
 				cycle.Utilization = &value
 			}
 			cycle.WindowStart = cycle.WindowEnd - c.Seconds
-			if cycle.Utilization == nil || cycle.WindowStart <= 0 || cycle.SampledAt <= 0 || cycle.SampledAt > now+60 || cycle.SampledAt < cycle.WindowStart || cycle.SampledAt >= cycle.WindowEnd {
+			switch {
+			case cycle.Utilization == nil:
+				cycle.IssueCode = "invalid_utilization"
+			case cycle.WindowEnd == 0:
+				cycle.IssueCode = "invalid_reset"
+				if syncPath(item, c.ResetPath) == nil {
+					cycle.IssueCode = "missing_reset"
+				}
+			case cycle.WindowStart <= 0 || cycle.WindowStart > now:
+				cycle.IssueCode = "invalid_window"
+			case cycle.WindowEnd <= now:
+				cycle.IssueCode = "expired_reset"
+			case cycle.SampledAt > now+60:
+				cycle.IssueCode = "invalid_sample"
+			case quality != "hint" && (cycle.SampledAt <= 0 || cycle.SampledAt < cycle.WindowStart || cycle.SampledAt >= cycle.WindowEnd):
+				cycle.IssueCode = "invalid_sample"
+			}
+			if cycle.IssueCode != "" {
 				cycle.Error = "Missing or inconsistent upstream cycle data"
+			} else if quality == "hint" {
+				cycle.IssueCode = "sample_time_incomplete"
 			}
 			account.Cycles = append(account.Cycles, cycle)
 		}

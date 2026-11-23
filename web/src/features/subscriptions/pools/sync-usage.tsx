@@ -32,7 +32,7 @@ import {
 } from '@/components/ui/popover'
 import { Progress } from '@/components/ui/progress'
 import { toIntlLocale } from '@/i18n/languages'
-import { formatNumber, formatTimestampRelative } from '@/lib/format'
+import { formatNumber, formatQuota, formatTimestampRelative } from '@/lib/format'
 
 import {
   syncStaleSeconds,
@@ -91,9 +91,33 @@ export function SyncSourceStatus(props: { source: SyncSource }) {
             })}
           </p>
         )}
+      {!!props.source.cycle_statuses?.length && (
+        <div
+          aria-label={t('Upstream cycle status')}
+          className='flex flex-col gap-1 text-xs'
+        >
+          {props.source.cycle_statuses.map((status) => (
+            <div
+              key={status.key}
+              className='flex flex-wrap items-center gap-2'
+            >
+              <span className='text-muted-foreground'>
+                {status.name || status.key}:{' '}
+                {t('{{fresh}} / {{total}} current windows', {
+                  fresh: status.fresh_cycles,
+                  total: status.reported_cycles,
+                })}
+              </span>
+              {!!status.hint_samples && (
+                <Badge variant='outline'>{t('Sampling time incomplete')}</Badge>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
       {!!props.source.stale_accounts?.length && (
         <p className='text-warning text-xs'>
-          {t('Cached upstream data is old for: {{accounts}}', {
+          {t('Some upstream cycles need attention for: {{accounts}}', {
             accounts: props.source.stale_accounts.join(', '),
           })}
         </p>
@@ -202,6 +226,8 @@ export function SyncUsageCard(props: {
   utilization: number | null
   windowEnd: number
   sampledAt: number
+  sampleTimeQuality?: 'exact' | 'hint'
+  issueCode?: string
   fetchedAt?: number
   stale: boolean
   issue?: string
@@ -212,26 +238,43 @@ export function SyncUsageCard(props: {
 }) {
   const { t, i18n } = useTranslation()
   const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
+  const sampleTimeQuality = props.sampleTimeQuality ?? 'exact'
+  const sampleIncomplete =
+    sampleTimeQuality === 'hint' || props.issueCode === 'sample_time_incomplete'
   const reported =
     props.utilization != null &&
     Number.isFinite(props.utilization) &&
-    props.utilization >= 0
+    props.utilization >= 0 &&
+    props.issueCode !== 'invalid_sample'
+  const localMetered =
+    props.localDelta != null && Number.isFinite(props.localDelta)
   const estimated =
     !props.historical &&
     props.estimatedUtilization != null &&
     Number.isFinite(props.estimatedUtilization) &&
     props.estimatedUtilization >= 0
-  let utilization =
+  const utilization =
     reported && props.utilization != null ? props.utilization * 100 : null
-  if (estimated && props.estimatedUtilization != null) {
-    utilization = props.estimatedUtilization * 100
-  }
+  const estimatedUtilization =
+    estimated && props.estimatedUtilization != null
+      ? props.estimatedUtilization * 100
+      : null
   const resetPassed =
     props.windowEnd > 0 && props.windowEnd <= Date.now() / 1000
   const stale = props.stale || resetPassed
-  let issue = props.issue
+  const issueMessages: Record<string, string> = {
+    missing_reset: 'Upstream reset time is missing',
+    expired_reset: 'Upstream reset time has expired',
+    invalid_sample: 'Upstream sample is invalid',
+    sample_time_incomplete: 'Upstream sample time is incomplete',
+  }
+  let issue = props.issueCode ? issueMessages[props.issueCode] : undefined
+  issue ||= props.issue
   if (!issue && stale) issue = 'Upstream observation is stale'
-  if (!reported) return null
+  if (!reported && !localMetered) return null
+  let healthLabel: string | undefined
+  if (sampleIncomplete) healthLabel = 'Sampling time incomplete'
+  else if (!reported) healthLabel = 'Not reported'
   return (
     <section
       aria-label={props.name}
@@ -246,9 +289,9 @@ export function SyncUsageCard(props: {
           {props.scope && <Badge variant='secondary'>{t(props.scope)}</Badge>}
         </div>
         <SyncHealth
-          healthy={reported && !issue}
+          healthy={reported && !issue && !stale && !sampleIncomplete}
           message={issue}
-          label={!reported ? 'Not reported' : undefined}
+          label={healthLabel}
         />
       </div>
       <div className='flex items-baseline gap-2'>
@@ -256,21 +299,32 @@ export function SyncUsageCard(props: {
           {utilization == null ? '—' : `${formatNumber(utilization, locale)}%`}
         </strong>
         <span className='text-muted-foreground text-xs'>
-          {estimated
-            ? t('Estimated usage after calibration')
-            : t('Upstream utilization')}
+          {t('Upstream utilization')}
         </span>
       </div>
-      {estimated && (
-        <p className='text-muted-foreground text-xs'>
-          {t(
-            'Upstream snapshot: {{percent}}%; local usage since calibration: {{quota}} quota units.',
-            {
-              percent: formatNumber((props.utilization ?? 0) * 100, locale),
-              quota: formatNumber(props.localDelta ?? 0, locale),
-            }
+      {(localMetered || estimated) && (
+        <dl className='bg-muted/30 grid gap-2 rounded-lg p-3 text-xs sm:grid-cols-2'>
+          {localMetered && (
+            <div className='flex flex-col gap-1'>
+              <dt className='text-muted-foreground'>
+                {t('Local metering since calibration')}
+              </dt>
+              <dd className='font-medium tabular-nums'>
+                {formatQuota(props.localDelta ?? 0)}
+              </dd>
+            </div>
           )}
-        </p>
+          {estimatedUtilization != null && (
+            <div className='flex flex-col gap-1'>
+              <dt className='text-muted-foreground'>
+                {t('Estimated utilization after local metering')}
+              </dt>
+              <dd className='font-medium tabular-nums'>
+                {formatNumber(estimatedUtilization, locale)}%
+              </dd>
+            </div>
+          )}
+        </dl>
       )}
       {utilization == null ? (
         <div aria-hidden='true' className='bg-muted h-1 rounded-full' />
@@ -298,7 +352,10 @@ export function SyncUsageCard(props: {
         <div className='flex flex-wrap items-start justify-between gap-2'>
           <dt className='text-muted-foreground'>{t('Observation time')}</dt>
           <dd className='text-end'>
-            <SyncTimestamp value={props.sampledAt} fallback='Not reported' />
+            <SyncTimestamp
+              value={props.sampledAt}
+              fallback='Not reported'
+            />
           </dd>
         </div>
         {props.fetchedAt != null && (
@@ -401,6 +458,8 @@ export function SyncAccounts(props: {
                 windowEnd={cycle.window_end}
                 sampledAt={cycle.sampled_at}
                 issue={cycle.error}
+                sampleTimeQuality={cycle.sample_time_quality}
+                issueCode={cycle.issue_code}
                 stale={
                   cycle.sampled_at > 0 &&
                   now - cycle.sampled_at > props.staleSeconds

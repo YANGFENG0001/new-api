@@ -3130,7 +3130,7 @@
     "footer.columns.related.links.oneApi": "One API",
     "footer.columns.related.title": "Projets liés",
     "footer.defaultCopyright": "Tous droits réservés.",
-    "footer.new\u0061pi.projectAttributionSuffix": "Tous droits réservés. Conçu et développé par les contributeurs du projet.",
+    "footer.newapi.projectAttributionSuffix": "Tous droits réservés. Conçu et développé par les contributeurs du projet.",
     "For advanced custom channels this applies only to /v1/responses routes without protocol conversion.": "Pour les canaux personnalisés avancés, ceci ne s’applique qu’aux routes /v1/responses sans conversion de protocole.",
     "For channels added after May 10, 2025, no need to remove \".\" from model names during deployment": "Pour les canaux ajoutés après le 10 mai 2025, pas besoin de supprimer \".\" des noms de modèles lors du déploiement",
     "For private deployments, format: https://fastgpt.run/api/openapi": "Pour les déploiements privés, format : https://fastgpt.run/api/openapi",
@@ -8367,5 +8367,8 @@
     "Calibration only": "Calibration uniquement",
     "Calibration only always uses local quota. There is no grace deadline. Stale, unreadable, or exhausted upstream data never blocks local requests, and upstream admission checks do not apply. Local cycle limits and expiries still apply; unlimited local limits remain unlimited.": "Le mode calibration uniquement utilise toujours le quota local. Il n’a pas de délai de grâce. Des données amont obsolètes, illisibles ou épuisées ne bloquent jamais les requêtes locales, et les contrôles d’admission amont ne s’appliquent pas. Les limites et échéances des cycles locaux restent appliquées ; une limite locale illimitée le reste.",
     "Upstream admission checks are disabled in calibration-only mode. The saved enforcement setting is retained.": "Les contrôles d’admission amont sont désactivés en mode calibration uniquement. Le réglage d’application enregistré est conservé."
-  }
+  },
+  "Active terms: {{duration}} · {{amount}} · {{scope}}": "Conditions actives : {{duration}} · {{amount}} · {{scope}}",
+  "Next cycle: {{duration}} · {{amount}} · {{scope}}": "Prochain cycle : {{duration}} · {{amount}} · {{scope}}",
+  "Local delta: {{amount}}": "Écart local : {{amount}}"
 }

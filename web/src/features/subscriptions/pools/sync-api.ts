@@ -30,6 +30,7 @@ export const syncCycleMappingSchema = z.object({
   sampled_at_path: z.string(),
 })
 export const syncMappingSchema = z.object({
+  profile: z.enum(['vm2api']).optional(),
   success_path: z.string(),
   accounts_path: z.string().min(1),
   id_path: z.string().min(1),
@@ -61,7 +62,18 @@ export const syncSourceSchema = z.object({
 })
 export type SyncMapping = z.infer<typeof syncMappingSchema>
 export type SyncCycleMapping = z.infer<typeof syncCycleMappingSchema>
+export type SyncSampleTimeQuality = 'exact' | 'hint'
+export type SyncSourceCycleStatus = {
+  key: string
+  name?: string
+  fresh_cycles: number
+  reported_cycles: number
+  exact_samples?: number
+  hint_samples?: number
+  issue_codes?: Record<string, number>
+}
 export type SyncSource = z.infer<typeof syncSourceSchema> & {
+  cycle_statuses?: SyncSourceCycleStatus[]
   fresh_cycles?: number
   reported_cycles?: number
   oldest_observed_at?: number
@@ -105,6 +117,8 @@ export type SyncCycle = {
   window_start: number
   window_end: number
   sampled_at: number
+  sample_time_quality?: SyncSampleTimeQuality
+  issue_code?: string
   source: string
   error: string
 }
@@ -125,6 +139,8 @@ export type SyncObservation = {
   name: string
   utilization: number | null
   sampled_at: number
+  sample_time_quality?: SyncSampleTimeQuality
+  issue_code?: string
   fetched_at: number
   window_end: number
   stale: boolean
@@ -150,6 +166,7 @@ export const syncBindingSchema = z.object({
         enforce: z.boolean(),
         threshold: z.number().positive().max(1),
         max_shift_seconds: z.number().int().min(0).max(315360000),
+        capacity_mode: z.enum(['explicit', 'admission']).optional(),
         quota_per_full_window: z
           .number()
           .int()

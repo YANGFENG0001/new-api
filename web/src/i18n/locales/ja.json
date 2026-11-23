@@ -3130,7 +3130,7 @@
     "footer.columns.related.links.oneApi": "1つのAPI",
     "footer.columns.related.title": "関連プロジェクト",
     "footer.defaultCopyright": "すべての権利を留保します。",
-    "footer.new\u0061pi.projectAttributionSuffix": "すべての権利を留保します。プロジェクトコントリビューターにより設計・開発されています。",
+    "footer.newapi.projectAttributionSuffix": "すべての権利を留保します。プロジェクトコントリビューターにより設計・開発されています。",
     "For advanced custom channels this applies only to /v1/responses routes without protocol conversion.": "高度なカスタムチャネルでは、プロトコル変換を行わない /v1/responses ルートにのみ適用されます。",
     "For channels added after May 10, 2025, no need to remove \".\" from model names during deployment": "2025 年 5 月 10 日以降に追加されたチャネルの場合、デプロイ時にモデル名から「.」を削除する必要はありません",
     "For private deployments, format: https://fastgpt.run/api/openapi": "プライベートデプロイメントの場合、形式: https://fastgpt.run/api/openapi",
@@ -8367,5 +8367,8 @@
     "Calibration only": "校正のみ",
     "Calibration only always uses local quota. There is no grace deadline. Stale, unreadable, or exhausted upstream data never blocks local requests, and upstream admission checks do not apply. Local cycle limits and expiries still apply; unlimited local limits remain unlimited.": "校正のみモードでは常にローカル使用枠を使用します。猶予期限はありません。上流データが古い、読み取れない、またはスナップショットを使い切っていても、ローカルリクエストを遮断しません。上流の受入判定は適用されません。ローカル周期の上限と有効期限は引き続き適用され、ローカル上限が無制限の場合は無制限のままです。",
     "Upstream admission checks are disabled in calibration-only mode. The saved enforcement setting is retained.": "校正のみモードでは上流の受入判定を無効にします。保存済みの適用設定は保持されます。"
-  }
+  },
+  "Active terms: {{duration}} · {{amount}} · {{scope}}": "現在の条件：{{duration}} · {{amount}} · {{scope}}",
+  "Next cycle: {{duration}} · {{amount}} · {{scope}}": "次のサイクル：{{duration}} · {{amount}} · {{scope}}",
+  "Local delta: {{amount}}": "ローカル差分：{{amount}}"
 }
