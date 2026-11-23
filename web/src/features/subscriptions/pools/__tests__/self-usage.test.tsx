@@ -85,6 +85,55 @@ test('a local current-window estimate remains separate from an expired upstream 
   expect(screen.getByText('90%')).toBeVisible()
 })
 
+test('a fresh current-window hinted observation is not labeled as a historical snapshot or stale', () => {
+  const end = Math.floor(Date.now() / 1000) + 3500
+  render(
+    <CycleProgress
+      preferObservations
+      cycles={[
+        {
+          key: 'c',
+          name: 'Current local',
+          seconds: 3600,
+          shared: true,
+          unlimited: false,
+          limit: 100,
+          used: 10,
+          adjustment: 0,
+          reserved: 0,
+          start_time: end - 3600,
+          next_reset: end,
+          pending: false,
+        },
+      ]}
+      observations={[
+        {
+          key: 'c',
+          name: 'Current upstream',
+          utilization: 0.25,
+          sampled_at: end - 3550,
+          fetched_at: end - 3540,
+          window_end: end,
+          sample_time_quality: 'hint',
+          issue_code: 'sample_time_incomplete',
+          stale: false,
+          pending: 'Upstream sample time is incomplete',
+          local_window_end: end,
+          local_estimated_utilization: 0.1,
+        },
+      ]}
+    />
+  )
+  expect(screen.getByText('25%')).toBeVisible()
+  expect(screen.getByText('Sampling time incomplete')).toBeVisible()
+  expect(
+    screen.queryByText('Historical upstream snapshot')
+  ).not.toBeInTheDocument()
+  expect(
+    screen.queryByText('Upstream observation is stale')
+  ).not.toBeInTheDocument()
+})
+
 test.each(['expired', 'stale', 'pending'])(
   'a %s upstream snapshot cannot replace the current local cycle',
   (reason) => {

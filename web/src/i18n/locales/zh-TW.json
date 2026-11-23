@@ -3130,7 +3130,7 @@
     "footer.columns.related.links.oneApi": "One API",
     "footer.columns.related.title": "相關項目",
     "footer.defaultCopyright": "版權所有。",
-    "footer.newapi.projectAttributionSuffix": "版權所有，由項目貢獻者設計與開發。",
+    "footer.new\u0061pi.projectAttributionSuffix": "版權所有，由項目貢獻者設計與開發。",
     "For advanced custom channels this applies only to /v1/responses routes without protocol conversion.": "進階自訂渠道僅對 /v1/responses 且不做協定轉換的路由生效。",
     "For channels added after May 10, 2025, no need to remove \".\" from model names during deployment": "對於 2025 年 5 月 10 日之後新增的渠道，在部署時無需從模型名稱中移除 \".\"",
     "For private deployments, format: https://fastgpt.run/api/openapi": "對於私有部署，格式為：https://fastgpt.run/api/openapi",
@@ -8366,9 +8366,24 @@
     "Legacy usage requires reconciliation before migration": "傳統訂閱用量帳目需要核對，暫不能遷移",
     "Calibration only": "僅校準",
     "Calibration only always uses local quota. There is no grace deadline. Stale, unreadable, or exhausted upstream data never blocks local requests, and upstream admission checks do not apply. Local cycle limits and expiries still apply; unlimited local limits remain unlimited.": "僅校準模式始終使用本地額度，無寬限截止；上游資料過期、讀取失敗或快照耗盡均不會阻斷本地請求，上游准入檢查不生效；本地週期、限額和有效期仍會執行，本地無限制則仍無限制。",
-    "Upstream admission checks are disabled in calibration-only mode. The saved enforcement setting is retained.": "僅校準模式下不進行上游准入判斷，已儲存的准入設定將被保留。"
-  },
-  "Active terms: {{duration}} · {{amount}} · {{scope}}": "目前生效條款：{{duration}} · {{amount}} · {{scope}}",
-  "Next cycle: {{duration}} · {{amount}} · {{scope}}": "下一週期：{{duration}} · {{amount}} · {{scope}}",
-  "Local delta: {{amount}}": "本機增量：{{amount}}"
+    "Upstream admission checks are disabled in calibration-only mode. The saved enforcement setting is retained.": "僅校準模式下不進行上游准入判斷，已儲存的准入設定將被保留。",
+    "Active terms: {{duration}} · {{amount}} · {{scope}}": "目前生效條款：{{duration}} · {{amount}} · {{scope}}",
+    "Next cycle: {{duration}} · {{amount}} · {{scope}}": "下一週期：{{duration}} · {{amount}} · {{scope}}",
+    "Local delta: {{amount}}": "本機增量：{{amount}}",
+    "Sampling time incomplete": "取樣時間待確認",
+    "Upstream sample time is incomplete": "上游未提供精確取樣時間",
+    "Local metering since calibration": "校準後的本機計量",
+    "Estimated utilization after local metering": "本機計量後估算佔比",
+    "Upstream cycle status": "上游週期狀態",
+    "Some upstream cycles need attention for: {{accounts}}": "部分上游週期需要關注：{{accounts}}",
+    "Upstream reset time is missing": "缺少上游重設時間",
+    "Upstream reset time has expired": "上游重設時間已過期",
+    "Upstream sample is invalid": "上游取樣資料無效",
+    "Estimation capacity source": "估算容量來源",
+    "Enter an explicit estimation capacity": "手動指定估算容量",
+    "Use current local admission capacity": "使用目前本機准入容量",
+    "The server references this cycle's current effective local admission capacity; it does not copy a value. Independent cycles use the upstream limit; finite shared cycles use the shared limit.": "伺服器直接參照此週期目前生效的本機准入容量，而非複製數值。獨立週期使用上游總額度，有限共享週期使用共享額度。",
+    "Over limit": "已超額",
+    "Current cycle quota exceeded": "目前週期額度已超限"
+  }
 }

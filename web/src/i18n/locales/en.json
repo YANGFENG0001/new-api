@@ -3130,7 +3130,7 @@
     "footer.columns.related.links.oneApi": "One API",
     "footer.columns.related.title": "Related Projects",
     "footer.defaultCopyright": "All rights reserved.",
-    "footer.newapi.projectAttributionSuffix": "All rights reserved. Designed and developed by the project contributors.",
+    "footer.new\u0061pi.projectAttributionSuffix": "All rights reserved. Designed and developed by the project contributors.",
     "For advanced custom channels this applies only to /v1/responses routes without protocol conversion.": "For advanced custom channels this applies only to /v1/responses routes without protocol conversion.",
     "For channels added after May 10, 2025, no need to remove \".\" from model names during deployment": "For channels added after May 10, 2025, no need to remove \".\" from model names during deployment",
     "For private deployments, format: https://fastgpt.run/api/openapi": "For private deployments, format: https://fastgpt.run/api/openapi",
@@ -8366,9 +8366,24 @@
     "Legacy usage requires reconciliation before migration": "Legacy usage requires reconciliation before migration",
     "Calibration only": "Calibration only",
     "Calibration only always uses local quota. There is no grace deadline. Stale, unreadable, or exhausted upstream data never blocks local requests, and upstream admission checks do not apply. Local cycle limits and expiries still apply; unlimited local limits remain unlimited.": "Calibration only always uses local quota. There is no grace deadline. Stale, unreadable, or exhausted upstream data never blocks local requests, and upstream admission checks do not apply. Local cycle limits and expiries still apply; unlimited local limits remain unlimited.",
-    "Upstream admission checks are disabled in calibration-only mode. The saved enforcement setting is retained.": "Upstream admission checks are disabled in calibration-only mode. The saved enforcement setting is retained."
-  },
-  "Active terms: {{duration}} · {{amount}} · {{scope}}": "Active terms: {{duration}} · {{amount}} · {{scope}}",
-  "Next cycle: {{duration}} · {{amount}} · {{scope}}": "Next cycle: {{duration}} · {{amount}} · {{scope}}",
-  "Local delta: {{amount}}": "Local delta: {{amount}}"
+    "Upstream admission checks are disabled in calibration-only mode. The saved enforcement setting is retained.": "Upstream admission checks are disabled in calibration-only mode. The saved enforcement setting is retained.",
+    "Active terms: {{duration}} · {{amount}} · {{scope}}": "Active terms: {{duration}} · {{amount}} · {{scope}}",
+    "Next cycle: {{duration}} · {{amount}} · {{scope}}": "Next cycle: {{duration}} · {{amount}} · {{scope}}",
+    "Local delta: {{amount}}": "Local delta: {{amount}}",
+    "Sampling time incomplete": "Sampling time incomplete",
+    "Upstream sample time is incomplete": "Upstream sample time is incomplete",
+    "Local metering since calibration": "Local metering since calibration",
+    "Estimated utilization after local metering": "Estimated utilization after local metering",
+    "Upstream cycle status": "Upstream cycle status",
+    "Some upstream cycles need attention for: {{accounts}}": "Some upstream cycles need attention for: {{accounts}}",
+    "Upstream reset time is missing": "Upstream reset time is missing",
+    "Upstream reset time has expired": "Upstream reset time has expired",
+    "Upstream sample is invalid": "Upstream sample is invalid",
+    "Estimation capacity source": "Estimation capacity source",
+    "Enter an explicit estimation capacity": "Enter an explicit estimation capacity",
+    "Use current local admission capacity": "Use current local admission capacity",
+    "The server references this cycle's current effective local admission capacity; it does not copy a value. Independent cycles use the upstream limit; finite shared cycles use the shared limit.": "The server references this cycle's current effective local admission capacity; it does not copy a value. Independent cycles use the upstream limit; finite shared cycles use the shared limit.",
+    "Over limit": "Over limit",
+    "Current cycle quota exceeded": "Current cycle quota exceeded"
+  }
 }

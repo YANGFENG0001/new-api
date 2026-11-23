@@ -3130,7 +3130,7 @@
     "footer.columns.related.links.oneApi": "One API",
     "footer.columns.related.title": "Các Dự Án Liên Quan",
     "footer.defaultCopyright": "Bản quyền được bảo lưu.",
-    "footer.newapi.projectAttributionSuffix": "Bản quyền được bảo lưu. Được thiết kế và phát triển bởi các cộng tác viên dự án.",
+    "footer.new\u0061pi.projectAttributionSuffix": "Bản quyền được bảo lưu. Được thiết kế và phát triển bởi các cộng tác viên dự án.",
     "For advanced custom channels this applies only to /v1/responses routes without protocol conversion.": "Với kênh tùy chỉnh nâng cao, thiết lập này chỉ áp dụng cho các route /v1/responses không chuyển đổi giao thức.",
     "For channels added after May 10, 2025, no need to remove \".\" from model names during deployment": "Đối với các kênh được thêm sau ngày 10 tháng 5 năm 2025, không cần loại bỏ \".\" khỏi tên mô hình trong quá trình triển khai",
     "For private deployments, format: https://fastgpt.run/api/openapi": "Đối với các triển khai riêng tư, định dạng: https://fastgpt.run/api/openapi",
@@ -8366,9 +8366,24 @@
     "Legacy usage requires reconciliation before migration": "Cần đối soát mức dùng trước khi chuyển",
     "Calibration only": "Chỉ hiệu chỉnh",
     "Calibration only always uses local quota. There is no grace deadline. Stale, unreadable, or exhausted upstream data never blocks local requests, and upstream admission checks do not apply. Local cycle limits and expiries still apply; unlimited local limits remain unlimited.": "Chế độ chỉ hiệu chỉnh luôn dùng hạn mức cục bộ. Không có thời hạn gia hạn. Dữ liệu nguồn cũ, không đọc được hoặc đã cạn kiệt không bao giờ chặn yêu cầu cục bộ và kiểm tra chấp nhận từ nguồn không được áp dụng. Giới hạn và thời hạn của chu kỳ cục bộ vẫn được áp dụng; giới hạn cục bộ không giới hạn vẫn không giới hạn.",
-    "Upstream admission checks are disabled in calibration-only mode. The saved enforcement setting is retained.": "Trong chế độ chỉ hiệu chỉnh, kiểm tra chấp nhận từ nguồn bị vô hiệu hóa. Cấu hình thực thi đã lưu vẫn được giữ nguyên."
-  },
-  "Active terms: {{duration}} · {{amount}} · {{scope}}": "Điều khoản hiện hành: {{duration}} · {{amount}} · {{scope}}",
-  "Next cycle: {{duration}} · {{amount}} · {{scope}}": "Chu kỳ tiếp theo: {{duration}} · {{amount}} · {{scope}}",
-  "Local delta: {{amount}}": "Chênh lệch cục bộ: {{amount}}"
+    "Upstream admission checks are disabled in calibration-only mode. The saved enforcement setting is retained.": "Trong chế độ chỉ hiệu chỉnh, kiểm tra chấp nhận từ nguồn bị vô hiệu hóa. Cấu hình thực thi đã lưu vẫn được giữ nguyên.",
+    "Active terms: {{duration}} · {{amount}} · {{scope}}": "Điều khoản hiện hành: {{duration}} · {{amount}} · {{scope}}",
+    "Next cycle: {{duration}} · {{amount}} · {{scope}}": "Chu kỳ tiếp theo: {{duration}} · {{amount}} · {{scope}}",
+    "Local delta: {{amount}}": "Chênh lệch cục bộ: {{amount}}",
+    "Sampling time incomplete": "Thời gian lấy mẫu chưa đầy đủ",
+    "Upstream sample time is incomplete": "Thời gian lấy mẫu nguồn trên chưa đầy đủ",
+    "Local metering since calibration": "Đo lường cục bộ từ khi hiệu chuẩn",
+    "Estimated utilization after local metering": "Tỷ lệ sử dụng ước tính sau đo lường cục bộ",
+    "Upstream cycle status": "Trạng thái chu kỳ nguồn trên",
+    "Some upstream cycles need attention for: {{accounts}}": "Một số chu kỳ nguồn trên cần chú ý cho: {{accounts}}",
+    "Upstream reset time is missing": "Thiếu thời gian đặt lại của nguồn trên",
+    "Upstream reset time has expired": "Thời gian đặt lại của nguồn trên đã hết hạn",
+    "Upstream sample is invalid": "Mẫu dữ liệu nguồn trên không hợp lệ",
+    "Estimation capacity source": "Nguồn dung lượng ước tính",
+    "Enter an explicit estimation capacity": "Nhập dung lượng ước tính cụ thể",
+    "Use current local admission capacity": "Dùng dung lượng giới hạn cục bộ hiện tại",
+    "The server references this cycle's current effective local admission capacity; it does not copy a value. Independent cycles use the upstream limit; finite shared cycles use the shared limit.": "Máy chủ tham chiếu trực tiếp dung lượng giới hạn cục bộ đang có hiệu lực của chu kỳ này chứ không sao chép giá trị. Chu kỳ độc lập dùng giới hạn nguồn trên; chu kỳ dùng chung có giới hạn dùng giới hạn chung.",
+    "Over limit": "Vượt hạn mức",
+    "Current cycle quota exceeded": "Đã vượt hạn mức chu kỳ hiện tại"
+  }
 }

@@ -3130,7 +3130,7 @@
     "footer.columns.related.links.oneApi": "1つのAPI",
     "footer.columns.related.title": "関連プロジェクト",
     "footer.defaultCopyright": "すべての権利を留保します。",
-    "footer.newapi.projectAttributionSuffix": "すべての権利を留保します。プロジェクトコントリビューターにより設計・開発されています。",
+    "footer.new\u0061pi.projectAttributionSuffix": "すべての権利を留保します。プロジェクトコントリビューターにより設計・開発されています。",
     "For advanced custom channels this applies only to /v1/responses routes without protocol conversion.": "高度なカスタムチャネルでは、プロトコル変換を行わない /v1/responses ルートにのみ適用されます。",
     "For channels added after May 10, 2025, no need to remove \".\" from model names during deployment": "2025 年 5 月 10 日以降に追加されたチャネルの場合、デプロイ時にモデル名から「.」を削除する必要はありません",
     "For private deployments, format: https://fastgpt.run/api/openapi": "プライベートデプロイメントの場合、形式: https://fastgpt.run/api/openapi",
@@ -8366,9 +8366,24 @@
     "Legacy usage requires reconciliation before migration": "移行前に使用量の照合が必要です",
     "Calibration only": "校正のみ",
     "Calibration only always uses local quota. There is no grace deadline. Stale, unreadable, or exhausted upstream data never blocks local requests, and upstream admission checks do not apply. Local cycle limits and expiries still apply; unlimited local limits remain unlimited.": "校正のみモードでは常にローカル使用枠を使用します。猶予期限はありません。上流データが古い、読み取れない、またはスナップショットを使い切っていても、ローカルリクエストを遮断しません。上流の受入判定は適用されません。ローカル周期の上限と有効期限は引き続き適用され、ローカル上限が無制限の場合は無制限のままです。",
-    "Upstream admission checks are disabled in calibration-only mode. The saved enforcement setting is retained.": "校正のみモードでは上流の受入判定を無効にします。保存済みの適用設定は保持されます。"
-  },
-  "Active terms: {{duration}} · {{amount}} · {{scope}}": "現在の条件：{{duration}} · {{amount}} · {{scope}}",
-  "Next cycle: {{duration}} · {{amount}} · {{scope}}": "次のサイクル：{{duration}} · {{amount}} · {{scope}}",
-  "Local delta: {{amount}}": "ローカル差分：{{amount}}"
+    "Upstream admission checks are disabled in calibration-only mode. The saved enforcement setting is retained.": "校正のみモードでは上流の受入判定を無効にします。保存済みの適用設定は保持されます。",
+    "Active terms: {{duration}} · {{amount}} · {{scope}}": "現在の条件：{{duration}} · {{amount}} · {{scope}}",
+    "Next cycle: {{duration}} · {{amount}} · {{scope}}": "次のサイクル：{{duration}} · {{amount}} · {{scope}}",
+    "Local delta: {{amount}}": "ローカル差分：{{amount}}",
+    "Sampling time incomplete": "サンプリング時刻が不完全",
+    "Upstream sample time is incomplete": "アップストリームのサンプリング時刻が不完全です",
+    "Local metering since calibration": "較正後のローカル計測",
+    "Estimated utilization after local metering": "ローカル計測後の推定使用率",
+    "Upstream cycle status": "アップストリームサイクル状態",
+    "Some upstream cycles need attention for: {{accounts}}": "一部のアップストリームサイクルに確認が必要です：{{accounts}}",
+    "Upstream reset time is missing": "アップストリームのリセット時刻がありません",
+    "Upstream reset time has expired": "アップストリームのリセット時刻が期限切れです",
+    "Upstream sample is invalid": "アップストリームのサンプルが無効です",
+    "Estimation capacity source": "推定容量の参照元",
+    "Enter an explicit estimation capacity": "推定容量を明示的に入力",
+    "Use current local admission capacity": "現在のローカル許容容量を使用",
+    "The server references this cycle's current effective local admission capacity; it does not copy a value. Independent cycles use the upstream limit; finite shared cycles use the shared limit.": "サーバーはこのサイクルで現在有効なローカル許容容量を参照し、値をコピーしません。独立サイクルはアップストリーム上限、有限共有サイクルは共有上限を使用します。",
+    "Over limit": "上限超過",
+    "Current cycle quota exceeded": "現在のサイクルのクォータを超過しました"
+  }
 }

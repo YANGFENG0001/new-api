@@ -2579,3 +2579,145 @@ func TestSubscriptionPoolSyncAdmissionCapacityReferencesEffectiveTerms(t *testin
 		})
 	}
 }
+
+func TestSubscriptionPoolSyncHintStalenessRespectsRealAgeAndExpiry(t *testing.T) {
+	_, _, now := setupSubscriptionPoolTest(t)
+	rule := model.SubscriptionCycleRule{Key: "short", Name: "5h", Seconds: 18000, NextReset: now + 3600, Limit: 100, Shared: true, Enabled: true}
+	pool, err := model.SaveSubscriptionPool(model.SubscriptionPoolInput{SubscriptionPool: model.SubscriptionPool{Name: "hint-age", Enabled: true, EndTime: now + 86400}, Cycles: []model.SubscriptionCycleRule{rule}}, 1)
+	require.NoError(t, err)
+	source, err := service.SaveSubscriptionSyncSource(model.SubscriptionSyncSourceInput{SubscriptionSyncSource: model.SubscriptionSyncSource{Name: "hint-age-source", URL: "https://example.com/usage", Method: "GET", IntervalSeconds: 60, StaleSeconds: 300, TimeoutSeconds: 10}, Mapping: model.PanelSubscriptionSyncMapping()}, 1, true)
+	require.NoError(t, err)
+	binding := model.SubscriptionSyncBindingInput{SubscriptionSyncBinding: model.SubscriptionSyncBinding{PoolID: pool.Id, SourceID: source.Id, AccountID: "vm-01", Enabled: true, StalePolicy: "calibration"}, Cycles: []model.SubscriptionSyncCycleBinding{{LocalKey: "short", UpstreamKey: "5h", AlignReset: false, Threshold: 1, MaxShiftSeconds: 300, QuotaPerFullWindow: 100}}}
+	require.NoError(t, model.SaveSubscriptionSyncBinding(binding, 1))
+
+	ratio := 0.25
+	updateCatalog := func(cycle model.SubscriptionSyncCycle, lastFetch int64) []model.SubscriptionSyncObservationView {
+		t.Helper()
+		raw, e := common.Marshal([]model.SubscriptionSyncAccount{{ID: "vm-01", Name: "vm-01", SampledAt: cycle.SampledAt, Cycles: []model.SubscriptionSyncCycle{cycle}}})
+		require.NoError(t, e)
+		require.NoError(t, model.DB.Model(&model.SubscriptionSyncSource{}).Where("id = ?", source.Id).Updates(map[string]any{"catalog_json": string(raw), "last_fetch": lastFetch}).Error)
+		views, e := model.GetSubscriptionSyncViews(pool.Id)
+		require.NoError(t, e)
+		require.Len(t, views, 1)
+		return views
+	}
+
+	freshHint := updateCatalog(model.SubscriptionSyncCycle{Key: "5h", Name: "5h", Seconds: 18000, WindowStart: now + 3600 - 18000, WindowEnd: now + 3600, SampledAt: now - 30, SampleTimeQuality: "hint", IssueCode: "sample_time_incomplete", Utilization: &ratio}, now)
+	assert.False(t, freshHint[0].Stale, "fresh hint with future reset must not be marked stale")
+	assert.Equal(t, "hint", freshHint[0].SampleTimeQuality)
+	assert.Equal(t, "sample_time_incomplete", freshHint[0].IssueCode)
+	assert.Equal(t, "Upstream sample time is incomplete", freshHint[0].Pending)
+
+	staleHint := updateCatalog(model.SubscriptionSyncCycle{Key: "5h", Name: "5h", Seconds: 18000, WindowStart: now + 3600 - 18000, WindowEnd: now + 3600, SampledAt: now - 600, SampleTimeQuality: "hint", IssueCode: "sample_time_incomplete", Utilization: &ratio}, now)
+	assert.True(t, staleHint[0].Stale, "hint older than stale threshold must be marked stale")
+	assert.Equal(t, "Upstream observation is stale", staleHint[0].Pending)
+
+	expiredHint := updateCatalog(model.SubscriptionSyncCycle{Key: "5h", Name: "5h", Seconds: 18000, WindowStart: now - 18060, WindowEnd: now - 60, SampledAt: now - 30, SampleTimeQuality: "hint", IssueCode: "expired_reset", Error: "Missing or inconsistent upstream cycle data", Utilization: &ratio}, now)
+	assert.True(t, expiredHint[0].Stale, "expired reset must be marked stale")
+	assert.Equal(t, "expired_reset", expiredHint[0].IssueCode)
+
+	zeroSampleFreshFetch := updateCatalog(model.SubscriptionSyncCycle{Key: "5h", Name: "5h", Seconds: 18000, WindowStart: now + 3600 - 18000, WindowEnd: now + 3600, SampledAt: 0, SampleTimeQuality: "hint", IssueCode: "sample_time_incomplete", Utilization: &ratio}, now-30)
+	assert.False(t, zeroSampleFreshFetch[0].Stale)
+
+	zeroSampleStaleFetch := updateCatalog(model.SubscriptionSyncCycle{Key: "5h", Name: "5h", Seconds: 18000, WindowStart: now + 3600 - 18000, WindowEnd: now + 3600, SampledAt: 0, SampleTimeQuality: "hint", IssueCode: "sample_time_incomplete", Utilization: &ratio}, now-600)
+	assert.True(t, zeroSampleStaleFetch[0].Stale)
+}
+
+func TestSubscriptionPoolSyncSourcesSeparateValidHintsFromExpiredAccounts(t *testing.T) {
+	_, _, now := setupSubscriptionPoolTest(t)
+	mapping := model.PanelSubscriptionSyncMapping()
+	config, err := common.Marshal(mapping)
+	require.NoError(t, err)
+	u1, u2, u3, u4 := 0.19, 0.28, 0.25, 0.42
+	accounts := []model.SubscriptionSyncAccount{
+		{
+			ID: "a1", Name: "vm-01", SampledAt: now - 30,
+			Cycles: []model.SubscriptionSyncCycle{
+				{Key: "5h", Name: "5h", Seconds: 18000, Utilization: &u1, WindowStart: now - 1000, WindowEnd: now + 17000, SampledAt: now - 30, SampleTimeQuality: "hint", IssueCode: "sample_time_incomplete"},
+				{Key: "7d", Name: "7d", Seconds: 604800, Utilization: &u2, WindowStart: now - 1000, WindowEnd: now + 603800, SampledAt: now - 30, SampleTimeQuality: "hint", IssueCode: "sample_time_incomplete"},
+			},
+		},
+		{
+			ID: "a2", Name: "vm-02", SampledAt: now - 30,
+			Cycles: []model.SubscriptionSyncCycle{
+				{Key: "5h", Name: "5h", Seconds: 18000, Utilization: &u3, WindowStart: now - 18100, WindowEnd: now - 100, SampledAt: now - 30, SampleTimeQuality: "hint", IssueCode: "expired_reset", Error: "Missing or inconsistent upstream cycle data"},
+				{Key: "7d", Name: "7d", Seconds: 604800, Utilization: &u4, WindowStart: now - 1000, WindowEnd: now + 603800, SampledAt: 0, SampleTimeQuality: "hint", IssueCode: "sample_time_incomplete"},
+			},
+		},
+	}
+	raw, err := common.Marshal(accounts)
+	require.NoError(t, err)
+	source := model.SubscriptionSyncSource{Name: "vm2api-mixed", Version: 1, MappingJSON: string(config), CatalogJSON: string(raw), LastFetch: now, IntervalSeconds: 60, StaleSeconds: 300, TimeoutSeconds: 10}
+	require.NoError(t, model.DB.Create(&source).Error)
+
+	listSources := func() model.SubscriptionSyncSourceInput {
+		t.Helper()
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Set("id", 1)
+		c.Set("role", common.RoleRootUser)
+		ListSubscriptionSyncSources(c)
+		var resp struct {
+			Success bool `json:"success"`
+			Data    struct {
+				Sources []model.SubscriptionSyncSourceInput `json:"sources"`
+			} `json:"data"`
+		}
+		require.NoError(t, common.Unmarshal(w.Body.Bytes(), &resp))
+		require.True(t, resp.Success)
+		require.Len(t, resp.Data.Sources, 1)
+		return resp.Data.Sources[0]
+	}
+
+	got := listSources()
+	assert.Equal(t, []string{"vm-02"}, got.StaleAccounts, "valid hint account vm-01 must not be flagged stale")
+	assert.Equal(t, "Some upstream observations are stale", got.ObservationStatus)
+	assert.Equal(t, 4, got.ReportedCycles)
+	assert.Equal(t, 3, got.FreshCycles)
+	assert.Equal(t, now-30, got.OldestObservedAt, "zero sampled_at must not overwrite oldest observed timestamp")
+
+	// When vm-02 5h also becomes a valid future hint, no accounts are stale and status reports incomplete sample time.
+	accounts[1].Cycles[0].WindowStart = now - 1000
+	accounts[1].Cycles[0].WindowEnd = now + 17000
+	accounts[1].Cycles[0].IssueCode = "sample_time_incomplete"
+	accounts[1].Cycles[0].Error = ""
+	raw, err = common.Marshal(accounts)
+	require.NoError(t, err)
+	require.NoError(t, model.DB.Model(&source).Update("catalog_json", string(raw)).Error)
+
+	got = listSources()
+	assert.Empty(t, got.StaleAccounts)
+	assert.Equal(t, "Upstream sample time is incomplete", got.ObservationStatus)
+	assert.Equal(t, 4, got.FreshCycles)
+}
+
+func TestSubscriptionPoolFutureUnstartedCycleAppliesQuotaEditImmediatelyWhileActiveRemainsPending(t *testing.T) {
+	_, _, now := setupSubscriptionPoolTest(t)
+	rules := []model.SubscriptionCycleRule{
+		{Key: "active7d", Name: "7d", Seconds: 604800, NextReset: now + 3600, Limit: 50, Shared: true, Enabled: true},
+		{Key: "future1h", Name: "1h", Seconds: 3600, NextReset: now + 7200, Limit: 50, Shared: true, Enabled: true},
+	}
+	pool, err := model.SaveSubscriptionPool(model.SubscriptionPoolInput{SubscriptionPool: model.SubscriptionPool{Name: "quota-lifecycle", Enabled: true, EndTime: now + 86400 * 30}, Cycles: rules}, 1)
+	require.NoError(t, err)
+
+	rules[0].Limit = 82500000
+	rules[1].Limit = 82500000
+	_, err = model.SaveSubscriptionPool(model.SubscriptionPoolInput{SubscriptionPool: *pool, Cycles: rules}, 1)
+	require.NoError(t, err)
+
+	stats, err := model.GetSubscriptionPoolStatistics(pool.Id)
+	require.NoError(t, err)
+	require.Len(t, stats, 2)
+	byKey := map[string]model.SubscriptionCycleView{}
+	for _, s := range stats {
+		byKey[s.Key] = s
+	}
+
+	assert.EqualValues(t, 50, byKey["active7d"].Limit, "active cycle must not silently overwrite its enforced quota")
+	require.NotNil(t, byKey["active7d"].PendingRule)
+	assert.EqualValues(t, 82500000, byKey["active7d"].PendingRule.Limit)
+
+	assert.EqualValues(t, 82500000, byKey["future1h"].Limit, "unstarted future cycle with zero usage should apply updated quota immediately")
+	assert.Nil(t, byKey["future1h"].PendingRule)
+}
+

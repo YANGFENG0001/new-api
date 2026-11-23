@@ -1004,11 +1004,25 @@ func subscriptionSyncViewsTx(tx *gorm.DB, poolID int, now int64) ([]Subscription
 		if !ok || (c.HasExactSampleTime() && c.Error == "") {
 			continue
 		}
+		staleThreshold := SubscriptionSyncStaleSeconds(source)
+		sampleStale := false
+		if c.SampledAt > 0 {
+			sampleStale = c.SampledAt > now+60 || now-c.SampledAt > staleThreshold
+		} else {
+			sampleStale = source.LastFetch <= 0 || now-source.LastFetch > staleThreshold
+		}
+		stale := b.LastError != "" || c.Error != "" || c.WindowEnd <= now || sampleStale
 		pending := c.Error
+		if pending == "" && b.LastError != "" {
+			pending = b.LastError
+		}
+		if pending == "" && stale {
+			pending = "Upstream observation is stale"
+		}
 		if pending == "" {
 			pending = "Upstream sample time is incomplete"
 		}
-		view := SubscriptionSyncObservationView{Key: m.LocalKey, Name: SubscriptionCycleName(c.Name, c.Seconds), Seconds: c.Seconds, Utilization: c.Utilization, SampledAt: c.SampledAt, FetchedAt: source.LastFetch, WindowEnd: c.WindowEnd, SampleTimeQuality: c.SampleTimeQuality, IssueCode: c.IssueCode, Stale: true, Pending: pending}
+		view := SubscriptionSyncObservationView{Key: m.LocalKey, Name: SubscriptionCycleName(c.Name, c.Seconds), Seconds: c.Seconds, Utilization: c.Utilization, SampledAt: c.SampledAt, FetchedAt: source.LastFetch, WindowEnd: c.WindowEnd, SampleTimeQuality: c.SampleTimeQuality, IssueCode: c.IssueCode, Stale: stale, Pending: pending}
 		var state SubscriptionCycleState
 		if err := tx.Where("owner = ? AND cycle_key = ?", allocationOwner(0, poolID), m.LocalKey).First(&state).Error; err != nil {
 			return nil, err

@@ -150,6 +150,23 @@ export function CycleProgress(props: {
                 locale
               )}${quotaUnitSuffix}`
         }
+        const overLimit =
+          !cycle.unlimited &&
+          !cycle.limit_unknown &&
+          cycle.limit > 0 &&
+          cycle.used + cycle.adjustment > cycle.limit
+        const nowSeconds = Date.now() / 1000
+        const cycleObservations =
+          props.observations?.filter((item) => item.key === cycle.key) ?? []
+        const historicalObservation = cycleObservations.some(
+          (item) =>
+            item.stale ||
+            item.issue_code === 'expired_reset' ||
+            (item.window_end > 0 && item.window_end <= nowSeconds) ||
+            (cycle.next_reset > 0 &&
+              item.window_end > 0 &&
+              item.window_end !== cycle.next_reset)
+        )
         return (
           <section
             key={cycle.key}
@@ -165,14 +182,21 @@ export function CycleProgress(props: {
               <Badge variant='secondary'>
                 {cycle.shared ? t('Shared') : t('Independent')}
               </Badge>
+              {overLimit && (
+                <Badge variant='destructive'>{t('Over limit')}</Badge>
+              )}
               {cycle.pending && (
                 <Badge variant='outline'>{t('Changes pending')}</Badge>
               )}
             </div>
             <p>
-              {t('Used')}: {used} / {capacity}
-              {quotaUnitSuffix}
+              {t('Used')}: {used} / {activeAmount}
             </p>
+            {overLimit && (
+              <p role='status' className='text-destructive text-xs'>
+                {t('Current cycle quota exceeded')}
+              </p>
+            )}
             {cycle.pending_rule && (
               <div className='space-y-1 text-xs'>
                 <p>
@@ -251,12 +275,10 @@ export function CycleProgress(props: {
                 ? t('Manual calibration plus local usage')
                 : t('Local usage statistics')}
             </p>
-            {props.observations?.some((item) => item.key === cycle.key) && (
+            {cycleObservations.length > 0 && (
               <SyncObservations
-                historical
-                observations={props.observations.filter(
-                  (item) => item.key === cycle.key
-                )}
+                historical={historicalObservation}
+                observations={cycleObservations}
               />
             )}
           </section>

@@ -100,9 +100,28 @@ func configureSubscriptionCyclesTx(tx *gorm.DB, owner string, rules []Subscripti
 		}
 		s.PendingRule = ""
 		if old != r {
-			s.PendingRule, e = cycleJSON(r)
-			if e != nil {
-				return e
+			// A future cycle that has not started yet and has zero recorded
+			// usage, reservations, or adjustments can adopt updated terms
+			// immediately; once active, changes take effect at the boundary.
+			var activityCount int64
+			if s.StartTime > now {
+				if e = tx.Model(&SubscriptionCycleUsage{}).
+					Where("state_id = ? AND epoch = ? AND (used <> 0 OR reserved <> 0 OR adjustment <> 0)", s.Id, s.Epoch).
+					Count(&activityCount).Error; e != nil {
+					return e
+				}
+			}
+			if s.StartTime > now && activityCount == 0 {
+				s.StartTime = s.EndTime - r.Seconds
+				s.Rule, e = cycleJSON(r)
+				if e != nil {
+					return e
+				}
+			} else {
+				s.PendingRule, e = cycleJSON(r)
+				if e != nil {
+					return e
+				}
 			}
 		}
 		if e = tx.Save(s).Error; e != nil {

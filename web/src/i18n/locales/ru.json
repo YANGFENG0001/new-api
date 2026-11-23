@@ -3130,7 +3130,7 @@
     "footer.columns.related.links.oneApi": "Один API",
     "footer.columns.related.title": "Связанные проекты",
     "footer.defaultCopyright": "Все права защищены.",
-    "footer.newapi.projectAttributionSuffix": "Все права защищены. Разработано участниками проекта.",
+    "footer.new\u0061pi.projectAttributionSuffix": "Все права защищены. Разработано участниками проекта.",
     "For advanced custom channels this applies only to /v1/responses routes without protocol conversion.": "Для расширенных пользовательских каналов это действует только для маршрутов /v1/responses без преобразования протокола.",
     "For channels added after May 10, 2025, no need to remove \".\" from model names during deployment": "Для каналов, добавленных после 10 мая 2025 г., не нужно удалять \".\" из имён моделей при развёртывании",
     "For private deployments, format: https://fastgpt.run/api/openapi": "Для частных развертываний, формат: https://fastgpt.run/api/openapi",
@@ -8366,9 +8366,24 @@
     "Legacy usage requires reconciliation before migration": "Перед переносом необходимо сверить использование",
     "Calibration only": "Только калибровка",
     "Calibration only always uses local quota. There is no grace deadline. Stale, unreadable, or exhausted upstream data never blocks local requests, and upstream admission checks do not apply. Local cycle limits and expiries still apply; unlimited local limits remain unlimited.": "Режим только калибровки всегда использует локальную квоту. Льготного срока нет. Устаревшие, недоступные для чтения или исчерпанные данные источника никогда не блокируют локальные запросы, а проверки допуска на стороне источника не применяются. Локальные лимиты и сроки циклов продолжают действовать; неограниченный локальный лимит остаётся неограниченным.",
-    "Upstream admission checks are disabled in calibration-only mode. The saved enforcement setting is retained.": "В режиме только калибровки проверки допуска на стороне источника отключены. Сохранённая настройка принудительного ограничения сохраняется."
-  },
-  "Active terms: {{duration}} · {{amount}} · {{scope}}": "Действующие условия: {{duration}} · {{amount}} · {{scope}}",
-  "Next cycle: {{duration}} · {{amount}} · {{scope}}": "Следующий цикл: {{duration}} · {{amount}} · {{scope}}",
-  "Local delta: {{amount}}": "Локальное изменение: {{amount}}"
+    "Upstream admission checks are disabled in calibration-only mode. The saved enforcement setting is retained.": "В режиме только калибровки проверки допуска на стороне источника отключены. Сохранённая настройка принудительного ограничения сохраняется.",
+    "Active terms: {{duration}} · {{amount}} · {{scope}}": "Действующие условия: {{duration}} · {{amount}} · {{scope}}",
+    "Next cycle: {{duration}} · {{amount}} · {{scope}}": "Следующий цикл: {{duration}} · {{amount}} · {{scope}}",
+    "Local delta: {{amount}}": "Локальное изменение: {{amount}}",
+    "Sampling time incomplete": "Время выборки неполное",
+    "Upstream sample time is incomplete": "Время выборки вышестоящего источника неполное",
+    "Local metering since calibration": "Локальный учёт после калибровки",
+    "Estimated utilization after local metering": "Оценка использования после локального учёта",
+    "Upstream cycle status": "Состояние вышестоящих циклов",
+    "Some upstream cycles need attention for: {{accounts}}": "Некоторые вышестоящие циклы требуют внимания для: {{accounts}}",
+    "Upstream reset time is missing": "Отсутствует время сброса вышестоящего источника",
+    "Upstream reset time has expired": "Время сброса вышестоящего источника истекло",
+    "Upstream sample is invalid": "Некорректная выборка вышестоящего источника",
+    "Estimation capacity source": "Источник ёмкости для оценки",
+    "Enter an explicit estimation capacity": "Указать ёмкость для оценки вручную",
+    "Use current local admission capacity": "Использовать текущую локальную лимитную ёмкость",
+    "The server references this cycle's current effective local admission capacity; it does not copy a value. Independent cycles use the upstream limit; finite shared cycles use the shared limit.": "Сервер ссылается на текущую действующую локальную ёмкость этого цикла и не копирует значение. Независимые циклы используют вышестоящий лимит; ограниченные общие циклы используют общий лимит.",
+    "Over limit": "Превышен лимит",
+    "Current cycle quota exceeded": "Квота текущего цикла превышена"
+  }
 }

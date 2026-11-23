@@ -460,3 +460,88 @@ test('an explicit preference key survives changes to both form id and name', asy
   )
   expect(screen.getByLabelText('Capacity')).toHaveValue(17.5)
 })
+
+test('165 USD quota converts to 82500000 canonical units and displays over-limit active vs next-cycle terms in Chinese', async () => {
+  signInAdmin()
+  configureCurrency({
+    quotaDisplayType: 'USD',
+    quotaPerUnit: 500000,
+    usdExchangeRate: 7,
+  })
+  const onChange = vi.fn()
+  const editor = render(
+    <QuotaAmountInput
+      id='pool-7d-limit'
+      label='7d limit'
+      value={50}
+      onChange={onChange}
+    />
+  )
+  const input = screen.getByLabelText('7d limit')
+  expect(input).toHaveValue(0.0001)
+  await userEvent.clear(input)
+  await userEvent.type(input, '165')
+  expect(onChange).toHaveBeenLastCalledWith(82500000)
+  editor.unmount()
+
+  const reloaded = render(
+    <QuotaAmountInput
+      id='pool-7d-limit'
+      label='7d limit'
+      value={82500000}
+      onChange={vi.fn()}
+    />
+  )
+  expect(screen.getByLabelText('7d limit')).toHaveValue(165)
+  reloaded.unmount()
+
+  const zhLocale = (await import('@/i18n/locales/zh.json')).default
+  const { createInstance } = await import('i18next')
+  const { I18nextProvider } = await import('react-i18next')
+  const i18n = createInstance()
+  await i18n.init({
+    lng: 'zhCN',
+    fallbackLng: 'en',
+    resources: {
+      en: { translation: {} },
+      zhCN: zhLocale,
+    },
+  })
+  render(
+    <I18nextProvider i18n={i18n}>
+      <CycleProgress
+        cycles={[
+          {
+            key: 'week',
+            name: '7d',
+            seconds: 604800,
+            shared: true,
+            unlimited: false,
+            limit: 50,
+            used: 1280000,
+            adjustment: 0,
+            reserved: 0,
+            start_time: 1,
+            next_reset: 2,
+            pending: true,
+            pending_rule: {
+              name: '7d',
+              seconds: 604800,
+              shared: true,
+              unlimited: false,
+              limit: 82500000,
+            },
+          },
+        ]}
+      />
+    </I18nextProvider>
+  )
+  const cycle = screen.getByRole('region', { name: '7d' })
+  expect(within(cycle).getByText('已超额')).toBeVisible()
+  expect(within(cycle).getByText('当前周期额度已超限')).toBeVisible()
+  expect(within(cycle).getByText(/当前生效/)).toBeVisible()
+  expect(within(cycle).getByText(/下一周期/)).toBeVisible()
+  expect(within(cycle).queryByText(/Active terms:/)).not.toBeInTheDocument()
+  expect(within(cycle).queryByText(/Next cycle:/)).not.toBeInTheDocument()
+  expect(within(cycle).queryByText(/Over limit/)).not.toBeInTheDocument()
+})

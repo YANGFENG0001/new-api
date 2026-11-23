@@ -59,6 +59,13 @@ export const STATIC_I18N_KEYS = [
   'Token status',
   'Use only a documented OAuth token endpoint: refresh_token grant with client_secret_post. vm2api panel sessions do not have this endpoint.',
   'Use the dedicated bearer token field for authentication renewal',
+  'Sampling time incomplete',
+  'Upstream sample time is incomplete',
+  'Upstream reset time is missing',
+  'Upstream reset time has expired',
+  'Upstream sample is invalid',
+  'Over limit',
+  'Current cycle quota exceeded',
 
   'The adjusted price is outside the supported range.',
   'This expression cannot be adjusted automatically. Keep the source price or edit it manually.',

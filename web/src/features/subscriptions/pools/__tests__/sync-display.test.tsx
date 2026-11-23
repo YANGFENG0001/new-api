@@ -23,13 +23,13 @@ import i18next from 'i18next'
 import { afterEach, expect, test, vi } from 'vitest'
 
 import { api } from '@/lib/api'
+import { formatQuota } from '@/lib/format'
 
 import type { Capabilities } from '../api'
 import { emptySyncSource, type SyncMapping } from '../sync-api'
 import { SyncObservations } from '../sync-observations'
 import { SyncSourcesPanel } from '../sync-sources-panel'
 import { SyncUsageCard, SyncSourceStatus, SyncAccounts } from '../sync-usage'
-import { formatQuota } from '@/lib/format'
 
 const now = Math.floor(Date.now() / 1000)
 const mapping = { cycles: [] } as unknown as SyncMapping
@@ -311,7 +311,9 @@ test('source status reports an incomplete sample separately from a successful po
 
   expect(screen.getByText('Synchronization is on schedule')).toBeVisible()
   expect(screen.getByText('Upstream sample time is incomplete')).toBeVisible()
-  expect(screen.queryByText('Snapshot within freshness window')).not.toBeInTheDocument()
+  expect(
+    screen.queryByText('Snapshot within freshness window')
+  ).not.toBeInTheDocument()
 })
 
 test('a calibrated progress card separates upstream quality from local quota metering', () => {
@@ -340,6 +342,198 @@ test('a calibrated progress card separates upstream quality from local quota met
   expect(screen.getByText('Upstream utilization')).toBeVisible()
   expect(screen.getByText('Local metering since calibration')).toBeVisible()
   expect(screen.getByText(formatQuota(50))).toBeVisible()
-  expect(screen.getByText('Estimated utilization after local metering')).toBeVisible()
+  expect(
+    screen.getByText('Estimated utilization after local metering')
+  ).toBeVisible()
   expect(screen.getByText('45%')).toBeVisible()
+})
+
+test('expired reset takes precedence over hinted sample time and shows distinct vm-01/vm-02 window statuses', () => {
+  render(
+    <SyncAccounts
+      staleSeconds={300}
+      fetchedAt={now}
+      accounts={[
+        {
+          id: 'vm-01',
+          name: 'vm-01',
+          expiry: 0,
+          sampled_at: now - 30,
+          cycles: [
+            {
+              key: '5h',
+              name: '5h',
+              seconds: 18000,
+              utilization: 0.19,
+              window_start: now - 1000,
+              window_end: now + 17000,
+              sampled_at: now - 30,
+              sample_time_quality: 'hint',
+              issue_code: 'sample_time_incomplete',
+              source: 'headers',
+              error: '',
+            },
+          ],
+        },
+        {
+          id: 'vm-02',
+          name: 'vm-02',
+          expiry: 0,
+          sampled_at: now - 30,
+          cycles: [
+            {
+              key: '5h',
+              name: '5h',
+              seconds: 18000,
+              utilization: 0.25,
+              window_start: now - 20000,
+              window_end: now - 2000,
+              sampled_at: now - 30,
+              sample_time_quality: 'hint',
+              issue_code: 'expired_reset',
+              source: 'headers',
+              error: 'Missing or inconsistent upstream cycle data',
+            },
+            {
+              key: '7d',
+              name: '7d',
+              seconds: 604800,
+              utilization: 0.42,
+              window_start: now - 10000,
+              window_end: now + 594800,
+              sampled_at: now - 30,
+              sample_time_quality: 'hint',
+              issue_code: 'sample_time_incomplete',
+              source: 'headers',
+              error: '',
+            },
+          ],
+        },
+      ]}
+    />
+  )
+
+  const vm01 = screen.getByRole('region', { name: 'vm-01' })
+  expect(vm01).toHaveTextContent('19%')
+  expect(vm01).toHaveTextContent('Sampling time incomplete')
+  expect(vm01).not.toHaveTextContent('Upstream observation is stale')
+  expect(vm01).not.toHaveTextContent('Expired')
+
+  const vm02 = screen.getByRole('region', { name: 'vm-02' })
+  const vm02Sections = [...vm02.querySelectorAll('section')]
+  const vm02Short = vm02Sections.find(
+    (el) => el.getAttribute('aria-label') === '5h'
+  )
+  const vm02Week = vm02Sections.find(
+    (el) => el.getAttribute('aria-label') === '7d'
+  )
+  expect(vm02Short).toBeDefined()
+  expect(vm02Week).toBeDefined()
+  expect(vm02Short).toHaveTextContent('Expired')
+  expect(vm02Short).toHaveTextContent('Upstream reset time has expired')
+  expect(vm02Short).not.toHaveTextContent('Sampling time incomplete')
+  expect(vm02Week).toHaveTextContent('42%')
+  expect(vm02Week).toHaveTextContent('Sampling time incomplete')
+  expect(vm02Week).not.toHaveTextContent('Upstream observation is stale')
+  expect(vm02Week).not.toHaveTextContent('Expired')
+})
+
+test('a hinted sample older than the stale threshold displays stale data instead of sampling time incomplete', () => {
+  render(
+    <SyncUsageCard
+      name='Stale hinted'
+      utilization={0.33}
+      windowEnd={now + 3600}
+      sampledAt={now - 600}
+      sampleTimeQuality='hint'
+      issueCode='sample_time_incomplete'
+      stale
+    />
+  )
+  expect(screen.getByText('Stale data')).toBeVisible()
+  expect(screen.getByText('Upstream observation is stale')).toBeVisible()
+  expect(screen.queryByText('Sampling time incomplete')).not.toBeInTheDocument()
+})
+
+test('Chinese locale renders sync cards and source status without English fallback', async () => {
+  const zhLocale = (await import('@/i18n/locales/zh.json')).default
+  const { createInstance } = await import('i18next')
+  const { I18nextProvider } = await import('react-i18next')
+  const i18n = createInstance()
+  await i18n.init({
+    lng: 'zhCN',
+    fallbackLng: 'en',
+    resources: {
+      en: { translation: {} },
+      zhCN: zhLocale,
+    },
+  })
+  render(
+    <I18nextProvider i18n={i18n}>
+      <div>
+        <SyncSourceStatus
+          source={{
+            ...source,
+            last_fetch: now,
+            fetch_status: 'Synchronization is on schedule',
+            observation_status: 'Upstream sample time is incomplete',
+            reported_cycles: 2,
+            fresh_cycles: 2,
+            stale_accounts: ['vm-02'],
+            cycle_statuses: [
+              {
+                key: '5h',
+                name: '5h',
+                fresh_cycles: 1,
+                reported_cycles: 2,
+                hint_samples: 1,
+              },
+            ],
+          }}
+        />
+        <SyncUsageCard
+          name='5h'
+          utilization={0.19}
+          windowEnd={now + 3600}
+          sampledAt={now - 30}
+          sampleTimeQuality='hint'
+          issueCode='sample_time_incomplete'
+          stale={false}
+          estimatedUtilization={0.25}
+          localDelta={50}
+        />
+        <SyncUsageCard
+          name='7d'
+          utilization={0.4}
+          windowEnd={now - 60}
+          sampledAt={now - 600}
+          sampleTimeQuality='hint'
+          issueCode='expired_reset'
+          stale
+          historical
+        />
+      </div>
+    </I18nextProvider>
+  )
+
+  expect(screen.getAllByText('采样时间待确认').length).toBeGreaterThanOrEqual(2)
+  expect(screen.getByText('上游未提供精确采样时间')).toBeVisible()
+  expect(screen.getByText('历史上游快照')).toBeVisible()
+  expect(screen.getByText('校准后的本地计量')).toBeVisible()
+  expect(screen.getByText('本地计量后估算占比')).toBeVisible()
+  expect(screen.getByText('上游重置时间已过期')).toBeVisible()
+  expect(screen.getByText(/部分上游周期需要关注/)).toBeVisible()
+
+  for (const english of [
+    'Sampling time incomplete',
+    'Upstream sample time is incomplete',
+    'Historical upstream snapshot',
+    'Local metering since calibration',
+    'Estimated utilization after local metering',
+    'Upstream observation is stale',
+    'Upstream reset time has expired',
+    'Some upstream cycles need attention',
+  ]) {
+    expect(screen.queryByText(new RegExp(english))).not.toBeInTheDocument()
+  }
 })
