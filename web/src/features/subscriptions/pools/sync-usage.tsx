@@ -32,11 +32,9 @@ import {
 } from '@/components/ui/popover'
 import { Progress } from '@/components/ui/progress'
 import { toIntlLocale } from '@/i18n/languages'
-import {
-  formatNumber,
-  formatQuota,
-  formatTimestampRelative,
-} from '@/lib/format'
+import { formatQuotaWithCurrency } from '@/lib/currency'
+import { formatNumber, formatTimestampRelative } from '@/lib/format'
+import { useSystemConfigStore } from '@/stores/system-config-store'
 
 import {
   syncStaleSeconds,
@@ -239,6 +237,9 @@ export function SyncUsageCard(props: {
 }) {
   const { t, i18n } = useTranslation()
   const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
+  const currencyDisplayType = useSystemConfigStore(
+    (state) => state.config.currency.quotaDisplayType
+  )
   const sampleTimeQuality = props.sampleTimeQuality ?? 'exact'
   const reported =
     props.utilization != null &&
@@ -310,7 +311,7 @@ export function SyncUsageCard(props: {
   return (
     <section
       aria-label={props.name}
-      className='bg-card min-w-0 space-y-3 rounded-xl border p-4'
+      className='bg-card flex h-full min-w-0 flex-col gap-3 rounded-xl border p-4'
     >
       <div className='flex flex-wrap items-center justify-between gap-2'>
         <div className='flex min-w-0 flex-wrap items-center gap-2'>
@@ -344,7 +345,14 @@ export function SyncUsageCard(props: {
                 {t('Local metering since calibration')}
               </dt>
               <dd className='font-medium tabular-nums'>
-                {formatQuota(props.localDelta ?? 0)}
+                {currencyDisplayType === 'TOKENS'
+                  ? formatNumber(props.localDelta ?? 0, locale)
+                  : formatQuotaWithCurrency(props.localDelta ?? 0, {
+                      locale,
+                      digitsLarge: 2,
+                      digitsSmall: 4,
+                      abbreviate: false,
+                    })}
               </dd>
             </div>
           )}
@@ -369,7 +377,7 @@ export function SyncUsageCard(props: {
           className={expired || stale || hasHardIssue ? 'opacity-50' : ''}
         />
       )}
-      <dl className='space-y-3 text-xs'>
+      <dl className='space-y-2.5 text-xs'>
         <div className='flex flex-wrap items-start justify-between gap-2'>
           <dt className='text-muted-foreground flex items-center gap-1.5'>
             <Clock3 className='size-3.5' aria-hidden='true' />
@@ -379,7 +387,7 @@ export function SyncUsageCard(props: {
             <SyncTimestamp
               value={props.windowEnd}
               fallback='Reset time unavailable'
-              relative={!resetPassed}
+              relative={props.windowEnd > 0}
             />
           </dd>
         </div>
@@ -401,7 +409,7 @@ export function SyncUsageCard(props: {
       {statusWarning && (
         <p
           role='status'
-          className='text-warning flex items-center gap-1.5 text-xs'
+          className='text-warning mt-auto flex items-center gap-1.5 pt-1 text-xs'
         >
           <Clock3 className='size-3.5 shrink-0' aria-hidden='true' />
           {t(statusWarning)}

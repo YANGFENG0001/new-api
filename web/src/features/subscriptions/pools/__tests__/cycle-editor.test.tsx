@@ -116,10 +116,10 @@ test('an imported unlimited cycle accepts a local monetary limit without an upst
   const change = vi.fn()
   const rule = { ...newCycle('Imported'), limit: 0, unlimited: true }
   render(<CycleEditor value={[rule]} onChange={change} pooled />)
-  const amount = screen.getByLabelText('Quota units')
+  const amount = screen.getByLabelText('Cycle quota')
   expect(amount).toBeEnabled()
   await userEvent.click(
-    screen.getByRole('combobox', { name: 'Quota units · Input unit' })
+    screen.getByRole('combobox', { name: 'Cycle quota · Input unit' })
   )
   await userEvent.click(await screen.findByRole('option', { name: 'USD ($)' }))
   await userEvent.clear(amount)
@@ -143,9 +143,9 @@ test('changing the input currency preserves stored quota and CNY uses the config
         onChange={change}
       />
     )
-    const amount = screen.getByLabelText('Quota units')
+    const amount = screen.getByLabelText('Cycle quota')
     await userEvent.click(
-      screen.getByRole('combobox', { name: 'Quota units · Input unit' })
+      screen.getByRole('combobox', { name: 'Cycle quota · Input unit' })
     )
     await userEvent.click(
       await screen.findByRole('option', { name: 'CNY (￥)' })
@@ -158,6 +158,16 @@ test('changing the input currency preserves stored quota and CNY uses the config
   } finally {
     useSystemConfigStore.getState().setConfig({ currency: original })
   }
+})
+
+test('a 7-day cycle duration defaults to 7 days instead of 168 hours', () => {
+  render(
+    <CycleEditor
+      value={[{ ...newCycle('Weekly'), seconds: 604800 }]}
+      onChange={vi.fn()}
+    />
+  )
+  expect(screen.getByLabelText('Cycle duration')).toHaveValue(7)
 })
 
 test('invalid or unsafe quota amounts cannot be turned into valid saved integers', async () => {

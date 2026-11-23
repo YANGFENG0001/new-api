@@ -19,8 +19,18 @@ For commercial licensing, please contact support@quantumnous.com
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { Combobox } from '@/components/ui/combobox'
 import { Input } from '@/components/ui/input'
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import { toIntlLocale } from '@/i18n/languages'
+import { formatQuotaWithCurrency } from '@/lib/currency'
+import { formatNumber } from '@/lib/format'
 import {
   DEFAULT_CURRENCY_CONFIG,
   useSystemConfigStore,
@@ -39,7 +49,8 @@ export function QuotaAmountInput(props: {
   onChange: (quota: number) => void
   disabled?: boolean
 }) {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
+  const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
   const currency = useSystemConfigStore((state) => state.config.currency)
   const { unit, setUnit } = useQuotaInputUnit(
     props.preferenceKey || props.name || props.id,
@@ -61,9 +72,32 @@ export function QuotaAmountInput(props: {
     ? Number((props.value / factor).toFixed(10)).toString()
     : ''
   const amount = draft ?? displayedAmount
+  const unitOptions = [
+    { value: 'quota', label: t('Quota units') },
+    { value: 'USD', label: t('USD ($)') },
+    { value: 'CNY', label: t('CNY (￥)') },
+  ]
+  const showConversion = Number.isFinite(props.value) && props.value > 0
+  let conversionText: string | null = null
+  if (showConversion) {
+    if (unit !== 'quota') {
+      conversionText = t('Stored as {{quota}} quota units', {
+        quota: formatNumber(props.value, locale),
+      })
+    } else if (currency.quotaDisplayType !== 'TOKENS') {
+      conversionText = t('Equivalent to {{amount}}', {
+        amount: formatQuotaWithCurrency(props.value, {
+          locale,
+          digitsLarge: 2,
+          digitsSmall: 4,
+          abbreviate: false,
+        }),
+      })
+    }
+  }
   return (
-    <div className='space-y-2'>
-      <div className='grid min-w-0 grid-cols-[minmax(0,1fr)_minmax(7rem,auto)] gap-2'>
+    <div className='space-y-1.5'>
+      <div className='grid min-w-0 grid-cols-[minmax(0,1fr)_auto] gap-2'>
         <Input
           id={props.id}
           name={props.name ?? props.preferenceKey ?? props.id}
@@ -90,23 +124,39 @@ export function QuotaAmountInput(props: {
             props.onChange(valid ? quota : Number.NaN)
           }}
         />
-        <Combobox
-          aria-label={`${props.label} · ${t('Input unit')}`}
+        <Select
+          items={unitOptions}
           value={unit}
           disabled={props.disabled}
-          options={[
-            { value: 'quota', label: t('Quota units') },
-            { value: 'USD', label: t('USD ($)') },
-            { value: 'CNY', label: t('CNY (￥)') },
-          ]}
           onValueChange={(value) => {
             if (value === 'quota' || value === 'USD' || value === 'CNY') {
               setUnit(value)
             }
             setDraft(null)
           }}
-        />
+        >
+          <SelectTrigger
+            aria-label={`${props.label} · ${t('Input unit')}`}
+            className='min-w-[7.5rem] shrink-0'
+          >
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent alignItemWithTrigger={false}>
+            <SelectGroup>
+              {unitOptions.map((option) => (
+                <SelectItem key={option.value} value={option.value}>
+                  {option.label}
+                </SelectItem>
+              ))}
+            </SelectGroup>
+          </SelectContent>
+        </Select>
       </div>
+      {conversionText && (
+        <p className='text-muted-foreground text-xs tabular-nums'>
+          {conversionText}
+        </p>
+      )}
       <p className='text-muted-foreground text-xs'>
         {t(
           'Currency inputs use the site exchange rate and are saved as quota units. Upstream percentages do not define a monetary capacity.'

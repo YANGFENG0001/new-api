@@ -8384,6 +8384,10 @@
     "Use current local admission capacity": "Использовать текущую локальную лимитную ёмкость",
     "The server references this cycle's current effective local admission capacity; it does not copy a value. Independent cycles use the upstream limit; finite shared cycles use the shared limit.": "Сервер ссылается на текущую действующую локальную ёмкость этого цикла и не копирует значение. Независимые циклы используют вышестоящий лимит; ограниченные общие циклы используют общий лимит.",
     "Over limit": "Превышен лимит",
-    "Current cycle quota exceeded": "Квота текущего цикла превышена"
+    "Current cycle quota exceeded": "Квота текущего цикла превышена",
+    "Cycle quota": "Квота цикла",
+    "Stored as {{quota}} quota units": "Сохраняется как {{quota}} ед. квоты",
+    "Equivalent to {{amount}}": "Эквивалентно {{amount}}",
+    "Existing cycle keys cannot be removed. Disable them instead. Quota changes and reset time adjustments apply immediately while preserving usage; duration and scope changes apply at the next boundary.": "Существующие ключи циклов нельзя удалить — отключите их. Изменения квоты и времени сброса вступают в силу немедленно с сохранением расхода; изменения длительности и области действия применяются со следующего цикла."
   }
 }

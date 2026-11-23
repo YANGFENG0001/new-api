@@ -63,7 +63,7 @@ export function SyncMappingEditor(props: {
     <div className='space-y-4'>
       <div className='grid gap-3 sm:grid-cols-2'>
         {fields.map(([key, label]) => (
-          <div key={key}>
+          <div key={key} className='space-y-1.5'>
             <Label htmlFor={`map-${key}`}>{label}</Label>
             <Input
               id={`map-${key}`}
@@ -76,7 +76,7 @@ export function SyncMappingEditor(props: {
             />
           </div>
         ))}
-        <div>
+        <div className='space-y-1.5'>
           <Label htmlFor='sync-time-format'>{t('Time format')}</Label>
           <Combobox
             id='sync-time-format'
@@ -112,7 +112,7 @@ export function SyncMappingEditor(props: {
                 ['sampled_at_path', t('Observation time override (optional)')],
               ] as const
             ).map(([key, label]) => (
-              <div key={key}>
+              <div key={key} className='space-y-1.5'>
                 <Label htmlFor={`sync-map-${index}-${key}`}>{label}</Label>
                 <Input
                   id={`sync-map-${index}-${key}`}
@@ -121,7 +121,7 @@ export function SyncMappingEditor(props: {
                 />
               </div>
             ))}
-            <div>
+            <div className='space-y-1.5'>
               <Label htmlFor={`sync-seconds-${index}`}>
                 {t('Cycle duration (seconds)')}
               </Label>
@@ -136,7 +136,7 @@ export function SyncMappingEditor(props: {
                 }
               />
             </div>
-            <div>
+            <div className='space-y-1.5'>
               <Label htmlFor={`sync-scale-${index}`}>
                 {t('Utilization format')}
               </Label>

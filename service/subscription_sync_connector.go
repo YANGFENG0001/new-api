@@ -379,6 +379,15 @@ func vm2apiSyncTimestamp(v any) int64 {
 	return n
 }
 
+func vm2apiProbeSourceIsExact(source string) bool {
+	switch strings.ToLower(strings.TrimSpace(source)) {
+	case "vm-oauth-usage", "oauth-usage", "vm_oauth_usage", "oauth_usage", "probe":
+		return true
+	default:
+		return false
+	}
+}
+
 func ParseSubscriptionSyncResponse(raw []byte, m model.SubscriptionSyncMapping, now int64) ([]model.SubscriptionSyncAccount, error) {
 	var root any
 	if len(raw) > 8*1024*1024 || common.Unmarshal(raw, &root) != nil {
@@ -396,14 +405,17 @@ func ParseSubscriptionSyncResponse(raw []byte, m model.SubscriptionSyncMapping, 
 	if vm2api {
 		timestamp = vm2apiSyncTimestamp
 	}
-	sample := func(item any, field string) (int64, string) {
+	sample := func(item any, field string, source string) (int64, string) {
 		value := syncPath(item, field)
 		quality := ""
 		if vm2api && (field == "last_probe" || field == "last_probe.at") {
 			if probe, ok := syncPath(item, "last_probe").(map[string]any); ok {
 				value = probe["at"]
-				// The flattened utilization may come from headers, not last_probe.
-				quality = "hint"
+				probeOK, hasOK := probe["ok"].(bool)
+				if !vm2apiProbeSourceIsExact(source) || (hasOK && !probeOK) {
+					// The flattened utilization may come from headers or a failed probe, not last_probe.
+					quality = "hint"
+				}
 			} else if field == "last_probe.at" {
 				value = syncPath(item, "last_probe")
 			}
@@ -422,16 +434,16 @@ func ParseSubscriptionSyncResponse(raw []byte, m model.SubscriptionSyncMapping, 
 		if len(name) > 128 {
 			name = id
 		}
-		expiry := timestamp(syncPath(item, m.ExpiryPath))
-		sampledAt, accountQuality := sample(item, m.SampledAtPath)
-		if accountQuality == "hint" {
-			expiry = 0
-		} // No account-wide authoritative expiry sample.
-		account := model.SubscriptionSyncAccount{ID: id, Name: name, Expiry: expiry, SampledAt: sampledAt, Cycles: []model.SubscriptionSyncCycle{}}
 		source, _ := syncPath(item, m.SourcePath).(string)
 		if len(source) > 64 {
 			source = ""
 		}
+		expiry := timestamp(syncPath(item, m.ExpiryPath))
+		sampledAt, accountQuality := sample(item, m.SampledAtPath, source)
+		if accountQuality == "hint" {
+			expiry = 0
+		} // No account-wide authoritative expiry sample.
+		account := model.SubscriptionSyncAccount{ID: id, Name: name, Expiry: expiry, SampledAt: sampledAt, Cycles: []model.SubscriptionSyncCycle{}}
 		for _, c := range m.Cycles {
 			if syncPath(item, c.UtilizationPath) == nil {
 				continue
@@ -440,7 +452,7 @@ func ParseSubscriptionSyncResponse(raw []byte, m model.SubscriptionSyncMapping, 
 			if c.SampledAtPath != "" {
 				timestampPath = c.SampledAtPath
 			}
-			sampledAt, quality := sample(item, timestampPath)
+			sampledAt, quality := sample(item, timestampPath, source)
 			cycle := model.SubscriptionSyncCycle{SampleTimeQuality: quality, Key: c.Key, Name: model.SubscriptionCycleName(c.Name, c.Seconds), Seconds: c.Seconds, WindowEnd: timestamp(syncPath(item, c.ResetPath)), SampledAt: sampledAt, Source: source}
 			value, valid := syncPath(item, c.UtilizationPath).(float64)
 			if c.Scale == "percent" {

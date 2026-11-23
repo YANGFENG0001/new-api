@@ -44,6 +44,7 @@ import { toIntlLocale } from '@/i18n/languages'
 
 import { poolAPI, type Pool, type Capabilities, type CycleView } from './api'
 import { CycleProgress } from './cycle-progress'
+import { QuotaAmountInput } from './quota-amount-input'
 import { snapshotSchema } from './schema'
 import { syncAPI } from './sync-api'
 import { PoolSyncBinding } from './sync-binding'
@@ -360,15 +361,17 @@ function SnapshotForm(props: { pool: Pool; cycles: CycleView[] }) {
           'Observations are separate from local usage. Calibration requires matching quota units and the exact current window.'
         )}
       </p>
-      <Label>{t('Cycle')}</Label>
-      <Combobox
-        options={props.pool.cycles.map((c) => ({
-          value: c.key,
-          label: c.name,
-        }))}
-        value={values.key}
-        onValueChange={(v) => form.setValue('key', v ?? '')}
-      />
+      <div className='space-y-1.5'>
+        <Label>{t('Cycle')}</Label>
+        <Combobox
+          options={props.pool.cycles.map((c) => ({
+            value: c.key,
+            label: c.name,
+          }))}
+          value={values.key}
+          onValueChange={(v) => form.setValue('key', v ?? '')}
+        />
+      </div>
       <Button
         type='button'
         variant='outline'
@@ -383,7 +386,7 @@ function SnapshotForm(props: { pool: Pool; cycles: CycleView[] }) {
         {t('Use current window')}
       </Button>
       <div className='grid gap-3 sm:grid-cols-2'>
-        <div>
+        <div className='space-y-1.5'>
           <Label>{t('Window start')}</Label>
           <DateTimePicker
             value={
@@ -399,7 +402,7 @@ function SnapshotForm(props: { pool: Pool; cycles: CycleView[] }) {
             }
           />
         </div>
-        <div>
+        <div className='space-y-1.5'>
           <Label>{t('Window end')}</Label>
           <DateTimePicker
             value={
@@ -413,28 +416,52 @@ function SnapshotForm(props: { pool: Pool; cycles: CycleView[] }) {
             }
           />
         </div>
-        <div>
+        <div className='space-y-1.5'>
           <Label htmlFor='snapshot-used'>{t('Used')}</Label>
-          <Input
-            id='snapshot-used'
-            type='number'
-            min={0}
-            {...form.register('used', { valueAsNumber: true })}
-          />
+          {values.unit.trim().toLowerCase() === 'quota' ? (
+            <QuotaAmountInput
+              id='snapshot-used'
+              label={t('Used')}
+              value={values.used}
+              onChange={(used) =>
+                form.setValue('used', used, { shouldValidate: true })
+              }
+            />
+          ) : (
+            <Input
+              id='snapshot-used'
+              type='number'
+              min={0}
+              {...form.register('used', { valueAsNumber: true })}
+            />
+          )}
         </div>
-        <div>
+        <div className='space-y-1.5'>
           <Label htmlFor='snapshot-limit'>{t('Quota')}</Label>
-          <Input
-            id='snapshot-limit'
-            type='number'
-            min={0}
-            {...form.register('limit', { valueAsNumber: true })}
-          />
+          {values.unit.trim().toLowerCase() === 'quota' ? (
+            <QuotaAmountInput
+              id='snapshot-limit'
+              label={t('Quota')}
+              value={values.limit}
+              onChange={(limit) =>
+                form.setValue('limit', limit, { shouldValidate: true })
+              }
+            />
+          ) : (
+            <Input
+              id='snapshot-limit'
+              type='number'
+              min={0}
+              {...form.register('limit', { valueAsNumber: true })}
+            />
+          )}
         </div>
       </div>
-      <Label htmlFor='snapshot-unit'>{t('Unit')}</Label>
-      <Input id='snapshot-unit' {...form.register('unit')} />
-      <Label>
+      <div className='space-y-1.5'>
+        <Label htmlFor='snapshot-unit'>{t('Unit')}</Label>
+        <Input id='snapshot-unit' {...form.register('unit')} />
+      </div>
+      <Label className='flex items-center gap-2'>
         <Switch
           checked={values.calibrate}
           onCheckedChange={(v) => form.setValue('calibrate', v)}

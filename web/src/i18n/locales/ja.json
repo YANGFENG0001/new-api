@@ -8384,6 +8384,10 @@
     "Use current local admission capacity": "現在のローカル許容容量を使用",
     "The server references this cycle's current effective local admission capacity; it does not copy a value. Independent cycles use the upstream limit; finite shared cycles use the shared limit.": "サーバーはこのサイクルで現在有効なローカル許容容量を参照し、値をコピーしません。独立サイクルはアップストリーム上限、有限共有サイクルは共有上限を使用します。",
     "Over limit": "上限超過",
-    "Current cycle quota exceeded": "現在のサイクルのクォータを超過しました"
+    "Current cycle quota exceeded": "現在のサイクルのクォータを超過しました",
+    "Cycle quota": "サイクルクォータ",
+    "Stored as {{quota}} quota units": "{{quota}} クォータ単位として保存されます",
+    "Equivalent to {{amount}}": "{{amount}} 相当",
+    "Existing cycle keys cannot be removed. Disable them instead. Quota changes and reset time adjustments apply immediately while preserving usage; duration and scope changes apply at the next boundary.": "既存のサイクルキーは削除できません。代わりに無効化してください。クォータとリセット時刻の変更は使用量を保持したまま即時に適用され、期間と共有範囲の変更は次のサイクル境界で適用されます。"
   }
 }

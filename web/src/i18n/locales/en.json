@@ -8384,6 +8384,10 @@
     "Use current local admission capacity": "Use current local admission capacity",
     "The server references this cycle's current effective local admission capacity; it does not copy a value. Independent cycles use the upstream limit; finite shared cycles use the shared limit.": "The server references this cycle's current effective local admission capacity; it does not copy a value. Independent cycles use the upstream limit; finite shared cycles use the shared limit.",
     "Over limit": "Over limit",
-    "Current cycle quota exceeded": "Current cycle quota exceeded"
+    "Current cycle quota exceeded": "Current cycle quota exceeded",
+    "Cycle quota": "Cycle quota",
+    "Stored as {{quota}} quota units": "Stored as {{quota}} quota units",
+    "Equivalent to {{amount}}": "Equivalent to {{amount}}",
+    "Existing cycle keys cannot be removed. Disable them instead. Quota changes and reset time adjustments apply immediately while preserving usage; duration and scope changes apply at the next boundary.": "Existing cycle keys cannot be removed. Disable them instead. Quota changes and reset time adjustments apply immediately while preserving usage; duration and scope changes apply at the next boundary."
   }
 }

@@ -8384,6 +8384,10 @@
     "Use current local admission capacity": "Utiliser la capacité d'admission locale actuelle",
     "The server references this cycle's current effective local admission capacity; it does not copy a value. Independent cycles use the upstream limit; finite shared cycles use the shared limit.": "Le serveur référence la capacité d'admission locale effective actuelle de ce cycle sans copier de valeur. Les cycles indépendants utilisent la limite amont ; les cycles partagés finis utilisent la limite partagée.",
     "Over limit": "Limite dépassée",
-    "Current cycle quota exceeded": "Quota du cycle actuel dépassé"
+    "Current cycle quota exceeded": "Quota du cycle actuel dépassé",
+    "Cycle quota": "Quota du cycle",
+    "Stored as {{quota}} quota units": "Enregistré comme {{quota}} unités de quota",
+    "Equivalent to {{amount}}": "Équivalent à {{amount}}",
+    "Existing cycle keys cannot be removed. Disable them instead. Quota changes and reset time adjustments apply immediately while preserving usage; duration and scope changes apply at the next boundary.": "Les clés de cycle existantes ne peuvent pas être supprimées ; désactivez-les à la place. Les modifications de quota et d’heure de réinitialisation s’appliquent immédiatement tout en conservant l’utilisation ; les modifications de durée et de portée s’appliquent au prochain cycle."
   }
 }

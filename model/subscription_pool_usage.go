@@ -146,10 +146,20 @@ func GetSubscriptionPlanAllocationSummaries(ids []int) (map[int]SubscriptionPlan
 			if cfg.Mode == "fixed" {
 				if state, found := byOwner[allocationOwner(0, cfg.PoolID)][rule.Key]; found {
 					// Catalog reads do not advance windows or create counters. Until
-					// the boundary, new members also receive the active pool rule.
+					// the boundary, new members also receive the active pool rule;
+					// legacy quota-only pending rules are already effective.
 					active := state.Rule
-					if state.EndTime <= GetDBTimestamp() && state.PendingRule != "" {
-						active = state.PendingRule
+					if state.PendingRule != "" {
+						if state.EndTime <= GetDBTimestamp() {
+							active = state.PendingRule
+						} else {
+							var currentRule, pendingRule SubscriptionCycleRule
+							if common.UnmarshalJsonStr(state.Rule, &currentRule) == nil &&
+								common.UnmarshalJsonStr(state.PendingRule, &pendingRule) == nil &&
+								subscriptionCycleQuotaOnlyChange(currentRule, pendingRule) {
+								active = state.PendingRule
+							}
+						}
 					}
 					if err := common.UnmarshalJsonStr(active, &rule); err != nil {
 						return nil, err

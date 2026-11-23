@@ -208,36 +208,40 @@ export function InstanceAllocations(props: {
           />
         ))}
       {caps.data.assign && (
-        <>
-          <Label htmlFor='subscription-selection'>
-            {t('Subscription instances')}
-          </Label>
-          <MultiSelect
-            id='subscription-selection'
-            placeholder={t('Subscription instances')}
-            allowCreate={false}
-            options={props.subscriptions
-              .filter((s) => s.status === 'active')
-              .map((s) => ({
-                value: String(s.id),
-                label: `#${s.id} · ${s.plan_title?.trim() || `${t('Plan')} #${s.plan_id}`}`,
-              }))}
-            selected={selected}
-            onChange={(v) => setSelected(batchAllowed ? v : v.slice(-1))}
-          />
-          <Label htmlFor='target-upstream-pool'>
-            {t('Target upstream pool')}
-          </Label>
-          <Combobox
-            id='target-upstream-pool'
-            aria-label={t('Target upstream pool')}
-            value={poolID}
-            options={(pools.data ?? [])
-              .filter((p) => p.enabled && p.end_time > Date.now() / 1000)
-              .map((p) => ({ value: String(p.id), label: p.name }))}
-            onValueChange={(v) => setPoolID(v ?? '')}
-          />
-          <Label>
+        <div className='space-y-3'>
+          <div className='space-y-1.5'>
+            <Label htmlFor='subscription-selection'>
+              {t('Subscription instances')}
+            </Label>
+            <MultiSelect
+              id='subscription-selection'
+              placeholder={t('Subscription instances')}
+              allowCreate={false}
+              options={props.subscriptions
+                .filter((s) => s.status === 'active')
+                .map((s) => ({
+                  value: String(s.id),
+                  label: `#${s.id} · ${s.plan_title?.trim() || `${t('Plan')} #${s.plan_id}`}`,
+                }))}
+              selected={selected}
+              onChange={(v) => setSelected(batchAllowed ? v : v.slice(-1))}
+            />
+          </div>
+          <div className='space-y-1.5'>
+            <Label htmlFor='target-upstream-pool'>
+              {t('Target upstream pool')}
+            </Label>
+            <Combobox
+              id='target-upstream-pool'
+              aria-label={t('Target upstream pool')}
+              value={poolID}
+              options={(pools.data ?? [])
+                .filter((p) => p.enabled && p.end_time > Date.now() / 1000)
+                .map((p) => ({ value: String(p.id), label: p.name }))}
+              onValueChange={(v) => setPoolID(v ?? '')}
+            />
+          </div>
+          <Label className='flex items-center gap-2'>
             <Switch checked={customExpiry} onCheckedChange={setCustomExpiry} />
             {t('Shorten member expiry')}
           </Label>
@@ -331,7 +335,7 @@ export function InstanceAllocations(props: {
               )}
             </div>
           </ConfirmDialog>
-        </>
+        </div>
       )}
       <ConfirmDialog
         open={reset !== null}

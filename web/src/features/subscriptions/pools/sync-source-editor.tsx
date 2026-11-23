@@ -128,11 +128,11 @@ export function SyncSourceEditor(props: {
         className='space-y-4'
       >
         <div className='grid gap-3 sm:grid-cols-2'>
-          <div>
+          <div className='space-y-1.5'>
             <Label htmlFor='sync-name'>{t('Name')}</Label>
             <Input id='sync-name' {...form.register('name')} />
           </div>
-          <div>
+          <div className='space-y-1.5'>
             <Label htmlFor='sync-url'>{t('API URL')}</Label>
             <Input
               id='sync-url'
@@ -141,7 +141,7 @@ export function SyncSourceEditor(props: {
               disabled={!props.privileged && !!props.source}
             />
           </div>
-          <div>
+          <div className='space-y-1.5'>
             <Label htmlFor='sync-method'>{t('Request method')}</Label>
             <Combobox
               id='sync-method'
@@ -165,7 +165,7 @@ export function SyncSourceEditor(props: {
               ['timeout_seconds', t('Request timeout (seconds)'), 1, 60],
             ] as const
           ).map(([key, label, min, max]) => (
-            <div key={key}>
+            <div key={key} className='space-y-1.5'>
               <Label htmlFor={`sync-${key}`}>{label}</Label>
               <Input
                 id={`sync-${key}`}
@@ -193,7 +193,7 @@ export function SyncSourceEditor(props: {
             )}
           </p>
         )}
-        <Label>
+        <Label className='flex items-center gap-2'>
           <Switch
             checked={values.enabled}
             onCheckedChange={(v) =>
@@ -203,7 +203,9 @@ export function SyncSourceEditor(props: {
           {t('Automatic synchronization')}
         </Label>
         <details className='space-y-3 rounded-lg border p-3'>
-          <summary>{t('Authentication and renewal')}</summary>
+          <summary className='cursor-pointer text-sm font-medium select-none'>
+            {t('Authentication and renewal')}
+          </summary>
           <SyncAuthenticationSettings
             form={form}
             privileged={props.privileged}
@@ -214,7 +216,7 @@ export function SyncSourceEditor(props: {
               'Saved secrets are write-only. Leave replacement off to preserve existing request settings. Set SUBSCRIPTION_SYNC_SECRET_KEY before storing credentials.'
             )}
           </p>
-          <Label>
+          <Label className='flex items-center gap-2'>
             <Switch
               checked={values.replace_request}
               onCheckedChange={(v) => form.setValue('replace_request', v)}

@@ -8384,6 +8384,10 @@
     "Use current local admission capacity": "Dùng dung lượng giới hạn cục bộ hiện tại",
     "The server references this cycle's current effective local admission capacity; it does not copy a value. Independent cycles use the upstream limit; finite shared cycles use the shared limit.": "Máy chủ tham chiếu trực tiếp dung lượng giới hạn cục bộ đang có hiệu lực của chu kỳ này chứ không sao chép giá trị. Chu kỳ độc lập dùng giới hạn nguồn trên; chu kỳ dùng chung có giới hạn dùng giới hạn chung.",
     "Over limit": "Vượt hạn mức",
-    "Current cycle quota exceeded": "Đã vượt hạn mức chu kỳ hiện tại"
+    "Current cycle quota exceeded": "Đã vượt hạn mức chu kỳ hiện tại",
+    "Cycle quota": "Hạn mức chu kỳ",
+    "Stored as {{quota}} quota units": "Được lưu là {{quota}} đơn vị hạn mức",
+    "Equivalent to {{amount}}": "Tương đương {{amount}}",
+    "Existing cycle keys cannot be removed. Disable them instead. Quota changes and reset time adjustments apply immediately while preserving usage; duration and scope changes apply at the next boundary.": "Không thể xóa khóa chu kỳ hiện có; hãy tắt thay thế. Thay đổi hạn mức và thời điểm đặt lại có hiệu lực ngay và giữ nguyên mức đã dùng; thay đổi thời lượng và phạm vi chia sẻ áp dụng từ chu kỳ tiếp theo."
   }
 }

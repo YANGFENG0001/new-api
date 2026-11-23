@@ -320,13 +320,14 @@ func TestSubscriptionPoolPlanCatalogDescribesManagedPlansWithoutSecrets(t *testi
 	}
 	configured, err := model.GetSubscriptionPoolConfiguration(pool.Id)
 	require.NoError(t, err)
+	configured.Cycles[0].Seconds = 7200
 	configured.Cycles[0].Limit = 456
 	_, err = model.SaveSubscriptionPool(configured, 1)
 	require.NoError(t, err)
 	current, err := model.GetSubscriptionPlanAllocationSummaries([]int{plan.Id})
 	require.NoError(t, err)
 	require.Len(t, current[plan.Id].Cycles, 1)
-	assert.EqualValues(t, 123, current[plan.Id].Cycles[0].Limit, "purchase terms must describe currently enforced quota, not next-window settings")
+	assert.EqualValues(t, 123, current[plan.Id].Cycles[0].Limit, "purchase terms must describe currently enforced quota, not next-window structural settings")
 	var state model.SubscriptionCycleState
 	require.NoError(t, model.DB.First(&state, "owner = ? AND cycle_key = ?", fmt.Sprintf("pool:%d", pool.Id), "short").Error)
 	require.NotEmpty(t, state.PendingRule)
@@ -2428,9 +2429,36 @@ func TestSubscriptionPoolSyncVM2APIMixedResetFormatsAndObjectProbe(t *testing.T)
 			cycle := accounts[0].Cycles[0]
 			assert.Equal(t, end, cycle.WindowEnd)
 			assert.Equal(t, now.Add(-10*time.Minute).Unix(), cycle.SampledAt, "fetch time must never impersonate a sample")
+			assert.Equal(t, "hint", cycle.SampleTimeQuality, "header-derived utilization must keep last_probe as a hint")
+			assert.Equal(t, "sample_time_incomplete", cycle.IssueCode)
 			assert.Empty(t, cycle.Error, "a valid reset and timestamp hint should remain a displayable candidate")
 		})
 	}
+	t.Run("oauth_usage_probe_is_exact", func(t *testing.T) {
+		sampled := now.Add(-2 * time.Minute)
+		body := fmt.Sprintf(`{"ok":true,"data":{"accounts":[{"account_id":"a","vm_id":"vm-01","utilization_5h":0.19,"reset_5h":"%d","utilization_7d":0.35,"reset_7d":%q,"last_probe":{"at":%q,"ok":true},"probe_source":"vm-oauth-usage"}]}}`, end, now.Add(24*time.Hour).Format(time.RFC3339), sampled.Format(time.RFC3339Nano))
+		accounts, err := service.ParseSubscriptionSyncResponse([]byte(body), model.PanelSubscriptionSyncMapping(), now.Unix())
+		require.NoError(t, err)
+		require.Len(t, accounts, 1)
+		require.Len(t, accounts[0].Cycles, 2)
+		for _, cycle := range accounts[0].Cycles {
+			assert.Equal(t, sampled.Unix(), cycle.SampledAt)
+			assert.Empty(t, cycle.SampleTimeQuality, "vm-oauth-usage probe timestamp is exact")
+			assert.Empty(t, cycle.IssueCode)
+			assert.Empty(t, cycle.Error)
+			assert.True(t, cycle.HasExactSampleTime())
+		}
+	})
+	t.Run("failed_probe_stays_hint", func(t *testing.T) {
+		sampled := now.Add(-2 * time.Minute)
+		body := fmt.Sprintf(`{"ok":true,"data":{"accounts":[{"account_id":"a","vm_id":"vm-01","utilization_5h":0.19,"reset_5h":"%d","last_probe":{"at":%q,"ok":false},"probe_source":"vm-oauth-usage"}]}}`, end, sampled.Format(time.RFC3339Nano))
+		accounts, err := service.ParseSubscriptionSyncResponse([]byte(body), model.PanelSubscriptionSyncMapping(), now.Unix())
+		require.NoError(t, err)
+		require.Len(t, accounts, 1)
+		require.Len(t, accounts[0].Cycles, 1)
+		assert.Equal(t, "hint", accounts[0].Cycles[0].SampleTimeQuality)
+		assert.Equal(t, "sample_time_incomplete", accounts[0].Cycles[0].IssueCode)
+	})
 }
 
 func TestSubscriptionPoolSyncVM2APIProfileIsNarrowAndCycleQualityIsSeparate(t *testing.T) {
@@ -2545,9 +2573,11 @@ func TestSubscriptionPoolSyncAdmissionCapacityReferencesEffectiveTerms(t *testin
 			rule := model.SubscriptionCycleRule{Key: "custom", Name: "7h", Seconds: 25200, NextReset: now + 1000, Limit: 60, UpstreamLimit: 60, Shared: shared, Enabled: true}
 			pool, err := model.SaveSubscriptionPool(model.SubscriptionPoolInput{SubscriptionPool: model.SubscriptionPool{Name: "capacity", Enabled: true, EndTime: now + 86400}, Cycles: []model.SubscriptionCycleRule{rule}}, 1)
 			require.NoError(t, err)
+			// Changing duration (structural) plus quota keeps the current active terms pending until the next boundary.
+			rule.Seconds = 28800
 			rule.Limit = 82500000
 			rule.UpstreamLimit = 82500000
-			_, err = model.SaveSubscriptionPool(model.SubscriptionPoolInput{SubscriptionPool: *pool, Cycles: []model.SubscriptionCycleRule{rule}}, 1)
+			pool, err = model.SaveSubscriptionPool(model.SubscriptionPoolInput{SubscriptionPool: *pool, Cycles: []model.SubscriptionCycleRule{rule}}, 1)
 			require.NoError(t, err)
 			stats, err := model.GetSubscriptionPoolStatistics(pool.Id)
 			require.NoError(t, err)
@@ -2567,6 +2597,7 @@ func TestSubscriptionPoolSyncAdmissionCapacityReferencesEffectiveTerms(t *testin
 			require.NoError(t, err)
 			_, err = model.ApplySubscriptionSyncAccount(*claimed, "capacity", binding, account, 1, false)
 			require.NoError(t, err)
+			require.NoError(t, model.FinishSubscriptionSyncSource(*claimed, "capacity", []model.SubscriptionSyncAccount{account}, "", true, 1))
 			var observation model.SubscriptionSyncObservation
 			require.NoError(t, model.DB.Where("pool_id = ?", pool.Id).First(&observation).Error)
 			var payload struct {
@@ -2575,7 +2606,29 @@ func TestSubscriptionPoolSyncAdmissionCapacityReferencesEffectiveTerms(t *testin
 				} `json:"local_baseline"`
 			}
 			require.NoError(t, common.UnmarshalJsonStr(observation.Payload, &payload))
-			assert.EqualValues(t, 60, payload.Baseline.Capacity, "pending draft is not current conversion capacity")
+			assert.EqualValues(t, 60, payload.Baseline.Capacity, "pending structural draft is not current conversion capacity")
+
+			// A quota-only edit (same duration/scope/enabled) takes effect immediately and updates admission capacity.
+			rule.Seconds = 25200
+			rule.Limit = 82500000
+			rule.UpstreamLimit = 82500000
+			_, err = model.SaveSubscriptionPool(model.SubscriptionPoolInput{SubscriptionPool: *pool, Cycles: []model.SubscriptionCycleRule{rule}}, 1)
+			require.NoError(t, err)
+			stats, err = model.GetSubscriptionPoolStatistics(pool.Id)
+			require.NoError(t, err)
+			require.Len(t, stats, 1)
+			assert.EqualValues(t, 82500000, stats[0].Limit)
+			assert.Nil(t, stats[0].PendingRule)
+			ratio = 0.45
+			account.Cycles[0].SampledAt = now + 5
+			claimed, err = model.ClaimSubscriptionSyncSource(source.Id, "capacity-immediate", true)
+			require.NoError(t, err)
+			_, err = model.ApplySubscriptionSyncAccount(*claimed, "capacity-immediate", binding, account, 1, false)
+			require.NoError(t, err)
+			require.NoError(t, model.FinishSubscriptionSyncSource(*claimed, "capacity-immediate", []model.SubscriptionSyncAccount{account}, "", true, 1))
+			require.NoError(t, model.DB.Where("pool_id = ?", pool.Id).First(&observation).Error)
+			require.NoError(t, common.UnmarshalJsonStr(observation.Payload, &payload))
+			assert.EqualValues(t, 82500000, payload.Baseline.Capacity, "immediate quota edit updates active conversion capacity")
 		})
 	}
 }
@@ -2691,18 +2744,21 @@ func TestSubscriptionPoolSyncSourcesSeparateValidHintsFromExpiredAccounts(t *tes
 	assert.Equal(t, 4, got.FreshCycles)
 }
 
-func TestSubscriptionPoolFutureUnstartedCycleAppliesQuotaEditImmediatelyWhileActiveRemainsPending(t *testing.T) {
+func TestSubscriptionPoolQuotaEditsApplyImmediatelyWhileStructuralEditsDefer(t *testing.T) {
 	_, _, now := setupSubscriptionPoolTest(t)
 	rules := []model.SubscriptionCycleRule{
-		{Key: "active7d", Name: "7d", Seconds: 604800, NextReset: now + 3600, Limit: 50, Shared: true, Enabled: true},
+		{Key: "active7d", Name: "7d", Seconds: 604800, NextReset: now + 3600, Limit: 50, UpstreamLimit: 50, Shared: false, Enabled: true},
 		{Key: "future1h", Name: "1h", Seconds: 3600, NextReset: now + 7200, Limit: 50, Shared: true, Enabled: true},
 	}
 	pool, err := model.SaveSubscriptionPool(model.SubscriptionPoolInput{SubscriptionPool: model.SubscriptionPool{Name: "quota-lifecycle", Enabled: true, EndTime: now + 86400 * 30}, Cycles: rules}, 1)
 	require.NoError(t, err)
 
-	rules[0].Limit = 82500000
-	rules[1].Limit = 82500000
-	_, err = model.SaveSubscriptionPool(model.SubscriptionPoolInput{SubscriptionPool: *pool, Cycles: rules}, 1)
+	// Quota-only changes on active cycles take effect immediately.
+	rules[0].Limit = 25000000
+	rules[0].UpstreamLimit = 82500000
+	rules[0].EnforceUpstream = true
+	rules[1].Limit = 10000000
+	pool, err = model.SaveSubscriptionPool(model.SubscriptionPoolInput{SubscriptionPool: *pool, Cycles: rules}, 1)
 	require.NoError(t, err)
 
 	stats, err := model.GetSubscriptionPoolStatistics(pool.Id)
@@ -2712,12 +2768,44 @@ func TestSubscriptionPoolFutureUnstartedCycleAppliesQuotaEditImmediatelyWhileAct
 	for _, s := range stats {
 		byKey[s.Key] = s
 	}
-
-	assert.EqualValues(t, 50, byKey["active7d"].Limit, "active cycle must not silently overwrite its enforced quota")
-	require.NotNil(t, byKey["active7d"].PendingRule)
-	assert.EqualValues(t, 82500000, byKey["active7d"].PendingRule.Limit)
-
-	assert.EqualValues(t, 82500000, byKey["future1h"].Limit, "unstarted future cycle with zero usage should apply updated quota immediately")
+	assert.EqualValues(t, 82500000, byKey["active7d"].Limit, "active cycle quota edit must take effect immediately")
+	assert.Nil(t, byKey["active7d"].PendingRule)
+	assert.EqualValues(t, 10000000, byKey["future1h"].Limit)
 	assert.Nil(t, byKey["future1h"].PendingRule)
+
+	// Structural edits (duration/scope) remain pending on active cycles, while unstarted future cycles with zero usage adopt them immediately.
+	rules[0].Seconds = 1209600
+	rules[1].Seconds = 7200
+	_, err = model.SaveSubscriptionPool(model.SubscriptionPoolInput{SubscriptionPool: *pool, Cycles: rules}, 1)
+	require.NoError(t, err)
+
+	stats, err = model.GetSubscriptionPoolStatistics(pool.Id)
+	require.NoError(t, err)
+	byKey = map[string]model.SubscriptionCycleView{}
+	for _, s := range stats {
+		byKey[s.Key] = s
+	}
+	assert.EqualValues(t, 604800, byKey["active7d"].Seconds, "active cycle structural edit must defer to next boundary")
+	require.NotNil(t, byKey["active7d"].PendingRule)
+	assert.EqualValues(t, 1209600, byKey["active7d"].PendingRule.Seconds)
+	assert.EqualValues(t, 7200, byKey["future1h"].Seconds, "unstarted future cycle with zero usage should apply structural edit immediately")
+	assert.Nil(t, byKey["future1h"].PendingRule)
+
+	// Legacy persisted quota-only PendingRule auto-promotes on read without manual re-save.
+	var state model.SubscriptionCycleState
+	require.NoError(t, model.DB.Where("owner = ? AND cycle_key = ?", fmt.Sprintf("pool:%d", pool.Id), "active7d").First(&state).Error)
+	legacyPending := model.SubscriptionCycleRule{Key: "active7d", Name: "7d", Seconds: 604800, NextReset: state.EndTime, Limit: 30000000, UpstreamLimit: 90000000, Shared: false, Enabled: true}
+	rawPending, err := common.Marshal(legacyPending)
+	require.NoError(t, err)
+	require.NoError(t, model.DB.Model(&state).Update("pending_rule", string(rawPending)).Error)
+
+	stats, err = model.GetSubscriptionPoolStatistics(pool.Id)
+	require.NoError(t, err)
+	for _, s := range stats {
+		if s.Key == "active7d" {
+			assert.EqualValues(t, 90000000, s.Limit, "legacy quota-only PendingRule must auto-promote immediately")
+			assert.Nil(t, s.PendingRule)
+		}
+	}
 }
 

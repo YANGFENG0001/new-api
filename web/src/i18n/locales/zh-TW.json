@@ -8384,6 +8384,10 @@
     "Use current local admission capacity": "使用目前本機准入容量",
     "The server references this cycle's current effective local admission capacity; it does not copy a value. Independent cycles use the upstream limit; finite shared cycles use the shared limit.": "伺服器直接參照此週期目前生效的本機准入容量，而非複製數值。獨立週期使用上游總額度，有限共享週期使用共享額度。",
     "Over limit": "已超額",
-    "Current cycle quota exceeded": "目前週期額度已超限"
+    "Current cycle quota exceeded": "目前週期額度已超限",
+    "Cycle quota": "週期額度",
+    "Stored as {{quota}} quota units": "以 {{quota}} 額度單位儲存",
+    "Equivalent to {{amount}}": "約等於 {{amount}}",
+    "Existing cycle keys cannot be removed. Disable them instead. Quota changes and reset time adjustments apply immediately while preserving usage; duration and scope changes apply at the next boundary.": "既有週期鍵不可刪除，請改為停用。額度與重置時間修改立即生效並保留已用記錄；時長與共享範圍修改於下一週期生效。"
   }
 }

@@ -22,7 +22,9 @@ import { useTranslation } from 'react-i18next'
 import { ErrorState } from '@/components/error-state'
 import { StatusBadge } from '@/components/status-badge'
 import { toIntlLocale } from '@/i18n/languages'
+import { formatQuotaWithCurrency } from '@/lib/currency'
 import { formatNumber } from '@/lib/format'
+import { useSystemConfigStore } from '@/stores/system-config-store'
 
 import { poolAPI, type Usage, type Overview } from './api'
 import { CycleProgress } from './cycle-progress'
@@ -133,7 +135,21 @@ export function SelfAlignedUsage(
 function PoolUsage(props: { pool: Overview }) {
   const { t, i18n } = useTranslation()
   const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
+  const displayType = useSystemConfigStore(
+    (state) => state.config.currency.quotaDisplayType
+  )
   const pool = props.pool
+  function formatObservationAmount(value: number, unit: string): string {
+    if (unit === 'quota' && displayType !== 'TOKENS') {
+      return formatQuotaWithCurrency(value, {
+        locale,
+        digitsLarge: 2,
+        digitsSmall: 4,
+        abbreviate: false,
+      })
+    }
+    return formatNumber(value, locale)
+  }
   return (
     <div className='space-y-3 border-t pt-3'>
       <h4 className='font-medium'>{pool.name}</h4>
@@ -154,14 +170,22 @@ function PoolUsage(props: { pool: Overview }) {
           (o) => !pool.cycles.some((c) => c.key === o.key)
         )}
       />
-      {pool.observations.map((o) => (
-        <p key={o.key} className='text-muted-foreground text-xs'>
-          {t('Manual upstream observation')}: {formatNumber(o.used, locale)}
-          {o.limit > 0 ? ` / ${formatNumber(o.limit, locale)}` : ''}{' '}
-          {o.unit === 'quota' ? t('Quota units') : o.unit} ·{' '}
-          {new Date(o.sampled_at * 1000).toLocaleString(locale)}
-        </p>
-      ))}
+      {pool.observations.map((o) => {
+        const showUnitSuffix = o.unit !== 'quota' || displayType === 'TOKENS'
+        return (
+          <p key={o.key} className='text-muted-foreground text-xs'>
+            {t('Manual upstream observation')}:{' '}
+            {formatObservationAmount(o.used, o.unit)}
+            {o.limit > 0
+              ? ` / ${formatObservationAmount(o.limit, o.unit)}`
+              : ''}
+            {showUnitSuffix
+              ? ` ${o.unit === 'quota' ? t('Quota units') : o.unit}`
+              : ''}{' '}
+            · {new Date(o.sampled_at * 1000).toLocaleString(locale)}
+          </p>
+        )
+      })}
     </div>
   )
 }

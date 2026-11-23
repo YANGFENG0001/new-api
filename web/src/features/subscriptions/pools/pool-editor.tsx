@@ -149,7 +149,7 @@ export function PoolEditor(props: {
       >
         {!props.pool && props.canCreateFromSync && (
           <>
-            <Label>
+            <Label className='flex items-center gap-2'>
               <Switch
                 checked={fromSync}
                 onCheckedChange={(checked) => {
@@ -187,7 +187,7 @@ export function PoolEditor(props: {
           </>
         )}
         <div className='grid gap-4 sm:grid-cols-2'>
-          <div>
+          <div className='space-y-1.5'>
             <Label htmlFor='pool-name'>{t('Name')}</Label>
             <Input
               id='pool-name'
@@ -195,7 +195,7 @@ export function PoolEditor(props: {
               aria-invalid={!!form.formState.errors.name}
             />
           </div>
-          <div>
+          <div className='space-y-1.5'>
             <Label>{t('Unified expiry')}</Label>
             <DateTimePicker
               value={
@@ -216,11 +216,11 @@ export function PoolEditor(props: {
             />
           </div>
         </div>
-        <div>
+        <div className='space-y-1.5'>
           <Label htmlFor='pool-note'>{t('Administrator note')}</Label>
           <Textarea id='pool-note' {...form.register('note')} />
         </div>
-        <Label>
+        <Label className='flex items-center gap-2'>
           <Switch
             checked={values.enabled}
             onCheckedChange={(v) =>
@@ -229,7 +229,7 @@ export function PoolEditor(props: {
           />
           {t('Enabled')}
         </Label>
-        <div>
+        <div className='space-y-1.5'>
           <Label htmlFor='pool-channels'>{t('Upstream channels')}</Label>
           <MultiSelect
             id='pool-channels'
@@ -262,53 +262,60 @@ export function PoolEditor(props: {
           )}
         </div>
         {props.pool && props.caps?.sync_read ? (
-          <PoolSyncBinding
-            key={savedRevision}
-            pool={{ ...props.pool, cycles: values.cycles }}
-            caps={props.caps}
-            onDraftChange={setBindingDraft}
-            onPoolAligned={async () => {
-              const latest = await poolAPI.list()
-              const pool = latest.find((item) => item.id === props.pool?.id)
-              if (!pool) return
-              form.setValue('version', pool.version)
-              form.setValue('end_time', pool.end_time)
-              form.setValue(
-                'cycles',
-                form.getValues('cycles').map((cycle) => {
-                  const saved = pool.cycles.find(
-                    (item) => item.key === cycle.key
-                  )
-                  return saved
-                    ? {
-                        ...cycle,
-                        next_reset: saved.next_reset,
-                        seconds: saved.seconds,
-                        name: syncCycleName(cycle.name, saved.seconds),
-                      }
-                    : cycle
-                })
-              )
-            }}
-            renderLocalCycle={(key, followsReset) => (
-              <CycleEditor
-                value={values.cycles.filter((cycle) => cycle.key === key)}
-                onChange={(next) =>
-                  form.setValue(
-                    'cycles',
-                    values.cycles.flatMap((cycle) =>
-                      cycle.key === key ? next : [cycle]
-                    ),
-                    { shouldValidate: true, shouldDirty: true }
-                  )
-                }
-                pooled
-                single
-                followReset={followsReset}
-                lockedKeys={props.pool?.cycles.map((cycle) => cycle.key)}
-              />
-            )}
-          />
+          <div className='space-y-3'>
+            <PoolSyncBinding
+              key={savedRevision}
+              pool={{ ...props.pool, cycles: values.cycles }}
+              caps={props.caps}
+              onDraftChange={setBindingDraft}
+              onPoolAligned={async () => {
+                const latest = await poolAPI.list()
+                const pool = latest.find((item) => item.id === props.pool?.id)
+                if (!pool) return
+                form.setValue('version', pool.version)
+                form.setValue('end_time', pool.end_time)
+                form.setValue(
+                  'cycles',
+                  form.getValues('cycles').map((cycle) => {
+                    const saved = pool.cycles.find(
+                      (item) => item.key === cycle.key
+                    )
+                    return saved
+                      ? {
+                          ...cycle,
+                          next_reset: saved.next_reset,
+                          seconds: saved.seconds,
+                          name: syncCycleName(cycle.name, saved.seconds),
+                        }
+                      : cycle
+                  })
+                )
+              }}
+              renderLocalCycle={(key, followsReset) => (
+                <CycleEditor
+                  value={values.cycles.filter((cycle) => cycle.key === key)}
+                  onChange={(next) =>
+                    form.setValue(
+                      'cycles',
+                      values.cycles.flatMap((cycle) =>
+                        cycle.key === key ? next : [cycle]
+                      ),
+                      { shouldValidate: true, shouldDirty: true }
+                    )
+                  }
+                  pooled
+                  single
+                  followReset={followsReset}
+                  lockedKeys={props.pool?.cycles.map((cycle) => cycle.key)}
+                />
+              )}
+            />
+            <p className='text-muted-foreground text-xs'>
+              {t(
+                'Existing cycle keys cannot be removed. Disable them instead. Quota changes and reset time adjustments apply immediately while preserving usage; duration and scope changes apply at the next boundary.'
+              )}
+            </p>
+          </div>
         ) : (
           <CycleEditor
             value={values.cycles}

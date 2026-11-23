@@ -21,15 +21,29 @@ import { useTranslation } from 'react-i18next'
 
 import { DateTimePicker } from '@/components/datetime-picker'
 import { Button } from '@/components/ui/button'
-import { Combobox } from '@/components/ui/combobox'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 
 import type { CycleRule } from './api'
 import { QuotaAmountInput } from './quota-amount-input'
 import { newCycle } from './schema'
 import { syncCycleName } from './sync-api'
+
+function defaultDurationUnit(seconds: number): number {
+  if (seconds > 0 && seconds % 86400 === 0) return 86400
+  if (seconds > 0 && seconds % 3600 === 0) return 3600
+  if (seconds > 0 && seconds % 60 === 0) return 60
+  return 1
+}
 
 function DurationInput(props: {
   value: number
@@ -38,9 +52,15 @@ function DurationInput(props: {
   disabled?: boolean
 }) {
   const { t } = useTranslation()
-  const [unit, setUnit] = useState(props.value % 3600 === 0 ? 3600 : 1)
+  const [unit, setUnit] = useState(() => defaultDurationUnit(props.value))
+  const unitOptions = [
+    { value: '1', label: t('Seconds') },
+    { value: '60', label: t('Minutes') },
+    { value: '3600', label: t('Hours') },
+    { value: '86400', label: t('Days') },
+  ]
   return (
-    <div className='flex gap-2'>
+    <div className='grid min-w-0 grid-cols-[minmax(0,1fr)_auto] gap-2'>
       <Input
         id={props.id}
         disabled={props.disabled}
@@ -49,19 +69,30 @@ function DurationInput(props: {
         value={props.value / unit}
         onChange={(e) => props.onChange(Number(e.target.value) * unit)}
       />
-      <Combobox
+      <Select
+        items={unitOptions}
         disabled={props.disabled}
         value={String(unit)}
-        options={[
-          { value: '1', label: t('Seconds') },
-          { value: '60', label: t('Minutes') },
-          { value: '3600', label: t('Hours') },
-          { value: '86400', label: t('Days') },
-        ]}
         onValueChange={(v) => {
           if (v) setUnit(Number(v))
         }}
-      />
+      >
+        <SelectTrigger
+          aria-label={t('Duration Unit')}
+          className='min-w-[5.5rem] shrink-0'
+        >
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent alignItemWithTrigger={false}>
+          <SelectGroup>
+            {unitOptions.map((option) => (
+              <SelectItem key={option.value} value={option.value}>
+                {option.label}
+              </SelectItem>
+            ))}
+          </SelectGroup>
+        </SelectContent>
+      </Select>
     </div>
   )
 }
@@ -91,7 +122,7 @@ export function CycleEditor(props: {
     )
   }
   return (
-    <fieldset disabled={props.disabled} className='space-y-4'>
+    <fieldset disabled={props.disabled} className='min-w-0 space-y-4'>
       {!props.single && (
         <p className='text-muted-foreground text-sm'>
           {t(
@@ -104,13 +135,19 @@ export function CycleEditor(props: {
           key={rule.key}
           className={
             props.single
-              ? 'min-w-0 space-y-3'
-              : 'space-y-3 rounded-lg border p-4'
+              ? 'min-w-0 space-y-4'
+              : 'min-w-0 space-y-4 rounded-lg border p-4'
           }
           aria-label={rule.name}
         >
-          <div className='grid gap-3 sm:grid-cols-2'>
-            <div>
+          <div
+            className={
+              props.single
+                ? 'grid min-w-0 gap-3 xl:grid-cols-2'
+                : 'grid min-w-0 gap-3 sm:grid-cols-2'
+            }
+          >
+            <div className='min-w-0 space-y-1.5'>
               <Label htmlFor={`${rule.key}-name`}>{t('Name')}</Label>
               <Input
                 id={`${rule.key}-name`}
@@ -118,7 +155,7 @@ export function CycleEditor(props: {
                 onChange={(e) => update(i, { name: e.target.value })}
               />
             </div>
-            <div>
+            <div className='min-w-0 space-y-1.5'>
               <Label htmlFor={`${rule.key}-duration`}>
                 {t('Cycle duration')}
               </Label>
@@ -129,7 +166,13 @@ export function CycleEditor(props: {
                 onChange={(seconds) => update(i, { seconds })}
               />
             </div>
-            <div>
+            <div
+              className={
+                props.single
+                  ? 'min-w-0 space-y-1.5 xl:col-span-2'
+                  : 'min-w-0 space-y-1.5'
+              }
+            >
               <Label>{t('Next reset time')}</Label>
               <DateTimePicker
                 disabled={props.followReset}
@@ -141,11 +184,17 @@ export function CycleEditor(props: {
                 }
               />
             </div>
-            <div>
-              <Label htmlFor={`${rule.key}-quota`}>{t('Quota units')}</Label>
+            <div
+              className={
+                props.single
+                  ? 'min-w-0 space-y-1.5 xl:col-span-2'
+                  : 'min-w-0 space-y-1.5 sm:col-span-2'
+              }
+            >
+              <Label htmlFor={`${rule.key}-quota`}>{t('Cycle quota')}</Label>
               <QuotaAmountInput
                 id={`${rule.key}-quota`}
-                label={t('Quota units')}
+                label={t('Cycle quota')}
                 value={rule.limit}
                 onChange={(limit) =>
                   update(i, {
@@ -155,7 +204,7 @@ export function CycleEditor(props: {
                 }
               />
               {rule.unlimited && (
-                <p className='text-muted-foreground mt-2 text-xs'>
+                <p className='text-muted-foreground text-xs'>
                   {t(
                     'Enter a positive local quota to replace the unlimited setting. Upstream synchronization will not overwrite this limit.'
                   )}
@@ -163,15 +212,15 @@ export function CycleEditor(props: {
               )}
             </div>
           </div>
-          <div className='flex flex-wrap gap-5'>
-            <Label>
+          <div className='flex flex-wrap gap-x-5 gap-y-2.5'>
+            <Label className='flex items-center gap-2'>
               <Switch
                 checked={rule.enabled}
                 onCheckedChange={(enabled) => update(i, { enabled })}
               />
               {t('Enabled')}
             </Label>
-            <Label>
+            <Label className='flex items-center gap-2'>
               <Switch
                 checked={rule.unlimited}
                 onCheckedChange={(unlimited) => update(i, { unlimited })}
@@ -179,7 +228,7 @@ export function CycleEditor(props: {
               {t('Unlimited')}
             </Label>
             {props.pooled && (
-              <Label>
+              <Label className='flex items-center gap-2'>
                 <Switch
                   checked={rule.shared}
                   onCheckedChange={(shared) =>
@@ -194,17 +243,19 @@ export function CycleEditor(props: {
             )}
           </div>
           {props.pooled && !rule.shared && (
-            <div className='space-y-2'>
-              <Label htmlFor={`${rule.key}-upstream`}>
-                {t('Upstream total quota (0 means unknown)')}
-              </Label>
-              <QuotaAmountInput
-                id={`${rule.key}-upstream`}
-                label={t('Upstream total quota (0 means unknown)')}
-                value={rule.upstream_limit}
-                onChange={(upstream_limit) => update(i, { upstream_limit })}
-              />
-              <Label>
+            <div className='min-w-0 space-y-2 rounded-lg border p-3'>
+              <div className='space-y-1.5'>
+                <Label htmlFor={`${rule.key}-upstream`}>
+                  {t('Upstream total quota (0 means unknown)')}
+                </Label>
+                <QuotaAmountInput
+                  id={`${rule.key}-upstream`}
+                  label={t('Upstream total quota (0 means unknown)')}
+                  value={rule.upstream_limit}
+                  onChange={(upstream_limit) => update(i, { upstream_limit })}
+                />
+              </div>
+              <Label className='flex items-center gap-2'>
                 <Switch
                   checked={rule.enforce_upstream}
                   onCheckedChange={(enforce_upstream) =>
@@ -241,7 +292,7 @@ export function CycleEditor(props: {
       {!props.single && (
         <p className='text-muted-foreground text-xs'>
           {t(
-            'Existing cycle keys cannot be removed. Disable them instead. Duration, scope and quota changes apply at the next boundary; moving the next reset preserves usage.'
+            'Existing cycle keys cannot be removed. Disable them instead. Quota changes and reset time adjustments apply immediately while preserving usage; duration and scope changes apply at the next boundary.'
           )}
         </p>
       )}

@@ -37,8 +37,8 @@ import { Button } from '@/components/ui/button'
 import { Combobox } from '@/components/ui/combobox'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Switch } from '@/components/ui/switch'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
+import { Switch } from '@/components/ui/switch'
 
 import type { Pool, Capabilities } from './api'
 import { QuotaAmountInput } from './quota-amount-input'
@@ -279,22 +279,24 @@ function BindingEditor(props: {
               {t('Read upstream accounts')}
             </Button>
           )}
-          <Label>
-            <Switch
-              disabled={!props.caps.sync_binding || !props.caps.sync_apply}
-              checked={values.enabled}
-              onCheckedChange={(v) => form.setValue('enabled', v)}
-            />
-            {t('Enable this binding')}
-          </Label>
-          <Label>
-            <Switch
-              disabled={!props.caps.sync_binding || !props.caps.sync_apply}
-              checked={values.sync_expiry}
-              onCheckedChange={(v) => form.setValue('sync_expiry', v)}
-            />
-            {t('Follow upstream expiry')}
-          </Label>
+          <div className='flex flex-wrap gap-x-5 gap-y-2.5'>
+            <Label className='flex items-center gap-2'>
+              <Switch
+                disabled={!props.caps.sync_binding || !props.caps.sync_apply}
+                checked={values.enabled}
+                onCheckedChange={(v) => form.setValue('enabled', v)}
+              />
+              {t('Enable this binding')}
+            </Label>
+            <Label className='flex items-center gap-2'>
+              <Switch
+                disabled={!props.caps.sync_binding || !props.caps.sync_apply}
+                checked={values.sync_expiry}
+                onCheckedChange={(v) => form.setValue('sync_expiry', v)}
+              />
+              {t('Follow upstream expiry')}
+            </Label>
+          </div>
           <div className='space-y-3'>
             {props.pool.cycles.map((local) => {
               const mapping = values.cycles.find(
@@ -315,36 +317,38 @@ function BindingEditor(props: {
                     <h4>{local.name}</h4>
                   )}
                   <div className='bg-muted/30 min-w-0 space-y-3 rounded-lg p-3'>
-                    <Label htmlFor={`binding-${local.key}`}>
-                      {t('Upstream cycle')}
-                    </Label>
-                    <Combobox
-                      id={`binding-${local.key}`}
-                      disabled={
-                        !props.caps.sync_binding || !props.caps.sync_apply
-                      }
-                      value={mapping?.upstream_key ?? '__none'}
-                      options={[
-                        { value: '__none', label: t('Not synchronized') },
-                        ...(
-                          accounts.find((a) => a.id === values.account_id)
-                            ?.cycles ??
-                          source?.mapping.cycles ??
-                          []
-                        ).map((c) => ({
-                          value: c.key,
-                          label: syncCycleName(c.name || c.key, c.seconds),
-                        })),
-                      ]}
-                      onValueChange={(v) =>
-                        updateCycle(local.key, {
-                          upstream_key: v === '__none' ? '' : (v ?? ''),
-                        })
-                      }
-                    />
+                    <div className='space-y-1.5'>
+                      <Label htmlFor={`binding-${local.key}`}>
+                        {t('Upstream cycle')}
+                      </Label>
+                      <Combobox
+                        id={`binding-${local.key}`}
+                        disabled={
+                          !props.caps.sync_binding || !props.caps.sync_apply
+                        }
+                        value={mapping?.upstream_key ?? '__none'}
+                        options={[
+                          { value: '__none', label: t('Not synchronized') },
+                          ...(
+                            accounts.find((a) => a.id === values.account_id)
+                              ?.cycles ??
+                            source?.mapping.cycles ??
+                            []
+                          ).map((c) => ({
+                            value: c.key,
+                            label: syncCycleName(c.name || c.key, c.seconds),
+                          })),
+                        ]}
+                        onValueChange={(v) =>
+                          updateCycle(local.key, {
+                            upstream_key: v === '__none' ? '' : (v ?? ''),
+                          })
+                        }
+                      />
+                    </div>
                     {mapping && (
                       <>
-                        <Label>
+                        <Label className='flex items-center gap-2'>
                           <Switch
                             disabled={
                               !props.caps.sync_binding || !props.caps.sync_apply
@@ -356,7 +360,7 @@ function BindingEditor(props: {
                           />
                           {t('Align reset time')}
                         </Label>
-                        <Label>
+                        <Label className='flex items-center gap-2'>
                           <Switch
                             disabled={
                               !props.caps.sync_binding ||
@@ -378,7 +382,7 @@ function BindingEditor(props: {
                           </p>
                         )}
                         {mapping.enforce && (
-                          <>
+                          <div className='space-y-1.5'>
                             <Label htmlFor={`threshold-${local.key}`}>
                               {t('Block at utilization (%)')}
                             </Label>
@@ -400,7 +404,7 @@ function BindingEditor(props: {
                                 })
                               }
                             />
-                          </>
+                          </div>
                         )}
                         <Accordion>
                           <AccordionItem value='advanced'>
@@ -413,11 +417,19 @@ function BindingEditor(props: {
                                 <RadioGroup
                                   value={mapping.capacity_mode ?? 'explicit'}
                                   onValueChange={(value) => {
-                                    if (value === 'explicit' || value === 'admission') {
-                                      updateCycle(local.key, { capacity_mode: value })
+                                    if (
+                                      value === 'explicit' ||
+                                      value === 'admission'
+                                    ) {
+                                      updateCycle(local.key, {
+                                        capacity_mode: value,
+                                      })
                                     }
                                   }}
-                                  disabled={!props.caps.sync_binding || !props.caps.sync_apply}
+                                  disabled={
+                                    !props.caps.sync_binding ||
+                                    !props.caps.sync_apply
+                                  }
                                 >
                                   <Label className='flex items-center gap-2 font-normal'>
                                     <RadioGroupItem value='explicit' />
@@ -429,31 +441,45 @@ function BindingEditor(props: {
                                   </Label>
                                 </RadioGroup>
                               </fieldset>
-                              {(mapping.capacity_mode ?? 'explicit') === 'explicit' ? (
-                                <>
+                              {(mapping.capacity_mode ?? 'explicit') ===
+                              'explicit' ? (
+                                <div className='space-y-1.5'>
                                   <Label htmlFor={`capacity-${local.key}`}>
-                                    {t('Quota units per full upstream window (optional)')}
+                                    {t(
+                                      'Quota units per full upstream window (optional)'
+                                    )}
                                   </Label>
                                   <QuotaAmountInput
                                     id={`capacity-${local.key}`}
-                                    label={t('Quota units per full upstream window (optional)')}
-                                    disabled={!props.caps.sync_binding || !props.caps.sync_apply}
+                                    label={t(
+                                      'Quota units per full upstream window (optional)'
+                                    )}
+                                    disabled={
+                                      !props.caps.sync_binding ||
+                                      !props.caps.sync_apply
+                                    }
                                     value={mapping.quota_per_full_window ?? 0}
                                     onChange={(quota_per_full_window) =>
-                                      updateCycle(local.key, { quota_per_full_window })
+                                      updateCycle(local.key, {
+                                        quota_per_full_window,
+                                      })
                                     }
                                   />
                                   <p className='text-muted-foreground text-xs'>
-                                    {t('Set an explicit capacity to estimate upstream progress from local settled usage between polls. Zero keeps the upstream percentage unchanged. Billing remains separate.')}
+                                    {t(
+                                      'Set an explicit capacity to estimate upstream progress from local settled usage between polls. Zero keeps the upstream percentage unchanged. Billing remains separate.'
+                                    )}
                                   </p>
-                                </>
+                                </div>
                               ) : (
                                 <p className='text-muted-foreground text-xs'>
-                                  {t("The server references this cycle's current effective local admission capacity; it does not copy a value. Independent cycles use the upstream limit; finite shared cycles use the shared limit.")}
+                                  {t(
+                                    "The server references this cycle's current effective local admission capacity; it does not copy a value. Independent cycles use the upstream limit; finite shared cycles use the shared limit."
+                                  )}
                                 </p>
                               )}
                               {mapping.align_reset && (
-                                <>
+                                <div className='space-y-1.5'>
                                   <Label htmlFor={`shift-${local.key}`}>
                                     {t(
                                       'Automatic reset shift tolerance (seconds)'
@@ -477,7 +503,7 @@ function BindingEditor(props: {
                                       })
                                     }
                                   />
-                                </>
+                                </div>
                               )}
                             </AccordionContent>
                           </AccordionItem>
@@ -489,30 +515,32 @@ function BindingEditor(props: {
               )
             })}
           </div>
-          <Label htmlFor='binding-stale'>
-            {t('When upstream data is stale')}
-          </Label>
-          <Combobox
-            id='binding-stale'
-            disabled={!props.caps.sync_binding || !props.caps.sync_apply}
-            aria-describedby={
-              calibrationOnly ? 'binding-calibration-hint' : undefined
-            }
-            value={values.stale_policy}
-            options={[
-              { value: 'stop', label: t('Pause new requests') },
-              {
-                value: 'local',
-                label: t('Use local quota during grace period'),
-              },
-              { value: 'calibration', label: t('Calibration only') },
-            ]}
-            onValueChange={(v) => {
-              if (v === 'stop' || v === 'local' || v === 'calibration') {
-                form.setValue('stale_policy', v)
+          <div className='space-y-1.5'>
+            <Label htmlFor='binding-stale'>
+              {t('When upstream data is stale')}
+            </Label>
+            <Combobox
+              id='binding-stale'
+              disabled={!props.caps.sync_binding || !props.caps.sync_apply}
+              aria-describedby={
+                calibrationOnly ? 'binding-calibration-hint' : undefined
               }
-            }}
-          />
+              value={values.stale_policy}
+              options={[
+                { value: 'stop', label: t('Pause new requests') },
+                {
+                  value: 'local',
+                  label: t('Use local quota during grace period'),
+                },
+                { value: 'calibration', label: t('Calibration only') },
+              ]}
+              onValueChange={(v) => {
+                if (v === 'stop' || v === 'local' || v === 'calibration') {
+                  form.setValue('stale_policy', v)
+                }
+              }}
+            />
+          </div>
           {calibrationOnly && (
             <p
               id='binding-calibration-hint'
@@ -524,7 +552,7 @@ function BindingEditor(props: {
             </p>
           )}
           {values.stale_policy === 'local' && (
-            <>
+            <div className='space-y-1.5'>
               <Label htmlFor='binding-grace'>
                 {t('Grace period (seconds)')}
               </Label>
@@ -536,7 +564,7 @@ function BindingEditor(props: {
                 disabled={!props.caps.sync_binding || !props.caps.sync_apply}
                 {...form.register('grace_seconds', { valueAsNumber: true })}
               />
-            </>
+            </div>
           )}
           {Object.keys(form.formState.errors).length > 0 && (
             <p role='alert' className='text-destructive'>

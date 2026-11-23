@@ -301,8 +301,10 @@ export function SyncSourcesPanel(props: { caps: Capabilities }) {
             />
           )}
           {run.data && <SyncChangeTable changes={run.data.changes} />}
-          <details>
-            <summary>{t('Synchronization history')}</summary>
+          <details className='space-y-3 rounded-lg border p-3'>
+            <summary className='cursor-pointer text-sm font-medium select-none'>
+              {t('Synchronization history')}
+            </summary>
             <StaticDataTable
               data={state.data?.events ?? []}
               getRowKey={(e) => e.id}
@@ -316,7 +318,7 @@ export function SyncSourcesPanel(props: { caps: Capabilities }) {
                 },
                 {
                   id: 'operation',
-                  header: t('Actions'),
+                  header: t('Type'),
                   cell: (e) => {
                     if (e.action === 'auth_check') {
                       return t('Check authentication')

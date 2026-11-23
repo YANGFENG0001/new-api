@@ -8,6 +8,10 @@ import (
 	"gorm.io/gorm"
 )
 
+func subscriptionCycleQuotaOnlyChange(a, b SubscriptionCycleRule) bool {
+	return a.Seconds == b.Seconds && a.Shared == b.Shared && a.Enabled == b.Enabled
+}
+
 func subscriptionCycleStateTx(tx *gorm.DB, owner string, r SubscriptionCycleRule, now int64) (*SubscriptionCycleState, error) {
 	var s SubscriptionCycleState
 	err := lockForUpdate(tx).Where("owner = ? AND cycle_key = ?", owner, r.Key).First(&s).Error
@@ -47,6 +51,26 @@ func subscriptionCycleStateTx(tx *gorm.DB, owner string, r SubscriptionCycleRule
 		if err := tx.Save(&s).Error; err != nil {
 			return nil, err
 		}
+	} else if s.PendingRule != "" {
+		var active, pending SubscriptionCycleRule
+		if err := common.UnmarshalJsonStr(s.Rule, &active); err != nil {
+			return nil, err
+		}
+		if err := common.UnmarshalJsonStr(s.PendingRule, &pending); err != nil {
+			return nil, err
+		}
+		if subscriptionCycleQuotaOnlyChange(active, pending) {
+			pending.NextReset = s.EndTime
+			raw, e := cycleJSON(pending)
+			if e != nil {
+				return nil, e
+			}
+			s.Rule = raw
+			s.PendingRule = ""
+			if err := tx.Save(&s).Error; err != nil {
+				return nil, err
+			}
+		}
 	}
 	return &s, nil
 }
@@ -80,8 +104,10 @@ func configureSubscriptionCyclesTx(tx *gorm.DB, owner string, rules []Subscripti
 		if e = common.UnmarshalJsonStr(s.Rule, &old); e != nil {
 			return e
 		}
-		// Only moving the next reset is immediate; duration/scope/limits start at
-		// the boundary. Usage stays attached to the original immutable epoch.
+		// Moving the next reset and editing quota/limit terms take effect
+		// immediately while preserving usage on the current immutable epoch.
+		// Structural changes (duration, scope, enabled state) start at the
+		// boundary once a cycle is active.
 		if old.NextReset != r.NextReset && s.EndTime != r.NextReset {
 			if r.NextReset <= now {
 				return errors.New("Next reset must be in the future")
@@ -100,27 +126,34 @@ func configureSubscriptionCyclesTx(tx *gorm.DB, owner string, rules []Subscripti
 		}
 		s.PendingRule = ""
 		if old != r {
-			// A future cycle that has not started yet and has zero recorded
-			// usage, reservations, or adjustments can adopt updated terms
-			// immediately; once active, changes take effect at the boundary.
-			var activityCount int64
-			if s.StartTime > now {
-				if e = tx.Model(&SubscriptionCycleUsage{}).
-					Where("state_id = ? AND epoch = ? AND (used <> 0 OR reserved <> 0 OR adjustment <> 0)", s.Id, s.Epoch).
-					Count(&activityCount).Error; e != nil {
-					return e
-				}
-			}
-			if s.StartTime > now && activityCount == 0 {
-				s.StartTime = s.EndTime - r.Seconds
+			if subscriptionCycleQuotaOnlyChange(old, r) {
 				s.Rule, e = cycleJSON(r)
 				if e != nil {
 					return e
 				}
 			} else {
-				s.PendingRule, e = cycleJSON(r)
-				if e != nil {
-					return e
+				// A future cycle that has not started yet and has zero recorded
+				// usage, reservations, or adjustments can adopt structural
+				// updates immediately; once active, they apply at the boundary.
+				var activityCount int64
+				if s.StartTime > now {
+					if e = tx.Model(&SubscriptionCycleUsage{}).
+						Where("state_id = ? AND epoch = ? AND (used <> 0 OR reserved <> 0 OR adjustment <> 0)", s.Id, s.Epoch).
+						Count(&activityCount).Error; e != nil {
+						return e
+					}
+				}
+				if s.StartTime > now && activityCount == 0 {
+					s.StartTime = s.EndTime - r.Seconds
+					s.Rule, e = cycleJSON(r)
+					if e != nil {
+						return e
+					}
+				} else {
+					s.PendingRule, e = cycleJSON(r)
+					if e != nil {
+						return e
+					}
 				}
 			}
 		}
