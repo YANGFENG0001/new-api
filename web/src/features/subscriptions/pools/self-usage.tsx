@@ -20,81 +20,156 @@ import { useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 
 import { ErrorState } from '@/components/error-state'
+import { StatusBadge } from '@/components/status-badge'
+import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from '@/components/ui/accordion'
 import { toIntlLocale } from '@/i18n/languages'
 import { formatNumber } from '@/lib/format'
 
-import { poolAPI } from './api'
+import { poolAPI, type Usage } from './api'
 import { CycleProgress } from './cycle-progress'
 import { SyncObservations } from './sync-observations'
+import { SyncTimestamp } from './sync-usage'
 
-export function SelfAlignedUsage() {
+export function SelfAlignedUsage(
+  props: { subscription?: Usage; title?: string } = {}
+) {
   const { t, i18n } = useTranslation()
   const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
   const usage = useQuery({
     queryKey: ['subscription-pools', 'self-usage'],
     queryFn: poolAPI.usage,
+    enabled: !props.subscription,
+    staleTime: 10000,
     refetchInterval: 30000,
   })
   const pools = useQuery({
     queryKey: ['subscription-pools', 'self-overview'],
     queryFn: poolAPI.overview,
+    staleTime: 10000,
     refetchInterval: 30000,
   })
   return (
     <div className='space-y-4'>
-      {usage.isError && <ErrorState onRetry={() => void usage.refetch()} />}
+      {!props.subscription && usage.isError && (
+        <ErrorState onRetry={() => void usage.refetch()} />
+      )}
       {pools.isError && <ErrorState onRetry={() => void pools.refetch()} />}
-      {(usage.data?.subscriptions ?? [])
-        .filter((s) => s.managed && s.status === 'active')
+      {(props.subscription
+        ? [props.subscription]
+        : (usage.data?.subscriptions ?? [])
+      )
+        .filter((s) => s.managed)
         .map((s) => (
           <section
             key={s.subscription_id}
             className='space-y-3 rounded-lg border p-3'
           >
-            <h4 className='text-sm font-medium'>
-              {t('Subscription')} #{s.subscription_id}
-              {s.pending && ` · ${t('Pending assignment')}`}
-            </h4>
+            <div className='flex flex-wrap items-center gap-2'>
+              <h4 className='text-sm font-medium'>
+                {props.title && `${props.title} · `}
+                {t('Subscription')} #{s.subscription_id}
+              </h4>
+              <StatusBadge
+                copyable={false}
+                variant={
+                  s.status === 'active' && !s.pending ? 'success' : 'neutral'
+                }
+                label={t(
+                  s.status === 'active' && s.pending
+                    ? 'Pending assignment'
+                    : ({
+                        active: 'Active',
+                        cancelled: 'Cancelled',
+                        expired: 'Expired',
+                      }[s.status] ?? 'Unavailable')
+                )}
+              />
+            </div>
             <p className='text-muted-foreground text-xs'>
               {t('Expiry time')}:{' '}
-              {new Date(s.end_time * 1000).toLocaleString(locale)}
+              <SyncTimestamp
+                value={s.end_time === 253402300799 ? 0 : s.end_time}
+                fallback='Never'
+              />
             </p>
-            <CycleProgress cycles={s.cycles} />
+            {s.pending && s.status === 'active' ? (
+              <p className='text-muted-foreground text-sm'>
+                {t(
+                  'This subscription is unavailable until its pool assignment or availability is resolved.'
+                )}
+              </p>
+            ) : (
+              <CycleProgress cycles={s.cycles} />
+            )}
           </section>
         ))}
-      {(pools.data ?? []).length > 0 && (
-        <section className='space-y-3'>
-          <h3 className='text-sm font-semibold'>
-            {t('Upstream carpool subscriptions')}
-          </h3>
-          <p className='text-muted-foreground text-xs'>
-            {t(
-              'Shown only for your active pool memberships. No other members or account secrets are displayed.'
-            )}
-          </p>
-          {pools.data?.map((p) => (
-            <div key={p.id} className='space-y-3 rounded-lg border p-3'>
-              <h4 className='font-medium'>{p.name}</h4>
+      {(pools.data ?? []).some(
+        (p) =>
+          !props.subscription ||
+          p.subscription_ids?.includes(props.subscription.subscription_id)
+      ) && (
+        <Accordion>
+          <AccordionItem value='upstream'>
+            <AccordionTrigger>
+              {t('Upstream carpool subscriptions')}
+            </AccordionTrigger>
+            <AccordionContent className='space-y-3'>
               <p className='text-muted-foreground text-xs'>
-                {t('Unified expiry')}:{' '}
-                {new Date(p.end_time * 1000).toLocaleString(locale)}
+                {t(
+                  'Shown only for your active pool memberships. No other members or account secrets are displayed.'
+                )}
               </p>
-              <CycleProgress cycles={p.cycles} />
-              <SyncObservations observations={p.sync_observations ?? []} />
-              {p.observations.map((o) => (
-                <p key={o.key} className='text-muted-foreground text-xs'>
-                  {t('Manual upstream observation')}:{' '}
-                  {formatNumber(o.used, locale)}
-                  {o.limit > 0
-                    ? ` / ${formatNumber(o.limit, locale)}`
-                    : ''}{' '}
-                  {o.unit === 'quota' ? t('Quota units') : o.unit} ·{' '}
-                  {new Date(o.sampled_at * 1000).toLocaleString(locale)}
-                </p>
-              ))}
-            </div>
-          ))}
-        </section>
+              {pools.data
+                ?.filter(
+                  (p) =>
+                    !props.subscription ||
+                    p.subscription_ids?.includes(
+                      props.subscription.subscription_id
+                    )
+                )
+                .map((p) => (
+                  <div key={p.id} className='space-y-3 rounded-lg border p-3'>
+                    <h4 className='font-medium'>{p.name}</h4>
+                    <p className='text-muted-foreground text-xs'>
+                      {t('Unified expiry')}:{' '}
+                      <SyncTimestamp
+                        value={p.end_time === 253402300799 ? 0 : p.end_time}
+                        fallback='Never'
+                      />
+                    </p>
+                    <CycleProgress
+                      cycles={p.cycles}
+                      observations={p.sync_observations}
+                    />
+                    <SyncObservations
+                      observations={(p.sync_observations ?? []).filter(
+                        (observation) =>
+                          !p.cycles.some(
+                            (cycle) => cycle.key === observation.key
+                          )
+                      )}
+                    />
+                    {p.observations.map((o) => (
+                      <p key={o.key} className='text-muted-foreground text-xs'>
+                        {t('Manual upstream observation')}:{' '}
+                        {formatNumber(o.used, locale)}
+                        {o.limit > 0
+                          ? ` / ${formatNumber(o.limit, locale)}`
+                          : ''}{' '}
+                        {o.unit === 'quota' ? t('Quota units') : o.unit} ·{' '}
+                        {new Date(o.sampled_at * 1000).toLocaleString(locale)}
+                      </p>
+                    ))}
+                  </div>
+                ))}
+            </AccordionContent>
+          </AccordionItem>
+        </Accordion>
       )}
     </div>
   )

@@ -29,7 +29,6 @@ import { Button } from '@/components/ui/button'
 import { Combobox } from '@/components/ui/combobox'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
-import { toIntlLocale } from '@/i18n/languages'
 
 import {
   poolAPI,
@@ -39,13 +38,13 @@ import {
   type Usage,
 } from './api'
 import { CycleProgress } from './cycle-progress'
+import { SyncTimestamp } from './sync-usage'
 
 export function InstanceAllocations(props: {
   userId: number
   subscriptions: { id: number; plan_id: number; status: string }[]
 }) {
-  const { t, i18n } = useTranslation()
-  const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
+  const { t } = useTranslation()
   const client = useQueryClient()
   const caps = useQuery({
     queryKey: ['subscription-pools', 'capabilities'],
@@ -281,7 +280,10 @@ export function InstanceAllocations(props: {
                 <div key={p.subscription_id} className='space-y-2'>
                   <p>
                     #{p.subscription_id} · {t('Expiry time')}:{' '}
-                    {new Date(p.end_time * 1000).toLocaleString(locale)}
+                    <SyncTimestamp
+                      value={p.end_time === 253402300799 ? 0 : p.end_time}
+                      fallback='Never'
+                    />
                   </p>
                   <CycleProgress cycles={p.target_cycles} />
                 </div>

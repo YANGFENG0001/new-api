@@ -29,10 +29,10 @@ import { Button } from '@/components/ui/button'
 import { toIntlLocale } from '@/i18n/languages'
 
 import type { Capabilities } from './api'
-import { syncAPI, type SyncSource } from './sync-api'
+import { syncAPI, syncStaleSeconds, type SyncSource } from './sync-api'
 import { SyncChangeTable } from './sync-change-table'
 import { SyncSourceEditor } from './sync-source-editor'
-import { SyncAccounts, SyncHealth, SyncTimestamp } from './sync-usage'
+import { SyncAccounts, SyncSourceStatus, SyncTimestamp } from './sync-usage'
 
 export function SyncSourcesPanel(props: { caps: Capabilities }) {
   const { t, i18n } = useTranslation()
@@ -62,6 +62,12 @@ export function SyncSourcesPanel(props: { caps: Capabilities }) {
       setConfirm(false)
     },
   })
+  const showPreview =
+    !!run.data?.preview &&
+    !(
+      (activeSource?.last_fetch ?? 0) * 1000 >= run.submittedAt &&
+      state.dataUpdatedAt >= run.submittedAt
+    )
   if (list.isLoading) return <LoadingState />
   if (list.isError) return <ErrorState onRetry={() => void list.refetch()} />
   if (!list.data) return null
@@ -140,19 +146,7 @@ export function SyncSourcesPanel(props: { caps: Capabilities }) {
           {
             id: 'error',
             header: t('Status'),
-            cell: (s) => (
-              <SyncHealth
-                message={
-                  s.last_error ||
-                  s.observation_status ||
-                  'No upstream observation'
-                }
-                healthy={
-                  !s.last_error &&
-                  s.observation_status === 'Upstream observations are current'
-                }
-              />
-            ),
+            cell: (s) => <SyncSourceStatus source={s} />,
           },
           {
             id: 'edit',
@@ -171,7 +165,7 @@ export function SyncSourcesPanel(props: { caps: Capabilities }) {
             <h3 className='text-base font-semibold break-words'>
               {list.data.sources.find((s) => s.id === active)?.name}
             </h3>
-            {run.data?.preview && (
+            {showPreview && (
               <div className='flex flex-wrap items-center gap-2'>
                 <StatusBadge
                   copyable={false}
@@ -255,11 +249,11 @@ export function SyncSourcesPanel(props: { caps: Capabilities }) {
           {!state.isLoading && (
             <SyncAccounts
               accounts={
-                run.data?.preview || state.dataUpdatedAt < run.submittedAt
+                showPreview || state.dataUpdatedAt < run.submittedAt
                   ? (run.data?.accounts ?? state.data?.accounts ?? [])
                   : (state.data?.accounts ?? [])
               }
-              staleSeconds={activeSource?.stale_seconds ?? 300}
+              staleSeconds={syncStaleSeconds(activeSource)}
             />
           )}
           {run.data && <SyncChangeTable changes={run.data.changes} />}

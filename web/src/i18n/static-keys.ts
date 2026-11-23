@@ -1171,4 +1171,12 @@ export const STATIC_I18N_KEYS = [
   'Stale data',
   'Reset time unavailable',
   'Save and configure synchronization',
+  'Synchronization is on schedule',
+  'Synchronization is delayed',
+  'Snapshot within freshness window',
+  'Turn off upstream following before changing synchronized times',
+  'invalid user control input: behavior policies cannot contain scheduling',
+  'invalid user control input: referenced behavior policy cannot become scheduled',
+  'invalid user control input: select a behavior-only policy',
+  'invalid user control input: replacement requires a reason',
 ] as const

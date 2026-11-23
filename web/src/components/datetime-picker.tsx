@@ -47,6 +47,7 @@ interface DateTimePickerProps {
   onChange?: (date: Date | undefined) => void
   placeholder?: string
   className?: string
+  disabled?: boolean
 }
 
 export function DateTimePicker({
@@ -54,6 +55,7 @@ export function DateTimePicker({
   onChange,
   placeholder,
   className,
+  disabled,
 }: DateTimePickerProps) {
   const { t, i18n } = useTranslation()
   const placeholderText = placeholder ?? t('Select date')
@@ -74,6 +76,7 @@ export function DateTimePicker({
   }, [value])
 
   const handleDateSelect = (selectedDate: Date | undefined) => {
+    if (disabled) return
     if (selectedDate) {
       const [hours, minutes, seconds = 0] = time.split(':').map(Number)
       const newDate = new Date(selectedDate)
@@ -90,6 +93,7 @@ export function DateTimePicker({
   }
 
   const handleTimeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (disabled) return
     const newTime = e.target.value
     // The browser reports an emptied or half-cleared field as ''. Keep the
     // current time: the field shows it again and no invalid date goes out.
@@ -107,6 +111,7 @@ export function DateTimePicker({
   }
 
   const handleClear = () => {
+    if (disabled) return
     setDate(undefined)
     setMonth(undefined)
     setTime('00:00:00')
@@ -115,10 +120,11 @@ export function DateTimePicker({
 
   return (
     <div className={cn('flex gap-2', className)}>
-      <Popover open={open} onOpenChange={setOpen}>
+      <Popover open={open && !disabled} onOpenChange={setOpen}>
         <PopoverTrigger
           render={
             <Button
+              disabled={disabled}
               variant='outline'
               className={cn(
                 'flex-1 justify-between font-normal',
@@ -151,7 +157,7 @@ export function DateTimePicker({
         aria-label={t('Time')}
         onChange={handleTimeChange}
         className='w-32 appearance-none [&::-webkit-calendar-picker-indicator]:hidden [&::-webkit-calendar-picker-indicator]:appearance-none'
-        disabled={!date}
+        disabled={disabled || !date}
       />
       {date && (
         <Button
@@ -159,6 +165,7 @@ export function DateTimePicker({
           variant='outline'
           size='icon'
           onClick={handleClear}
+          disabled={disabled}
           className='shrink-0'
           aria-label={t('Clear')}
         >

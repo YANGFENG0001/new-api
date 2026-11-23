@@ -46,7 +46,7 @@ type SubscriptionPoolChannel struct {
 // Sidecar tables preserve the legacy subscription response contract.
 type SubscriptionPlanAllocation struct {
 	PlanID       int    `json:"plan_id" gorm:"primaryKey;autoIncrement:false"`
-	Mode         string `json:"mode" gorm:"type:varchar(16)"` // independent/fixed/assign
+	Mode         string `json:"mode" gorm:"type:varchar(16)"` // legacy/independent/fixed/assign
 	PoolID       int    `json:"pool_id"`
 	FixedEndTime int64  `json:"fixed_end_time"`
 	Rules        string `json:"-" gorm:"type:text"`

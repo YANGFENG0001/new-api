@@ -17,13 +17,15 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { act, render, screen } from '@testing-library/react'
+import { act, render, screen, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { createInstance } from 'i18next'
 import { I18nextProvider } from 'react-i18next'
 import { afterEach, expect, test, vi } from 'vitest'
 
 import { api } from '@/lib/api'
 
+import type { Usage } from '../api'
 import { CycleProgress } from '../cycle-progress'
 import { SelfAlignedUsage } from '../self-usage'
 
@@ -32,14 +34,14 @@ afterEach(() => {
   clients.splice(0).forEach((client) => client.clear())
 })
 
-function mount() {
+function mount(subscription?: Usage) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   })
   clients.push(client)
   return render(
     <QueryClientProvider client={client}>
-      <SelfAlignedUsage />
+      <SelfAlignedUsage subscription={subscription} />
     </QueryClientProvider>
   )
 }
@@ -58,6 +60,147 @@ test('legacy-only accounts do not display an upstream carpool section', async ()
     await clients[0].refetchQueries()
   })
   expect(view.container).not.toHaveTextContent('Upstream carpool subscriptions')
+})
+
+test('a subscription only exposes its own pool and does not fetch duplicate personal usage', async () => {
+  const request = vi.spyOn(api, 'request').mockResolvedValue({
+    data: {
+      success: true,
+      data: [
+        {
+          id: 1,
+          name: 'My pool',
+          subscription_ids: [9],
+          end_time: 1890000000,
+          cycles: [],
+          observations: [],
+        },
+        {
+          id: 2,
+          name: 'Different subscription pool',
+          subscription_ids: [10],
+          end_time: 1890000000,
+          cycles: [],
+          observations: [],
+        },
+      ],
+    },
+  })
+  mount({
+    subscription_id: 9,
+    plan_id: 2,
+    status: 'active',
+    managed: true,
+    pending: false,
+    end_time: 1890000000,
+    cycles: [],
+  })
+  const trigger = await screen.findByRole('button', {
+    name: 'Upstream carpool subscriptions',
+  })
+  expect(trigger).toHaveAttribute('aria-expanded', 'false')
+  expect(screen.queryByText('My pool')).not.toBeInTheDocument()
+  await userEvent.click(trigger)
+  expect(screen.getByText('My pool')).toBeVisible()
+  expect(
+    screen.queryByText('Different subscription pool')
+  ).not.toBeInTheDocument()
+  expect(request.mock.calls.some(([c]) => c.url?.endsWith('/usage'))).toBe(
+    false
+  )
+})
+
+test('pending assignment shows unavailable without a fake unlimited quota or upstream section', async () => {
+  vi.spyOn(api, 'request').mockResolvedValue({
+    data: { success: true, data: [] },
+  })
+  mount({
+    subscription_id: 9,
+    plan_id: 2,
+    status: 'active',
+    managed: true,
+    pending: true,
+    end_time: 1890000000,
+    cycles: [],
+  })
+  expect(await screen.findByText('Pending assignment')).toBeVisible()
+  expect(
+    screen.getByText(
+      'This subscription is unavailable until its pool assignment or availability is resolved.'
+    )
+  ).toBeVisible()
+  expect(screen.queryByText('Unlimited')).not.toBeInTheDocument()
+  expect(
+    screen.queryByRole('button', { name: 'Upstream carpool subscriptions' })
+  ).not.toBeInTheDocument()
+})
+
+test('mixed shared and personal cycles show their actual scopes and distinct usage', async () => {
+  vi.spyOn(api, 'request').mockResolvedValue({
+    data: { success: true, data: [] },
+  })
+  const base = {
+    seconds: 137,
+    unlimited: false,
+    limit: 100,
+    reserved: 0,
+    adjustment: 0,
+    start_time: 1,
+    next_reset: 1890000000,
+    pending: false,
+  }
+  mount({
+    subscription_id: 9,
+    plan_id: 2,
+    status: 'active',
+    managed: true,
+    pending: false,
+    end_time: 1890000000,
+    cycles: [
+      { ...base, key: 'shared', name: 'Shared short', shared: true, used: 30 },
+      {
+        ...base,
+        key: 'personal',
+        name: 'Personal long',
+        shared: false,
+        used: 7,
+      },
+    ],
+  })
+  const shared = screen.getByRole('region', { name: 'Shared short' })
+  const personal = screen.getByRole('region', { name: 'Personal long' })
+  expect(within(shared).getByText('Shared')).toBeVisible()
+  expect(within(shared).getByText(/30 \/ 100/)).toBeVisible()
+  expect(within(personal).getByText('Independent')).toBeVisible()
+  expect(within(personal).getByText(/7 \/ 100/)).toBeVisible()
+})
+
+test('cancelled multi-cycle subscriptions remain visible and do not masquerade as traditional unlimited subscriptions', async () => {
+  vi.spyOn(api, 'request').mockImplementation(async (config) => ({
+    data: {
+      success: true,
+      data: config.url?.endsWith('/usage')
+        ? {
+            server_time: Date.now() / 1000,
+            subscriptions: [
+              {
+                subscription_id: 9,
+                plan_id: 2,
+                status: 'cancelled',
+                managed: true,
+                pending: false,
+                end_time: 1890000000,
+                cycles: [],
+              },
+            ],
+          }
+        : [],
+    },
+  }))
+  mount()
+  expect(await screen.findByText(/#9/)).toBeVisible()
+  expect(screen.getByText('Cancelled')).toBeVisible()
+  expect(screen.queryByText('Unlimited')).not.toBeInTheDocument()
 })
 
 test('upstream overview errors are visible and offer retry instead of silently hiding the pool', async () => {
@@ -159,4 +302,43 @@ test('unknown upstream capacity is not presented as unlimited or as a percentage
   expect(screen.getByText(/Unknown/)).toBeInTheDocument()
   expect(screen.queryByText(/Unlimited/)).not.toBeInTheDocument()
   expect(screen.queryByRole('progressbar')).not.toBeInTheDocument()
+})
+
+test('an upstream pool without a reported expiry displays never instead of the storage sentinel date', async () => {
+  vi.spyOn(api, 'request').mockImplementation(async (config) => ({
+    data: {
+      success: true,
+      data: config.url?.endsWith('/usage')
+        ? {
+            server_time: 100,
+            subscriptions: [
+              {
+                subscription_id: 1,
+                managed: true,
+                status: 'active',
+                end_time: 253402300799,
+                cycles: [],
+              },
+            ],
+          }
+        : [
+            {
+              id: 1,
+              name: 'No expiry pool',
+              end_time: 253402300799,
+              cycles: [],
+              observations: [],
+            },
+          ],
+    },
+  }))
+  mount()
+  await userEvent.click(
+    await screen.findByRole('button', {
+      name: 'Upstream carpool subscriptions',
+    })
+  )
+  await screen.findByText('No expiry pool')
+  expect(screen.getAllByText('Never')).toHaveLength(2)
+  expect(screen.queryByText(/9999/)).not.toBeInTheDocument()
 })

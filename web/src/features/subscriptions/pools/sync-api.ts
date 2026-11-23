@@ -62,6 +62,8 @@ export const syncSourceSchema = z.object({
 export type SyncMapping = z.infer<typeof syncMappingSchema>
 export type SyncCycleMapping = z.infer<typeof syncCycleMappingSchema>
 export type SyncSource = z.infer<typeof syncSourceSchema> & {
+  effective_stale_seconds?: number
+  fetch_status?: string
   observation_status?: string
   observed_at?: number
   has_credentials?: boolean
@@ -110,6 +112,8 @@ export type SyncAccount = {
   cycles: SyncCycle[]
 }
 export type SyncObservation = {
+  estimated_utilization?: number | null
+  local_delta?: number
   key: string
   name: string
   utilization: number | null
@@ -139,6 +143,12 @@ export const syncBindingSchema = z.object({
         enforce: z.boolean(),
         threshold: z.number().positive().max(1),
         max_shift_seconds: z.number().int().min(0).max(315360000),
+        quota_per_full_window: z
+          .number()
+          .int()
+          .min(0)
+          .max(Number.MAX_SAFE_INTEGER)
+          .optional(),
       })
     )
     .max(32),
@@ -249,4 +259,23 @@ export function emptySyncSource(mapping: SyncMapping): SyncSource {
     refresh_before: 86400,
     credential_revision: 0,
   }
+}
+
+export function syncStaleSeconds(
+  source?: Pick<
+    SyncSource,
+    | 'stale_seconds'
+    | 'interval_seconds'
+    | 'timeout_seconds'
+    | 'effective_stale_seconds'
+  >
+): number {
+  if (!source) return 300
+  if (source.effective_stale_seconds && source.effective_stale_seconds > 0) {
+    return source.effective_stale_seconds
+  }
+  return Math.max(
+    source.stale_seconds,
+    2 * source.interval_seconds + source.timeout_seconds + 10
+  )
 }

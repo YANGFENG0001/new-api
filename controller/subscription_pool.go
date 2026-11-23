@@ -103,12 +103,23 @@ func SaveSubscriptionPool(c *gin.Context) {
 		return
 	}
 	input.Id = id
+	if input.Sync != nil && (!requireSubscriptionPoolPermission(c, "sync_read") || !requireSubscriptionPoolPermission(c, "sync_binding") || !requireSubscriptionPoolPermission(c, "sync_apply")) {
+		return
+	}
+	if input.SyncBinding != nil && (!requireSubscriptionPoolPermission(c, "sync_binding") || !requireSubscriptionPoolPermission(c, "sync_apply")) {
+		return
+	}
 	pool, err := model.SaveSubscriptionPool(input, c.GetInt("id"))
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
-	common.ApiSuccess(c, pool)
+	view, err := model.GetSubscriptionPoolConfiguration(pool.Id)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, view)
 }
 
 func SubscriptionPoolCatalog(c *gin.Context) {
@@ -155,10 +166,25 @@ func GetSubscriptionPoolDetail(c *gin.Context) {
 		return
 	}
 	events := []model.SubscriptionPoolEvent{}
+	syncEvents := []model.SubscriptionSyncEvent{}
 	if authz.Can(c.GetInt("id"), c.GetInt("role"), authz.SubscriptionPoolPermission("audit_read")) {
 		if err := model.DB.Where("pool_id = ?", id).Order("id desc").Limit(200).Find(&events).Error; err != nil {
 			common.ApiError(c, err)
 			return
+		}
+		if authz.Can(c.GetInt("id"), c.GetInt("role"), authz.SubscriptionPoolPermission("sync_read")) {
+			if err := model.DB.Where("pool_id = ?", id).Order("id desc").Limit(200).Find(&syncEvents).Error; err != nil {
+				common.ApiError(c, err)
+				return
+			}
+			for i := range syncEvents {
+				if syncEvents[i].Detail != "" {
+					if err := common.UnmarshalJsonStr(syncEvents[i].Detail, &syncEvents[i].Changes); err != nil {
+						common.ApiError(c, err)
+						return
+					}
+				}
+			}
 		}
 	}
 	cycles, err := model.GetSubscriptionPoolStatistics(id)
@@ -166,7 +192,7 @@ func GetSubscriptionPoolDetail(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	common.ApiSuccess(c, gin.H{"members": members, "events": events, "cycles": cycles})
+	common.ApiSuccess(c, gin.H{"members": members, "events": events, "sync_events": syncEvents, "cycles": cycles})
 }
 
 type subscriptionPlanAllocationInput struct {

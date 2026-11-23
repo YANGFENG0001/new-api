@@ -36,6 +36,7 @@ import {
 import {
   syncAPI,
   syncSourceSchema,
+  syncStaleSeconds,
   emptySyncSource,
   type SyncSource,
   type SyncMapping,
@@ -176,6 +177,15 @@ export function SyncSourceEditor(props: {
             </div>
           ))}
         </div>
+        <p className='text-muted-foreground text-xs'>
+          {t(
+            'Poll every {{interval}}s; observations expire after {{threshold}}s.',
+            {
+              interval: values.interval_seconds,
+              threshold: syncStaleSeconds(values),
+            }
+          )}
+        </p>
         {values.method === 'POST' && (
           <p role='note' className='text-destructive text-sm'>
             {t(

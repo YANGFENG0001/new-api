@@ -28,7 +28,7 @@ import type { Capabilities } from '../api'
 import { emptySyncSource, type SyncMapping } from '../sync-api'
 import { SyncObservations } from '../sync-observations'
 import { SyncSourcesPanel } from '../sync-sources-panel'
-import { SyncUsageCard } from '../sync-usage'
+import { SyncUsageCard, SyncSourceStatus } from '../sync-usage'
 
 const now = Math.floor(Date.now() / 1000)
 const mapping = { cycles: [] } as unknown as SyncMapping
@@ -211,3 +211,52 @@ test.each([
     }
   }
 )
+
+test('a recent successful poll and an old upstream snapshot have distinct status indicators', () => {
+  render(
+    <SyncSourceStatus
+      source={{
+        ...source,
+        last_fetch: now,
+        fetch_status: 'Synchronization is on schedule',
+        observation_status: 'Upstream observation is stale',
+      }}
+    />
+  )
+  expect(screen.getByText('Synchronization is on schedule')).toBeVisible()
+  expect(screen.getByText('Stale data')).toBeVisible()
+  expect(
+    screen.getByText('Poll every 60s; observations expire after 300s.')
+  ).toBeVisible()
+})
+
+test('a calibrated progress card shows the local estimate and retains the original upstream snapshot', () => {
+  render(
+    <SyncObservations
+      observations={[
+        {
+          key: 'short',
+          name: '5h',
+          utilization: 0.4,
+          estimated_utilization: 0.45,
+          local_delta: 50,
+          sampled_at: now,
+          fetched_at: now,
+          window_end: now + 18000,
+          stale: false,
+          pending: '',
+        },
+      ]}
+    />
+  )
+  expect(screen.getByRole('progressbar', { name: '5h' })).toHaveAttribute(
+    'aria-valuenow',
+    '45'
+  )
+  expect(screen.getByText('Estimated usage after calibration')).toBeVisible()
+  expect(
+    screen.getByText(
+      'Upstream snapshot: 40%; local usage since calibration: 50 quota units.'
+    )
+  ).toBeVisible()
+})

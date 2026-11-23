@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import i18next from 'i18next'
 import type { ReactNode } from 'react'
@@ -195,6 +195,60 @@ test('test read requires a separate confirmation before applying synchronization
   expect(
     request.mock.calls.filter(([c]) => c.url?.endsWith('/run'))[1][0].data
   ).toEqual({ preview: false })
+})
+
+test('a later scheduled snapshot replaces a manual preview without reverting it to an older saved snapshot', async () => {
+  const now = Math.floor(Date.now() / 1000)
+  let lastFetch = now - 60
+  let utilization = 0.5
+  const account = (ratio: number) => ({
+    id: 'account-1',
+    name: 'Account',
+    expiry: 0,
+    cycles: [
+      {
+        key: 'short',
+        name: 'Short',
+        seconds: 3600,
+        utilization: ratio,
+        sampled_at: now,
+        window_start: now - 100,
+        window_end: now + 3500,
+        error: '',
+      },
+    ],
+  })
+  vi.spyOn(api, 'request').mockImplementation(async (config) => {
+    if (config.url?.endsWith('/sync-sources')) {
+      return envelope({
+        sources: [{ ...source, last_fetch: lastFetch }],
+        template: mapping,
+        privileged: true,
+      })
+    }
+    if (config.url?.endsWith('/state')) {
+      return envelope({ accounts: [account(utilization)], events: [] })
+    }
+    return envelope({ preview: true, accounts: [account(0.6)], changes: [] })
+  })
+  mount(<SyncSourcesPanel caps={caps} />)
+  await userEvent.click(await screen.findByRole('button', { name: 'Panel' }))
+  expect(await screen.findByText('50%')).toBeVisible()
+  await userEvent.click(
+    screen.getByRole('button', { name: 'Test read and preview' })
+  )
+  expect(await screen.findByText('60%')).toBeVisible()
+  await act(async () => {
+    await clients[0].invalidateQueries({ queryKey: ['subscription-sync'] })
+  })
+  expect(screen.getByText('60%')).toBeVisible()
+  utilization = 0.7
+  lastFetch = Math.ceil(Date.now() / 1000) + 1
+  await act(async () => {
+    await clients[0].invalidateQueries({ queryKey: ['subscription-sync'] })
+  })
+  expect(await screen.findByText('70%')).toBeVisible()
+  expect(screen.queryByText('60%')).not.toBeInTheDocument()
 })
 
 test('pool binding selects a discovered stable account and saves only after confirmation', async () => {

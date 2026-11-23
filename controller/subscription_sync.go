@@ -25,6 +25,16 @@ func ListSubscriptionSyncSources(c *gin.Context) {
 	for _, s := range sources {
 		view := model.SubscriptionSyncSourceInput{SubscriptionSyncSource: s}
 		view.HasCredentials = s.SecretPayload != ""
+		view.EffectiveStaleSeconds = model.SubscriptionSyncStaleSeconds(s)
+		view.FetchStatus = "Awaiting observation"
+		if s.LastError != "" {
+			view.FetchStatus = s.LastError
+		} else if s.LastFetch > 0 {
+			view.FetchStatus = "Synchronization is on schedule"
+			if model.GetDBTimestamp()-s.LastFetch > view.EffectiveStaleSeconds {
+				view.FetchStatus = "Synchronization is delayed"
+			}
+		}
 		if view.RefreshMode == "" {
 			view.RefreshMode = "manual"
 		}
@@ -51,7 +61,7 @@ func ListSubscriptionSyncSources(c *gin.Context) {
 				}
 				total++
 				view.ObservedAt = max(view.ObservedAt, cycle.SampledAt)
-				if now-cycle.SampledAt <= s.StaleSeconds && cycle.WindowEnd > now {
+				if now-cycle.SampledAt <= view.EffectiveStaleSeconds && cycle.WindowEnd > now {
 					fresh++
 				}
 			}
@@ -210,10 +220,10 @@ func SaveSubscriptionSyncBinding(c *gin.Context) {
 	}
 	sensitive := input.SyncExpiry || old.SyncExpiry
 	for _, item := range input.Cycles {
-		sensitive = sensitive || item.AlignReset || item.Enforce
+		sensitive = sensitive || item.AlignReset || item.Enforce || item.QuotaPerFullWindow > 0
 	}
 	for _, item := range old.Cycles {
-		sensitive = sensitive || item.AlignReset || item.Enforce
+		sensitive = sensitive || item.AlignReset || item.Enforce || item.QuotaPerFullWindow > 0
 	}
 	if sensitive && !requireSubscriptionPoolPermission(c, "sync_apply") {
 		return

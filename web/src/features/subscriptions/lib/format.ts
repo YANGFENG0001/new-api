@@ -16,11 +16,53 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import type { TFunction } from 'i18next'
+import { t, type TFunction } from 'i18next'
 
 import dayjs from '@/lib/dayjs'
+import { formatQuota, formatNumber } from '@/lib/format'
 
-import type { SubscriptionPlan } from '../types'
+import type { SubscriptionPlan, PlanRecord } from '../types'
+
+export function formatPlanQuota(record: PlanRecord, t: TFunction): string {
+  const allocation = record.allocation
+  if (!allocation || allocation.mode === 'legacy') {
+    return record.plan.total_amount > 0
+      ? formatQuota(record.plan.total_amount)
+      : t('Unlimited')
+  }
+  if (allocation.mode === 'assign') {
+    return t('Administrator assignment required')
+  }
+  if (!allocation.available) return t('Unavailable')
+  if (!allocation.cycles.length) return t('Unknown')
+  return allocation.cycles
+    .map((cycle) => {
+      const quota = cycle.unlimited ? t('Unlimited') : formatQuota(cycle.limit)
+      let duration = `${formatNumber(cycle.seconds)} ${t('seconds')}`
+      if (cycle.seconds % 86400 === 0) {
+        duration = `${formatNumber(cycle.seconds / 86400)} ${t('days')}`
+      } else if (cycle.seconds % 3600 === 0) {
+        duration = `${formatNumber(cycle.seconds / 3600)} ${t('hours')}`
+      } else if (cycle.seconds % 60 === 0) {
+        duration = `${formatNumber(cycle.seconds / 60)} ${t('minutes')}`
+      }
+      return `${cycle.name} · ${duration} · ${cycle.shared ? t('Shared') : t('Independent')} · ${quota}`
+    })
+    .join('\n')
+}
+
+export function formatPlanValidity(record: PlanRecord, t: TFunction): string {
+  const allocation = record.allocation
+  if (!allocation || allocation.mode === 'legacy') {
+    return formatDuration(record.plan, t)
+  }
+  if (allocation.fixed_end_time === 253402300799) return t('Never')
+  if (allocation.fixed_end_time > 0) {
+    return formatTimestamp(allocation.fixed_end_time)
+  }
+  if (allocation.mode === 'fixed') return t('Follow pool expiry')
+  return formatDuration(record.plan, t)
+}
 
 export function formatDuration(
   plan: Partial<SubscriptionPlan>,
@@ -64,5 +106,6 @@ export function formatResetPeriod(
 
 export function formatTimestamp(ts: number): string {
   if (!ts) return '-'
+  if (ts === 253402300799) return t('Never')
   return dayjs(ts * 1000).format('YYYY-MM-DD HH:mm:ss')
 }

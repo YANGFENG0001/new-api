@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { useForm } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 
@@ -34,20 +34,29 @@ import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 
 import type { Pool, Capabilities } from './api'
+import { SyncAccountPicker } from './sync-account-picker'
 import {
   syncAPI,
+  syncStaleSeconds,
   syncBindingSchema,
   type SyncBinding,
   type SyncSource,
   type SyncObservation,
 } from './sync-api'
 import { SyncObservations } from './sync-observations'
-import { SyncAccounts, SyncHealth } from './sync-usage'
+import { SyncAccounts, SyncSourceStatus } from './sync-usage'
 
-export function PoolSyncBinding(props: { pool: Pool; caps: Capabilities }) {
+export function PoolSyncBinding(props: {
+  pool: Pool
+  caps: Capabilities
+  onDraftChange?: (value: SyncBinding) => void
+  renderLocalCycle?: (key: string, followsReset: boolean) => ReactNode
+  onPoolAligned?: () => Promise<void>
+}) {
   const source = useQuery({
     queryKey: ['subscription-sync', 'sources'],
     queryFn: syncAPI.sources,
+    refetchInterval: 30000,
   })
   const binding = useQuery({
     queryKey: ['subscription-sync', 'binding', props.pool.id],
@@ -68,12 +77,19 @@ export function PoolSyncBinding(props: { pool: Pool; caps: Capabilities }) {
   if (!binding.data || !source.data) return null
   return (
     <BindingEditor
-      key={`${props.pool.id}-${binding.data.binding.version}`}
+      key={
+        props.onDraftChange
+          ? props.pool.id
+          : `${props.pool.id}-${binding.data.binding.version}`
+      }
       pool={props.pool}
       caps={props.caps}
       sources={source.data.sources}
       initial={binding.data.binding}
       observations={binding.data.observations}
+      onDraftChange={props.onDraftChange}
+      renderLocalCycle={props.renderLocalCycle}
+      onPoolAligned={props.onPoolAligned}
     />
   )
 }
@@ -84,6 +100,9 @@ function BindingEditor(props: {
   sources: SyncSource[]
   initial: SyncBinding
   observations: SyncObservation[]
+  onDraftChange?: (value: SyncBinding) => void
+  renderLocalCycle?: (key: string, followsReset: boolean) => ReactNode
+  onPoolAligned?: () => Promise<void>
 }) {
   const { t } = useTranslation()
   const client = useQueryClient()
@@ -95,6 +114,12 @@ function BindingEditor(props: {
     },
   })
   const values = form.watch()
+  const draftJSON = JSON.stringify(values)
+  const onDraftChange = props.onDraftChange
+  useEffect(() => {
+    onDraftChange?.(JSON.parse(draftJSON) as SyncBinding)
+  }, [draftJSON, onDraftChange])
+  const Container = props.onDraftChange ? 'div' : 'form'
   const source = props.sources.find((s) => s.id === values.source_id)
   const state = useQuery({
     queryKey: ['subscription-sync', 'state', values.source_id],
@@ -109,9 +134,11 @@ function BindingEditor(props: {
   const [disconnect, setDisconnect] = useState(false)
   const unbind = useMutation({
     mutationFn: () => syncAPI.unbind(props.pool.id, values.version),
-    onSuccess: () => {
+    onSuccess: async () => {
       setDisconnect(false)
-      void client.invalidateQueries({ queryKey: ['subscription-sync'] })
+      const fresh = await syncAPI.binding(props.pool.id)
+      form.reset(fresh.binding)
+      await client.invalidateQueries({ queryKey: ['subscription-sync'] })
     },
   })
   const [reset, setReset] = useState<SyncObservation | null>(null)
@@ -130,13 +157,24 @@ function BindingEditor(props: {
         o.digest ?? '',
         props.pool.version
       ),
-    onSuccess: () => {
+    onSuccess: async () => {
       setReset(null)
-      void client.invalidateQueries({ queryKey: ['subscription-sync'] })
-      void client.invalidateQueries({ queryKey: ['subscription-pools'] })
+      await Promise.all([
+        client.invalidateQueries({ queryKey: ['subscription-sync'] }),
+        client.invalidateQueries({ queryKey: ['subscription-pools'] }),
+      ])
+      await props.onPoolAligned?.()
     },
   })
-  const accounts = read.data?.accounts ?? state.data?.accounts ?? []
+  // A local cache read is not a new upstream fetch. Keep the preview until a
+  // later scheduled/manual fetch has actually replaced the saved catalog.
+  const savedAfterRead =
+    (source?.last_fetch ?? 0) * 1000 >= read.submittedAt &&
+    state.dataUpdatedAt >= read.submittedAt
+  const accounts =
+    read.data && !savedAfterRead
+      ? read.data.accounts
+      : (state.data?.accounts ?? [])
   function updateCycle(
     key: string,
     patch: Partial<SyncBinding['cycles'][number]>
@@ -184,13 +222,7 @@ function BindingEditor(props: {
             }
             variant={source.enabled ? 'success' : 'neutral'}
           />
-          <SyncHealth
-            healthy={
-              !source.last_error &&
-              source.observation_status === 'Upstream observations are current'
-            }
-            message={source.last_error || source.observation_status}
-          />
+          <SyncSourceStatus source={source} />
           {!source.enabled && (
             <p className='text-muted-foreground w-full text-xs'>
               {t(
@@ -200,30 +232,32 @@ function BindingEditor(props: {
           )}
         </div>
       )}
-      <form
+      <Container
         className='max-w-5xl space-y-4 rounded-xl border p-4'
         onSubmit={form.handleSubmit((data) => setConfirm(data))}
       >
-        <fieldset
-          disabled={!props.caps.sync_binding || save.isPending}
-          className='space-y-4'
-        >
-          <Label htmlFor='binding-source'>
-            {t('Upstream synchronization source')}
-          </Label>
-          <Combobox
-            id='binding-source'
-            value={values.source_id ? String(values.source_id) : ''}
-            options={props.sources.map((s) => ({
-              value: String(s.id),
-              label: s.name,
-            }))}
-            onValueChange={(v) => {
-              form.setValue('source_id', Number(v))
+        <fieldset disabled={save.isPending} className='space-y-4'>
+          <SyncAccountPicker
+            id='binding'
+            sources={props.sources}
+            accounts={accounts}
+            sourceId={values.source_id}
+            accountId={values.account_id}
+            sourceDisabled={!props.caps.sync_binding || !props.caps.sync_apply}
+            accountDisabled={
+              !props.caps.sync_binding ||
+              !props.caps.sync_apply ||
+              state.isPending
+            }
+            onSourceChange={(id) => {
+              form.setValue('source_id', id)
               form.setValue('account_id', '')
               form.setValue('cycles', [])
               read.reset()
             }}
+            onAccountChange={(id) =>
+              form.setValue('account_id', id, { shouldDirty: true })
+            }
           />
           {props.caps.sync_run && (
             <Button
@@ -235,20 +269,9 @@ function BindingEditor(props: {
               {t('Read upstream accounts')}
             </Button>
           )}
-          <Label htmlFor='binding-account'>{t('Upstream account')}</Label>
-          <Combobox
-            id='binding-account'
-            value={values.account_id}
-            options={accounts.map((a) => ({
-              value: a.id,
-              label: `${a.name || a.id} · ${a.id}`,
-            }))}
-            onValueChange={(v) =>
-              form.setValue('account_id', v ?? '', { shouldDirty: true })
-            }
-          />
           <Label>
             <Switch
+              disabled={!props.caps.sync_binding || !props.caps.sync_apply}
               checked={values.enabled}
               onCheckedChange={(v) => form.setValue('enabled', v)}
             />
@@ -256,7 +279,7 @@ function BindingEditor(props: {
           </Label>
           <Label>
             <Switch
-              disabled={!props.caps.sync_apply}
+              disabled={!props.caps.sync_binding || !props.caps.sync_apply}
               checked={values.sync_expiry}
               onCheckedChange={(v) => form.setValue('sync_expiry', v)}
             />
@@ -273,12 +296,22 @@ function BindingEditor(props: {
                   className='space-y-3 rounded-lg border p-3'
                   aria-label={local.name}
                 >
-                  <h4>{local.name}</h4>
+                  {props.renderLocalCycle ? (
+                    props.renderLocalCycle(
+                      local.key,
+                      !!mapping?.align_reset && values.enabled
+                    )
+                  ) : (
+                    <h4>{local.name}</h4>
+                  )}
                   <Label htmlFor={`binding-${local.key}`}>
                     {t('Upstream cycle')}
                   </Label>
                   <Combobox
                     id={`binding-${local.key}`}
+                    disabled={
+                      !props.caps.sync_binding || !props.caps.sync_apply
+                    }
                     value={mapping?.upstream_key ?? '__none'}
                     options={[
                       { value: '__none', label: t('Not synchronized') },
@@ -295,9 +328,35 @@ function BindingEditor(props: {
                   />
                   {mapping && (
                     <>
+                      <Label htmlFor={`capacity-${local.key}`}>
+                        {t('Quota units per full upstream window (optional)')}
+                      </Label>
+                      <Input
+                        id={`capacity-${local.key}`}
+                        type='number'
+                        min={0}
+                        step={1}
+                        max={Number.MAX_SAFE_INTEGER}
+                        disabled={
+                          !props.caps.sync_binding || !props.caps.sync_apply
+                        }
+                        value={mapping.quota_per_full_window ?? 0}
+                        onChange={(e) =>
+                          updateCycle(local.key, {
+                            quota_per_full_window: Number(e.target.value),
+                          })
+                        }
+                      />
+                      <p className='text-muted-foreground text-xs'>
+                        {t(
+                          'Set an explicit capacity to estimate upstream progress from local settled usage between polls. Zero keeps the upstream percentage unchanged. Billing remains separate.'
+                        )}
+                      </p>
                       <Label>
                         <Switch
-                          disabled={!props.caps.sync_apply}
+                          disabled={
+                            !props.caps.sync_binding || !props.caps.sync_apply
+                          }
                           checked={mapping.align_reset}
                           onCheckedChange={(v) =>
                             updateCycle(local.key, { align_reset: v })
@@ -307,7 +366,9 @@ function BindingEditor(props: {
                       </Label>
                       <Label>
                         <Switch
-                          disabled={!props.caps.sync_apply}
+                          disabled={
+                            !props.caps.sync_binding || !props.caps.sync_apply
+                          }
                           checked={mapping.enforce}
                           onCheckedChange={(v) =>
                             updateCycle(local.key, { enforce: v })
@@ -326,7 +387,9 @@ function BindingEditor(props: {
                             min={0.01}
                             max={100}
                             step='any'
-                            disabled={!props.caps.sync_apply}
+                            disabled={
+                              !props.caps.sync_binding || !props.caps.sync_apply
+                            }
                             value={mapping.threshold * 100}
                             onChange={(e) =>
                               updateCycle(local.key, {
@@ -346,7 +409,9 @@ function BindingEditor(props: {
                             type='number'
                             min={0}
                             max={local.seconds}
-                            disabled={!props.caps.sync_apply}
+                            disabled={
+                              !props.caps.sync_binding || !props.caps.sync_apply
+                            }
                             value={mapping.max_shift_seconds}
                             onChange={(e) =>
                               updateCycle(local.key, {
@@ -367,7 +432,7 @@ function BindingEditor(props: {
           </Label>
           <Combobox
             id='binding-stale'
-            disabled={!props.caps.sync_apply}
+            disabled={!props.caps.sync_binding || !props.caps.sync_apply}
             value={values.stale_policy}
             options={[
               { value: 'stop', label: t('Pause new requests') },
@@ -392,7 +457,7 @@ function BindingEditor(props: {
                 type='number'
                 min={0}
                 max={86400}
-                disabled={!props.caps.sync_apply}
+                disabled={!props.caps.sync_binding || !props.caps.sync_apply}
                 {...form.register('grace_seconds', { valueAsNumber: true })}
               />
             </>
@@ -404,17 +469,26 @@ function BindingEditor(props: {
               )}
             </p>
           )}
-          <Button type='submit' disabled={save.isPending}>
-            {t('Save')}
-          </Button>
+          {!props.onDraftChange && (
+            <Button
+              type='submit'
+              disabled={
+                save.isPending ||
+                !props.caps.sync_binding ||
+                !props.caps.sync_apply
+              }
+            >
+              {t('Save')}
+            </Button>
+          )}
         </fieldset>
-      </form>
+      </Container>
       {read.isError && <ErrorState onRetry={() => read.mutate()} />}
       {state.isError && <ErrorState onRetry={() => void state.refetch()} />}
       {!props.observations.length && values.account_id && (
         <SyncAccounts
           accounts={accounts.filter((a) => a.id === values.account_id)}
-          staleSeconds={source?.stale_seconds ?? 300}
+          staleSeconds={syncStaleSeconds(source)}
         />
       )}
       {props.initial.last_error && (
@@ -427,7 +501,9 @@ function BindingEditor(props: {
           {t('Unbind synchronization')}
         </Button>
       )}
-      <SyncObservations observations={props.observations} />
+      {!props.onDraftChange && (
+        <SyncObservations observations={props.observations} />
+      )}
       {props.caps.sync_apply &&
         props.observations
           .filter(

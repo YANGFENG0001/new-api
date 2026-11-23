@@ -21,7 +21,7 @@ import { SyncUsageCard } from './sync-usage'
 
 export function SyncObservations(props: { observations: SyncObservation[] }) {
   return (
-    <div className='grid min-w-0 gap-3 md:grid-cols-2 2xl:grid-cols-3'>
+    <div className='grid min-w-0 gap-3'>
       {props.observations.map((o) => (
         <SyncUsageCard
           key={o.key}
@@ -32,6 +32,8 @@ export function SyncObservations(props: { observations: SyncObservation[] }) {
           fetchedAt={o.fetched_at}
           stale={o.stale}
           issue={o.pending}
+          estimatedUtilization={o.estimated_utilization}
+          localDelta={o.local_delta}
         />
       ))}
     </div>

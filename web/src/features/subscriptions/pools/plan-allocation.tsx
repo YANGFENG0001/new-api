@@ -16,213 +16,138 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { zodResolver } from '@hookform/resolvers/zod'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useState } from 'react'
-import { useForm } from 'react-hook-form'
+import { useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
-import type { z } from 'zod'
 
 import { DateTimePicker } from '@/components/datetime-picker'
-import { Dialog } from '@/components/dialog'
-import { Button } from '@/components/ui/button'
+import { ErrorState } from '@/components/error-state'
 import { Combobox } from '@/components/ui/combobox'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 
 import { poolAPI, type AllocationConfig } from './api'
 import { CycleEditor } from './cycle-editor'
-import { allocationSchema } from './schema'
 
-export function PlanAllocationSettings(props: { planId?: number }) {
+// Controlled fields are shared by plan creation and editing. The parent saves
+// the plan and these defaults together; editing fields never writes to the API.
+export function PlanAllocationFields(props: {
+  value: AllocationConfig
+  onChange: (value: AllocationConfig) => void
+  disabled?: boolean
+}) {
   const { t } = useTranslation()
-  const [open, setOpen] = useState(false)
-  const caps = useQuery({
-    queryKey: ['subscription-pools', 'capabilities'],
-    queryFn: poolAPI.capabilities,
+  const pools = useQuery({
+    queryKey: ['subscription-pools', 'list'],
+    queryFn: poolAPI.list,
+    enabled: props.value.mode === 'fixed',
+    staleTime: 10000,
   })
-  const config = useQuery({
-    queryKey: ['subscription-pools', 'plan', props.planId],
-    queryFn: () => poolAPI.config(props.planId ?? 0),
-    enabled: !!props.planId && !!caps.data?.read && open,
-  })
-  if (!caps.data?.read) return null
+  const value = props.value
   return (
-    <section className='space-y-3 rounded-lg border p-4'>
-      <h3 className='text-sm font-semibold'>
-        {t('Allocation and aligned cycles')}
-      </h3>
-      <p className='text-muted-foreground text-sm'>
+    <fieldset
+      disabled={props.disabled}
+      className='space-y-4 rounded-lg border p-4'
+    >
+      <Label htmlFor='plan-allocation-mode'>{t('Allocation mode')}</Label>
+      <Combobox
+        id='plan-allocation-mode'
+        value={value.mode}
+        options={[
+          { value: 'legacy', label: t('Traditional subscription') },
+          {
+            value: 'independent',
+            label: t('Independent multi-cycle subscription'),
+          },
+          { value: 'fixed', label: t('Default upstream pool') },
+          { value: 'assign', label: t('Administrator assignment required') },
+        ]}
+        onValueChange={(mode) => {
+          if (mode) props.onChange({ ...value, mode })
+        }}
+      />
+      <p className='text-muted-foreground text-xs'>
         {t(
           'Defaults only affect new subscriptions. Existing members keep their assigned pool.'
         )}
       </p>
-      <Button
-        type='button'
-        variant='outline'
-        disabled={!props.planId}
-        onClick={() => setOpen(true)}
-      >
-        {t('Configure allocation')}
-      </Button>
-      {!props.planId && (
-        <p className='text-muted-foreground text-xs'>
+      {value.mode === 'fixed' && (
+        <>
+          <Label htmlFor='plan-default-pool'>
+            {t('Default upstream pool')}
+          </Label>
+          <Combobox
+            id='plan-default-pool'
+            value={value.pool_id ? String(value.pool_id) : ''}
+            disabled={pools.isPending || pools.isError}
+            options={(pools.data ?? []).map((pool) => ({
+              value: String(pool.id),
+              label: pool.name,
+            }))}
+            onValueChange={(id) =>
+              props.onChange({ ...value, pool_id: Number(id) })
+            }
+          />
+          {pools.isError && <ErrorState onRetry={() => void pools.refetch()} />}
+          <p className='text-muted-foreground text-xs'>
+            {t(
+              'Cycle settings are managed in the upstream pool, not copied into the plan.'
+            )}
+          </p>
+          {(
+            pools.data?.find((pool) => pool.id === value.pool_id)?.cycles ?? []
+          ).map((cycle) => (
+            <p key={cycle.key} className='text-sm'>
+              {cycle.name} · {cycle.shared ? t('Shared') : t('Independent')}
+            </p>
+          ))}
+        </>
+      )}
+      {value.mode === 'assign' && (
+        <p className='text-sm'>
           {t(
-            'Save the plan first, then configure allocation before offering it for purchase.'
+            'Purchased subscriptions stay pending and cannot relay until an administrator assigns a pool.'
           )}
         </p>
       )}
-      <Dialog
-        open={open}
-        onOpenChange={setOpen}
-        title={t('Allocation and aligned cycles')}
-        contentClassName='sm:max-w-4xl'
-      >
-        {config.data && (
-          <AllocationForm
-            key={`${props.planId}-${config.data.version}`}
-            planId={props.planId ?? 0}
-            config={config.data}
-            canManage={!!caps.data.manage}
-            onClose={() => setOpen(false)}
-          />
-        )}
-        {config.isLoading && <p>{t('Loading...')}</p>}
-        {config.isError && (
-          <Button onClick={() => void config.refetch()}>{t('Retry')}</Button>
-        )}
-      </Dialog>
-    </section>
-  )
-}
-function AllocationForm(props: {
-  planId: number
-  config: AllocationConfig
-  canManage: boolean
-  onClose: () => void
-}) {
-  const { t } = useTranslation()
-  const client = useQueryClient()
-  const form = useForm<z.infer<typeof allocationSchema>>({
-    resolver: zodResolver(allocationSchema),
-    defaultValues: {
-      ...props.config,
-      plan_id: props.planId,
-      mode: (props.config.mode || 'independent') as
-        | 'independent'
-        | 'fixed'
-        | 'assign',
-    },
-  })
-  const pools = useQuery({
-    queryKey: ['subscription-pools', 'list'],
-    queryFn: poolAPI.list,
-  })
-  const save = useMutation({
-    mutationFn: (v: AllocationConfig) => poolAPI.saveConfig(props.planId, v),
-    onSuccess: () => {
-      void client.invalidateQueries({ queryKey: ['subscription-pools'] })
-      props.onClose()
-    },
-  })
-  const values = form.watch()
-  return (
-    <form
-      className='space-y-4'
-      onSubmit={(event) => {
-        event.stopPropagation()
-        void form.handleSubmit((v) => save.mutate(v))(event)
-      }}
-    >
-      <p className='text-muted-foreground text-sm'>
-        {t(
-          'Enabling aligned cycles replaces legacy quota settings for new subscriptions only.'
-        )}
-      </p>
-      <fieldset
-        disabled={!props.canManage || save.isPending}
-        className='space-y-4'
-      >
-        <Label>{t('Allocation mode')}</Label>
-        <Combobox
-          value={values.mode}
-          options={[
-            { value: 'independent', label: t('Independent subscription') },
-            { value: 'fixed', label: t('Default upstream pool') },
-            { value: 'assign', label: t('Administrator assignment required') },
-          ]}
-          onValueChange={(v) =>
-            form.setValue('mode', v as 'independent' | 'fixed' | 'assign')
-          }
+      {value.mode === 'independent' && (
+        <CycleEditor
+          value={value.cycles}
+          onChange={(cycles) => props.onChange({ ...value, cycles })}
         />
-        {values.mode === 'fixed' && (
-          <>
-            <Label>{t('Default upstream pool')}</Label>
-            <Combobox
-              value={String(values.pool_id || '')}
-              options={(pools.data ?? []).map((p) => ({
-                value: String(p.id),
-                label: p.name,
-              }))}
-              onValueChange={(v) => form.setValue('pool_id', Number(v))}
+      )}
+      {value.mode !== 'legacy' && (
+        <>
+          <Label>
+            <Switch
+              checked={value.fixed_end_time > 0}
+              onCheckedChange={(on) =>
+                props.onChange({
+                  ...value,
+                  fixed_end_time: on
+                    ? Math.floor(Date.now() / 1000) + 86400
+                    : 0,
+                })
+              }
             />
-            <p className='text-muted-foreground text-sm'>
-              {t(
-                'Cycle settings are managed in the upstream pool, not copied into the plan.'
-              )}
-            </p>
-          </>
-        )}
-        {values.mode === 'assign' && (
-          <p className='text-muted-foreground text-sm'>
-            {t(
-              'Purchased subscriptions stay pending and cannot relay until an administrator assigns a pool.'
-            )}
-          </p>
-        )}
-        {values.mode === 'independent' && (
-          <CycleEditor
-            value={values.cycles}
-            onChange={(v) => form.setValue('cycles', v)}
-          />
-        )}
-        <Label>
-          <Switch
-            checked={values.fixed_end_time > 0}
-            onCheckedChange={(v) =>
-              form.setValue(
-                'fixed_end_time',
-                v ? Math.floor(Date.now() / 1000) + 86400 : 0
-              )
-            }
-          />
-          {t('Fixed expiry instead of relative validity')}
-        </Label>
-        {values.fixed_end_time > 0 && (
-          <DateTimePicker
-            value={new Date(values.fixed_end_time * 1000)}
-            onChange={(d) =>
-              form.setValue(
-                'fixed_end_time',
-                d ? Math.floor(d.getTime() / 1000) : 0
-              )
-            }
-          />
-        )}
-        {Object.keys(form.formState.errors).length > 0 && (
-          <p role='alert' className='text-destructive'>
-            {t('Check pool name, expiry and all cycle settings before saving.')}
-          </p>
-        )}
-        {save.isError && (
-          <p role='alert' className='text-destructive'>
-            {t(save.error.message)}
-          </p>
-        )}
-        <Button type='submit' disabled={save.isPending}>
-          {t('Save')}
-        </Button>
-      </fieldset>
-    </form>
+            {t('Fixed expiry instead of relative validity')}
+          </Label>
+          {value.fixed_end_time > 0 ? (
+            <DateTimePicker
+              value={new Date(value.fixed_end_time * 1000)}
+              onChange={(date) =>
+                props.onChange({
+                  ...value,
+                  fixed_end_time: date ? Math.floor(date.getTime() / 1000) : 0,
+                })
+              }
+            />
+          ) : (
+            value.mode === 'fixed' && (
+              <p className='text-sm'>{t('Follow pool expiry')}</p>
+            )
+          )}
+        </>
+      )}
+    </fieldset>
   )
 }

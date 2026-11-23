@@ -33,6 +33,7 @@ function DurationInput(props: {
   value: number
   onChange: (n: number) => void
   id: string
+  disabled?: boolean
 }) {
   const { t } = useTranslation()
   const [unit, setUnit] = useState(props.value % 3600 === 0 ? 3600 : 1)
@@ -40,12 +41,14 @@ function DurationInput(props: {
     <div className='flex gap-2'>
       <Input
         id={props.id}
+        disabled={props.disabled}
         type='number'
         min={1}
         value={props.value / unit}
         onChange={(e) => props.onChange(Number(e.target.value) * unit)}
       />
       <Combobox
+        disabled={props.disabled}
         value={String(unit)}
         options={[
           { value: '1', label: t('Seconds') },
@@ -66,6 +69,8 @@ export function CycleEditor(props: {
   pooled?: boolean
   lockedKeys?: string[]
   disabled?: boolean
+  single?: boolean
+  followReset?: boolean
 }) {
   const { t } = useTranslation()
   function update(index: number, patch: Partial<CycleRule>) {
@@ -101,6 +106,7 @@ export function CycleEditor(props: {
               </Label>
               <DurationInput
                 id={`${rule.key}-duration`}
+                disabled={props.followReset}
                 value={rule.seconds}
                 onChange={(seconds) => update(i, { seconds })}
               />
@@ -108,6 +114,7 @@ export function CycleEditor(props: {
             <div>
               <Label>{t('Next reset time')}</Label>
               <DateTimePicker
+                disabled={props.followReset}
                 value={new Date(rule.next_reset * 1000)}
                 onChange={(d) =>
                   update(i, {
@@ -197,14 +204,16 @@ export function CycleEditor(props: {
           </Button>
         </section>
       ))}
-      <Button
-        type='button'
-        variant='outline'
-        disabled={props.value.length >= 32}
-        onClick={() => props.onChange([...props.value, newCycle(t('Cycle'))])}
-      >
-        {t('Add cycle')}
-      </Button>
+      {!props.single && (
+        <Button
+          type='button'
+          variant='outline'
+          disabled={props.value.length >= 32}
+          onClick={() => props.onChange([...props.value, newCycle(t('Cycle'))])}
+        >
+          {t('Add cycle')}
+        </Button>
+      )}
       <p className='text-muted-foreground text-xs'>
         {t(
           'Existing cycle keys cannot be removed. Disable them instead. Duration, scope and quota changes apply at the next boundary; moving the next reset preserves usage.'

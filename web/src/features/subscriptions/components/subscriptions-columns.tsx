@@ -24,9 +24,8 @@ import { BadgeCell } from '@/components/data-table'
 import { GroupBadge } from '@/components/group-badge'
 import { StatusBadge } from '@/components/status-badge'
 import { TableId } from '@/components/table-id'
-import { formatQuota } from '@/lib/format'
 
-import { formatDuration, formatResetPeriod } from '../lib'
+import { formatPlanValidity, formatPlanQuota, formatResetPeriod } from '../lib'
 import type { PlanRecord } from '../types'
 import { DataTableRowActions } from './data-table-row-actions'
 
@@ -79,7 +78,7 @@ export function useSubscriptionsColumns(): ColumnDef<PlanRecord>[] {
         header: t('Validity'),
         cell: ({ row }) => (
           <span className='text-muted-foreground'>
-            {formatDuration(row.original.plan, t)}
+            {formatPlanValidity(row.original, t)}
           </span>
         ),
         size: 100,
@@ -90,7 +89,10 @@ export function useSubscriptionsColumns(): ColumnDef<PlanRecord>[] {
         meta: { mobileHidden: true },
         cell: ({ row }) => (
           <span className='text-muted-foreground'>
-            {formatResetPeriod(row.original.plan, t)}
+            {row.original.allocation &&
+            row.original.allocation.mode !== 'legacy'
+              ? t('Aligned cycles')
+              : formatResetPeriod(row.original.plan, t)}
           </span>
         ),
         size: 100,
@@ -165,10 +167,9 @@ export function useSubscriptionsColumns(): ColumnDef<PlanRecord>[] {
         header: t('Plan Quota'),
         meta: { mobileHidden: true },
         cell: ({ row }) => {
-          const total = Number(row.original.plan.total_amount || 0)
           return (
-            <span className='text-muted-foreground'>
-              {total > 0 ? formatQuota(total) : t('Unlimited')}
+            <span className='text-muted-foreground whitespace-pre-line'>
+              {formatPlanQuota(row.original, t)}
             </span>
           )
         },

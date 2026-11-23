@@ -156,20 +156,20 @@ export function ScheduleEditor({
       </div>
 
       <p className='text-muted-foreground text-xs'>
-        {t(
-          timingOnly
-            ? 'Overlapping windows use the highest priority, then the window identifier. Outside all windows the pool is inactive.'
-            : 'Rules are evaluated independently. When several rules share the highest priority that matches now, their limits are merged and the strictest value wins. Lower-priority matches are ignored. An empty weekday list means every day; an empty date list means every date.'
-        )}
+        {timingOnly
+          ? t(
+              'Overlapping windows use the highest priority, then the window identifier. Outside all windows the pool is inactive.'
+            )
+          : t(
+              'Rules are evaluated independently. When several rules share the highest priority that matches now, their limits are merged and the strictest value wins. Lower-priority matches are ignored. An empty weekday list means every day; an empty date list means every date.'
+            )}
       </p>
 
       {rules.length === 0 && (
         <div className='text-muted-foreground rounded-md border border-dashed p-6 text-center text-sm'>
-          {t(
-            timingOnly
-              ? 'No windows configured. This scheduled pool is inactive.'
-              : 'No time windows. Limits apply all day.'
-          )}
+          {timingOnly
+            ? t('No windows configured. This scheduled pool is inactive.')
+            : t('No time windows. Limits apply all day.')}
         </div>
       )}
 

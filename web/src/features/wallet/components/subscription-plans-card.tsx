@@ -22,6 +22,8 @@ import { useState, useEffect, useMemo, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
+import { ErrorState } from '@/components/error-state'
+import { LoadingState } from '@/components/loading-state'
 import {
   StatusBadge,
   dotColorMap,
@@ -52,7 +54,11 @@ import {
   updateBillingPreference,
 } from '@/features/subscriptions/api'
 import { SubscriptionPurchaseDialog } from '@/features/subscriptions/components/dialogs/subscription-purchase-dialog'
-import { formatDuration, formatResetPeriod } from '@/features/subscriptions/lib'
+import {
+  formatPlanValidity,
+  formatPlanQuota,
+  formatResetPeriod,
+} from '@/features/subscriptions/lib'
 import { poolAPI } from '@/features/subscriptions/pools/api'
 import { SelfAlignedUsage } from '@/features/subscriptions/pools/self-usage'
 import type {
@@ -108,6 +114,7 @@ export function SubscriptionPlansCard({
   const alignedUsage = useQuery({
     queryKey: ['subscription-pools', 'self-usage'],
     queryFn: poolAPI.usage,
+    staleTime: 10000,
     refetchInterval: 30000,
   })
 
@@ -278,7 +285,6 @@ export function SubscriptionPlansCard({
         disableHoverEffect
         contentClassName='space-y-4 sm:space-y-5'
       >
-        <SelfAlignedUsage />
         {/* My subscriptions & billing preference */}
         <div className='rounded-xl border p-3 sm:p-4'>
           <div className='flex flex-wrap items-center justify-between gap-2.5 sm:gap-3'>
@@ -405,136 +411,147 @@ export function SubscriptionPlansCard({
             </p>
           )}
 
-          {hasAny && (
+          {alignedUsage.isPending && <LoadingState />}
+          {alignedUsage.isError && (
+            <ErrorState onRetry={() => void alignedUsage.refetch()} />
+          )}
+          {hasAny && alignedUsage.data && !alignedUsage.isError && (
             <>
               <Separator className='my-3' />
               <div className='max-h-64 space-y-3 overflow-y-auto pr-1'>
-                {allSubscriptions
-                  .filter(
-                    (sub) =>
-                      !alignedUsage.data?.subscriptions.some(
-                        (s) =>
-                          s.managed && s.subscription_id === sub.subscription.id
-                      )
+                {allSubscriptions.map((sub) => {
+                  const subscription = sub.subscription
+                  const usage = alignedUsage.data.subscriptions.find(
+                    (s) => s.subscription_id === subscription.id
                   )
-                  .map((sub) => {
-                    const subscription = sub.subscription
-                    const totalAmount = Number(subscription?.amount_total || 0)
-                    const usedAmount = Number(subscription?.amount_used || 0)
-                    const remainAmount =
-                      totalAmount > 0
-                        ? Math.max(0, totalAmount - usedAmount)
-                        : 0
-                    const planTitle =
-                      planTitleMap.get(subscription?.plan_id) || ''
-                    const remainDays = getRemainingDays(sub)
-                    const usagePercent = getUsagePercent(sub)
-                    const now = Date.now() / 1000
-                    const isExpired = (subscription?.end_time || 0) < now
-                    const isCancelled = subscription?.status === 'cancelled'
-                    const isActive =
-                      subscription?.status === 'active' && !isExpired
-                    const nextResetTime = subscription?.next_reset_time ?? 0
-                    let statusBadge = (
+                  if (!usage) {
+                    return (
+                      <ErrorState
+                        key={subscription.id}
+                        onRetry={() => void alignedUsage.refetch()}
+                      />
+                    )
+                  }
+                  if (usage.managed) {
+                    return (
+                      <SelfAlignedUsage
+                        key={subscription.id}
+                        subscription={usage}
+                        title={planTitleMap.get(subscription.plan_id)}
+                      />
+                    )
+                  }
+                  const totalAmount = Number(subscription?.amount_total || 0)
+                  const usedAmount = Number(subscription?.amount_used || 0)
+                  const remainAmount =
+                    totalAmount > 0 ? Math.max(0, totalAmount - usedAmount) : 0
+                  const planTitle =
+                    planTitleMap.get(subscription?.plan_id) || ''
+                  const remainDays = getRemainingDays(sub)
+                  const usagePercent = getUsagePercent(sub)
+                  const now = Date.now() / 1000
+                  const isExpired = (subscription?.end_time || 0) < now
+                  const isCancelled = subscription?.status === 'cancelled'
+                  const isActive =
+                    subscription?.status === 'active' && !isExpired
+                  const nextResetTime = subscription?.next_reset_time ?? 0
+                  let statusBadge = (
+                    <StatusBadge
+                      label={t('Expired')}
+                      variant='neutral'
+                      copyable={false}
+                    />
+                  )
+                  if (isActive) {
+                    statusBadge = (
                       <StatusBadge
-                        label={t('Expired')}
+                        label={t('Active')}
+                        variant='success'
+                        copyable={false}
+                      />
+                    )
+                  } else if (isCancelled) {
+                    statusBadge = (
+                      <StatusBadge
+                        label={t('Cancelled')}
                         variant='neutral'
                         copyable={false}
                       />
                     )
-                    if (isActive) {
-                      statusBadge = (
-                        <StatusBadge
-                          label={t('Active')}
-                          variant='success'
-                          copyable={false}
-                        />
-                      )
-                    } else if (isCancelled) {
-                      statusBadge = (
-                        <StatusBadge
-                          label={t('Cancelled')}
-                          variant='neutral'
-                          copyable={false}
-                        />
-                      )
-                    }
+                  }
 
-                    let endTimeLabel = t('Expired at')
-                    if (isActive) {
-                      endTimeLabel = t('Until')
-                    } else if (isCancelled) {
-                      endTimeLabel = t('Cancelled at')
-                    }
+                  let endTimeLabel = t('Expired at')
+                  if (isActive) {
+                    endTimeLabel = t('Until')
+                  } else if (isCancelled) {
+                    endTimeLabel = t('Cancelled at')
+                  }
 
-                    return (
-                      <div
-                        key={subscription?.id}
-                        className='bg-background rounded-md border p-3 text-xs'
-                      >
-                        <div className='flex items-center justify-between'>
-                          <div className='flex items-center gap-2'>
-                            <span className='font-medium'>
-                              {planTitle
-                                ? `${planTitle} · ${t('Subscription')} #${subscription?.id}`
-                                : `${t('Subscription')} #${subscription?.id}`}
-                            </span>
-                            {statusBadge}
-                          </div>
-                          {isActive && (
-                            <span className='text-muted-foreground'>
-                              {t('{{count}} days remaining', {
-                                count: remainDays,
-                              })}
-                            </span>
-                          )}
+                  return (
+                    <div
+                      key={subscription?.id}
+                      className='bg-background rounded-md border p-3 text-xs'
+                    >
+                      <div className='flex items-center justify-between'>
+                        <div className='flex items-center gap-2'>
+                          <span className='font-medium'>
+                            {planTitle
+                              ? `${planTitle} · ${t('Subscription')} #${subscription?.id}`
+                              : `${t('Subscription')} #${subscription?.id}`}
+                          </span>
+                          {statusBadge}
                         </div>
-                        <div className='text-muted-foreground mt-1.5'>
-                          {endTimeLabel}{' '}
-                          {new Date(
-                            (subscription?.end_time || 0) * 1000
-                          ).toLocaleString()}
-                        </div>
-                        {isActive && nextResetTime > 0 && (
-                          <div className='text-muted-foreground mt-1'>
-                            {t('Next reset')}:{' '}
-                            {new Date(nextResetTime * 1000).toLocaleString()}
-                          </div>
-                        )}
-                        <div className='text-muted-foreground mt-1'>
-                          {t('Total Quota')}:{' '}
-                          {totalAmount > 0 ? (
-                            <Tooltip>
-                              <TooltipTrigger
-                                render={<span className='cursor-help' />}
-                              >
-                                {formatQuota(usedAmount)}/
-                                {formatQuota(totalAmount)} · {t('Remaining')}{' '}
-                                {formatQuota(remainAmount)}
-                              </TooltipTrigger>
-                              <TooltipContent>
-                                {t('Raw Quota')}: {usedAmount}/{totalAmount} ·{' '}
-                                {t('Remaining')} {remainAmount}
-                              </TooltipContent>
-                            </Tooltip>
-                          ) : (
-                            t('Unlimited')
-                          )}
-                          {totalAmount > 0 && (
-                            <span className='ml-2'>
-                              {t('Used')} {usagePercent}%
-                            </span>
-                          )}
-                        </div>
-                        {totalAmount > 0 && isActive && (
-                          <Progress
-                            value={usagePercent}
-                            className='mt-2 h-1.5'
-                          />
+                        {isActive && (
+                          <span className='text-muted-foreground'>
+                            {t('{{count}} days remaining', {
+                              count: remainDays,
+                            })}
+                          </span>
                         )}
                       </div>
-                    )
-                  })}
+                      <div className='text-muted-foreground mt-1.5'>
+                        {endTimeLabel}{' '}
+                        {new Date(
+                          (subscription?.end_time || 0) * 1000
+                        ).toLocaleString()}
+                      </div>
+                      {isActive && nextResetTime > 0 && (
+                        <div className='text-muted-foreground mt-1'>
+                          {t('Next reset')}:{' '}
+                          {new Date(nextResetTime * 1000).toLocaleString()}
+                        </div>
+                      )}
+                      <div className='text-muted-foreground mt-1'>
+                        {t('Total Quota')}:{' '}
+                        {totalAmount > 0 ? (
+                          <Tooltip>
+                            <TooltipTrigger
+                              render={<span className='cursor-help' />}
+                            >
+                              {formatQuota(usedAmount)}/
+                              {formatQuota(totalAmount)} · {t('Remaining')}{' '}
+                              {formatQuota(remainAmount)}
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              {t('Raw Quota')}: {usedAmount}/{totalAmount} ·{' '}
+                              {t('Remaining')} {remainAmount}
+                            </TooltipContent>
+                          </Tooltip>
+                        ) : (
+                          t('Unlimited')
+                        )}
+                        {totalAmount > 0 && (
+                          <span className='ml-2'>
+                            {t('Used')} {usagePercent}%
+                          </span>
+                        )}
+                      </div>
+                      {totalAmount > 0 && isActive && (
+                        <Progress value={usagePercent} className='mt-2 h-1.5' />
+                      )}
+                    </div>
+                  )
+                })}
               </div>
             </>
           )}
@@ -552,7 +569,6 @@ export function SubscriptionPlansCard({
             {plans.map((p, index) => {
               const plan = p?.plan
               if (!plan) return null
-              const totalAmount = Number(plan.total_amount || 0)
               const price = Number(plan.price_amount || 0).toFixed(2)
               const isPopular = index === 0 && plans.length > 1
               const limit = Number(plan.max_purchase_per_user || 0)
@@ -560,13 +576,12 @@ export function SubscriptionPlansCard({
               const reached = limit > 0 && count >= limit
 
               const benefits = [
-                `${t('Validity Period')}: ${formatDuration(plan, t)}`,
+                `${t('Validity Period')}: ${formatPlanValidity(p, t)}`,
+                (!p.allocation || p.allocation.mode === 'legacy') &&
                 formatResetPeriod(plan, t) !== t('No Reset')
                   ? `${t('Quota Reset')}: ${formatResetPeriod(plan, t)}`
                   : null,
-                totalAmount > 0
-                  ? `${t('Total Quota')}: ${formatQuota(totalAmount)}`
-                  : `${t('Total Quota')}: ${t('Unlimited')}`,
+                `${t('Plan Quota')}: ${formatPlanQuota(p, t)}`,
                 limit > 0 ? `${t('Purchase Limit')}: ${limit}` : null,
                 plan.upgrade_group
                   ? `${t('Upgrade Group')}: ${plan.upgrade_group}`

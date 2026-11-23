@@ -28,6 +28,12 @@ import { StaticDataTable } from '@/components/data-table'
 import { DateTimePicker } from '@/components/datetime-picker'
 import { ErrorState } from '@/components/error-state'
 import { LoadingState } from '@/components/loading-state'
+import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from '@/components/ui/accordion'
 import { Button } from '@/components/ui/button'
 import { Combobox } from '@/components/ui/combobox'
 import { Input } from '@/components/ui/input'
@@ -39,7 +45,10 @@ import { toIntlLocale } from '@/i18n/languages'
 import { poolAPI, type Pool, type Capabilities, type CycleView } from './api'
 import { CycleProgress } from './cycle-progress'
 import { snapshotSchema } from './schema'
+import { syncAPI } from './sync-api'
 import { PoolSyncBinding } from './sync-binding'
+import { SyncObservations } from './sync-observations'
+import { SyncTimestamp } from './sync-usage'
 
 export function PoolDetail(props: {
   pool: Pool
@@ -51,9 +60,17 @@ export function PoolDetail(props: {
   const { t, i18n } = useTranslation()
   const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
   const client = useQueryClient()
+  const binding = useQuery({
+    queryKey: ['subscription-sync', 'binding', props.pool.id],
+    queryFn: () => syncAPI.binding(props.pool.id),
+    enabled: !!props.caps.sync_read,
+    refetchInterval: 30000,
+    staleTime: 10000,
+  })
   const detail = useQuery({
     queryKey: ['subscription-pools', 'detail', props.pool.id],
     queryFn: () => poolAPI.detail(props.pool.id),
+    refetchInterval: 10000,
   })
   const [reset, setReset] = useState<string | null>(null)
   const resetMutation = useMutation({
@@ -64,6 +81,11 @@ export function PoolDetail(props: {
     },
   })
   const actions: Record<string, string> = {
+    binding_save: t('Save synchronization binding'),
+    unbind: t('Unbind synchronization'),
+    pool_sync: t('Automatic synchronization'),
+    reset_confirm: t('Confirm reset alignment'),
+    binding_error: t('Unavailable'),
     save: t('Save'),
     assign: t('Assign'),
     reset: t('Reset'),
@@ -76,41 +98,108 @@ export function PoolDetail(props: {
     cancelled: t('Cancelled'),
     expired: t('Expired'),
   }
+  const events = [
+    ...(detail.data?.events ?? []).map((event) => ({
+      ...event,
+      recordKey: `local-${event.id}`,
+      type: t('Local usage statistics'),
+      message: '',
+      changes: undefined,
+    })),
+    ...(detail.data?.sync_events ?? []).map((event) => ({
+      ...event,
+      recordKey: `sync-${event.id}`,
+      type: t('Automatic synchronization'),
+      subscription_id: 0,
+    })),
+  ].sort((a, b) => b.created_at - a.created_at || b.id - a.id)
   return (
     <div className='space-y-4 pb-5'>
       <Tabs
         defaultValue='overview'
-        value={props.tab}
+        value={
+          props.tab === 'sync' || props.tab === 'upstream'
+            ? 'settings'
+            : props.tab
+        }
         onValueChange={(value) => props.onTabChange?.(String(value))}
       >
         <TabsList className='max-w-full justify-start overflow-x-auto'>
-          {props.caps.sync_read && (
-            <TabsTrigger value='sync'>
-              {t('Automatic synchronization')}
-            </TabsTrigger>
-          )}
           <TabsTrigger value='overview'>{t('Overview')}</TabsTrigger>
-          {props.settings && (
+          {(props.settings ||
+            props.caps.sync_read ||
+            props.caps.calibrate ||
+            props.caps.shared_reset) && (
             <TabsTrigger value='settings'>{t('Settings')}</TabsTrigger>
           )}
           <TabsTrigger value='members'>{t('Members')}</TabsTrigger>
           <TabsTrigger value='operations'>{t('Operation records')}</TabsTrigger>
-          <TabsTrigger value='upstream'>{t('Manual calibration')}</TabsTrigger>
         </TabsList>
-        {props.settings && (
-          <TabsContent value='settings'>{props.settings}</TabsContent>
-        )}
-        {props.caps.sync_read && (
-          <TabsContent value='sync'>
-            <PoolSyncBinding pool={props.pool} caps={props.caps} />
-          </TabsContent>
-        )}
+        <TabsContent value='settings'>
+          {props.settings ??
+            (props.caps.sync_read && (
+              <PoolSyncBinding pool={props.pool} caps={props.caps} />
+            ))}
+          {(props.caps.calibrate || props.caps.shared_reset) && (
+            <Accordion>
+              <AccordionItem value='advanced'>
+                <AccordionTrigger>{t('Advanced operations')}</AccordionTrigger>
+                <AccordionContent className='space-y-4'>
+                  {props.caps.calibrate && (
+                    <SnapshotForm
+                      pool={props.pool}
+                      cycles={detail.data?.cycles ?? []}
+                    />
+                  )}
+                  {props.caps.shared_reset && (
+                    <div className='space-y-2'>
+                      <p className='text-destructive text-sm'>
+                        {t(
+                          'Pool cycle reset affects every member and does not reset other cycles.'
+                        )}
+                      </p>
+                      <div className='flex flex-wrap gap-2'>
+                        {props.pool.cycles.map((cycle) => (
+                          <Button
+                            key={cycle.key}
+                            variant='outline'
+                            onClick={() => setReset(cycle.key)}
+                          >
+                            {t('Reset')} · {cycle.name}
+                          </Button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </AccordionContent>
+              </AccordionItem>
+            </Accordion>
+          )}
+        </TabsContent>
         <TabsContent value='overview'>
           {detail.isLoading && <LoadingState />}
           {detail.isError && (
             <ErrorState onRetry={() => void detail.refetch()} />
           )}
-          <CycleProgress cycles={detail.data?.cycles ?? []} />
+          <CycleProgress
+            cycles={detail.data?.cycles ?? []}
+            observations={
+              props.caps.sync_read ? binding.data?.observations : undefined
+            }
+          />
+          {props.caps.sync_read && binding.isError && (
+            <ErrorState onRetry={() => void binding.refetch()} />
+          )}
+          {props.caps.sync_read && (
+            <SyncObservations
+              observations={(binding.data?.observations ?? []).filter(
+                (observation) =>
+                  !detail.data?.cycles.some(
+                    (cycle) => cycle.key === observation.key
+                  )
+              )}
+            />
+          )}
         </TabsContent>
         <TabsContent value='members'>
           {detail.isLoading && <LoadingState />}
@@ -134,7 +223,12 @@ export function PoolDetail(props: {
               {
                 id: 'end',
                 header: t('Expiry time'),
-                cell: (m) => new Date(m.end_time * 1000).toLocaleString(locale),
+                cell: (m) => (
+                  <SyncTimestamp
+                    value={m.end_time === 253402300799 ? 0 : m.end_time}
+                    fallback='Never'
+                  />
+                ),
               },
               {
                 id: 'status',
@@ -150,8 +244,8 @@ export function PoolDetail(props: {
             <ErrorState onRetry={() => void detail.refetch()} />
           )}
           <StaticDataTable
-            data={detail.data?.events ?? []}
-            getRowKey={(e) => e.id}
+            data={events}
+            getRowKey={(e) => e.recordKey}
             columns={[
               {
                 id: 'time',
@@ -160,9 +254,33 @@ export function PoolDetail(props: {
                   new Date(e.created_at * 1000).toLocaleString(locale),
               },
               {
+                id: 'type',
+                header: t('Type'),
+                cell: (e) => e.type,
+              },
+              {
                 id: 'action',
                 header: t('Action'),
                 cell: (e) => actions[e.action] ?? t('Operation records'),
+              },
+              {
+                id: 'details',
+                header: t('Details'),
+                cell: (e) => (
+                  <div className='space-y-1 text-xs'>
+                    {e.message && <p>{t(e.message)}</p>}
+                    {e.changes?.map((change) => (
+                      <p key={change.key}>
+                        {change.key} ·{' '}
+                        {t(change.message || 'Automatic synchronization')}
+                        {change.before > 0 &&
+                          ` · ${new Date(change.before * 1000).toLocaleString(locale)}`}
+                        {change.after > 0 &&
+                          ` → ${new Date(change.after * 1000).toLocaleString(locale)}`}
+                      </p>
+                    ))}
+                  </div>
+                ),
               },
               {
                 id: 'actor',
@@ -178,35 +296,7 @@ export function PoolDetail(props: {
             ]}
           />
         </TabsContent>
-        <TabsContent value='upstream'>
-          {props.caps.calibrate && (
-            <SnapshotForm
-              pool={props.pool}
-              cycles={detail.data?.cycles ?? []}
-            />
-          )}
-        </TabsContent>
       </Tabs>
-      {props.caps.shared_reset && (
-        <div className='space-y-2'>
-          <p className='text-destructive text-sm'>
-            {t(
-              'Pool cycle reset affects every member and does not reset other cycles.'
-            )}
-          </p>
-          <div className='flex flex-wrap gap-2'>
-            {props.pool.cycles.map((c) => (
-              <Button
-                key={c.key}
-                variant='outline'
-                onClick={() => setReset(c.key)}
-              >
-                {t('Reset')} · {c.name}
-              </Button>
-            ))}
-          </div>
-        </div>
-      )}
       <ConfirmDialog
         open={reset !== null}
         onOpenChange={(v) => {

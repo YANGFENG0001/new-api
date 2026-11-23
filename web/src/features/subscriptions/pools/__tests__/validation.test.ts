@@ -16,8 +16,15 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import i18next from 'i18next'
 import { describe, expect, test } from 'vitest'
 
+import {
+  formatPlanQuota,
+  formatPlanValidity,
+  formatTimestamp,
+} from '../../lib/format'
+import { subscriptionPlanSchema, type PlanRecord } from '../../types'
 import {
   allocationSchema,
   cycleSchema,
@@ -28,6 +35,66 @@ import {
 } from '../schema'
 
 describe('aligned subscription validation', () => {
+  test('plan terms describe mixed cycles and fixed expiry instead of legacy unlimited quota', () => {
+    const plan = subscriptionPlanSchema.parse({
+      id: 1,
+      title: 'Terms',
+      price_amount: 1,
+      duration_unit: 'month',
+      duration_value: 1,
+      quota_reset_period: 'daily',
+      enabled: true,
+      sort_order: 0,
+      max_purchase_per_user: 0,
+      total_amount: 0,
+    })
+    const record: PlanRecord = {
+      plan,
+      allocation: {
+        mode: 'fixed',
+        available: true,
+        fixed_end_time: 1890000000,
+        cycles: [
+          {
+            name: 'Shared short',
+            seconds: 137,
+            shared: true,
+            unlimited: false,
+            limit: 100,
+          },
+          {
+            name: 'Personal long',
+            seconds: 604800,
+            shared: false,
+            unlimited: false,
+            limit: 500,
+          },
+        ],
+      },
+    }
+    const quota = formatPlanQuota(record, i18next.t)
+    expect(quota).toContain('Shared short · 137 seconds · Shared')
+    expect(quota).toContain('Personal long · 7 days · Independent')
+    expect(quota).not.toContain('Unlimited')
+    expect(formatPlanValidity(record, i18next.t)).not.toContain('months')
+    expect(formatTimestamp(253402300799)).toBe('Never')
+    const allocation = record.allocation
+    if (!allocation) throw new Error('Missing allocation fixture')
+    allocation.cycles[0].seconds = 18000
+    expect(formatPlanQuota(record, i18next.t)).toContain('5 hours')
+    allocation.cycles[0].seconds = 120
+    expect(formatPlanQuota(record, i18next.t)).toContain('2 minutes')
+    allocation.cycles = []
+    expect(formatPlanQuota(record, i18next.t)).toBe('Unknown')
+    allocation.available = false
+    expect(formatPlanQuota(record, i18next.t)).toBe('Unavailable')
+    allocation.mode = 'assign'
+    expect(formatPlanQuota(record, i18next.t)).toBe(
+      'Administrator assignment required'
+    )
+    record.allocation = undefined
+    expect(formatPlanQuota(record, i18next.t)).toBe('Unlimited')
+  })
   test('new custom cycles are independent and accept arbitrary elapsed durations', () => {
     const cycle = { ...newCycle('Custom'), seconds: 137 }
     expect(cycle.shared).toBe(false)

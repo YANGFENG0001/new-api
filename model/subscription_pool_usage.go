@@ -36,6 +36,7 @@ type SubscriptionUsageView struct {
 }
 
 type SubscriptionPoolOverview struct {
+	SubscriptionIDs  []int                             `json:"subscription_ids"`
 	ID               int                               `json:"id"`
 	Name             string                            `json:"name"`
 	EndTime          int64                             `json:"end_time"`
@@ -54,6 +55,113 @@ type SubscriptionObservationView struct {
 	SampledAt   int64  `json:"sampled_at"`
 	WindowStart int64  `json:"window_start"`
 	WindowEnd   int64  `json:"window_end"`
+}
+
+// Purchase/admin catalogs expose policy terms, never pool identity or routing.
+type SubscriptionPlanAllocationSummary struct {
+	Mode         string                         `json:"mode"`
+	Available    bool                           `json:"available"`
+	FixedEndTime int64                          `json:"fixed_end_time"`
+	Cycles       []SubscriptionPlanCycleSummary `json:"cycles"`
+}
+
+type SubscriptionPlanCycleSummary struct {
+	Name      string `json:"name"`
+	Seconds   int64  `json:"seconds"`
+	Limit     int64  `json:"limit"`
+	Unlimited bool   `json:"unlimited"`
+	Shared    bool   `json:"shared"`
+}
+
+func GetSubscriptionPlanAllocationSummaries(ids []int) (map[int]SubscriptionPlanAllocationSummary, error) {
+	result := make(map[int]SubscriptionPlanAllocationSummary, len(ids))
+	if len(ids) == 0 {
+		return result, nil
+	}
+	for _, id := range ids {
+		result[id] = SubscriptionPlanAllocationSummary{Mode: "legacy", Available: true, Cycles: []SubscriptionPlanCycleSummary{}}
+	}
+	var configs []SubscriptionPlanAllocation
+	if err := DB.Where("plan_id IN ?", ids).Find(&configs).Error; err != nil {
+		return nil, err
+	}
+	poolIDs := []int{}
+	for _, cfg := range configs {
+		if cfg.Mode == "fixed" {
+			poolIDs = append(poolIDs, cfg.PoolID)
+		}
+	}
+	var pools []SubscriptionPool
+	if len(poolIDs) > 0 {
+		if err := DB.Where("id IN ?", poolIDs).Find(&pools).Error; err != nil {
+			return nil, err
+		}
+	}
+	byID := make(map[int]SubscriptionPool, len(pools))
+	owners := make([]string, 0, len(pools))
+	for _, pool := range pools {
+		byID[pool.Id] = pool
+		owners = append(owners, allocationOwner(0, pool.Id))
+	}
+	var states []SubscriptionCycleState
+	if len(owners) > 0 {
+		if err := DB.Where("owner IN ?", owners).Find(&states).Error; err != nil {
+			return nil, err
+		}
+	}
+	byOwner := map[string]map[string]SubscriptionCycleState{}
+	for _, state := range states {
+		if byOwner[state.Owner] == nil {
+			byOwner[state.Owner] = map[string]SubscriptionCycleState{}
+		}
+		byOwner[state.Owner][state.CycleKey] = state
+	}
+	for _, cfg := range configs {
+		if cfg.Mode == "legacy" {
+			continue
+		}
+		summary := SubscriptionPlanAllocationSummary{Mode: cfg.Mode, Available: true, FixedEndTime: cfg.FixedEndTime, Cycles: []SubscriptionPlanCycleSummary{}}
+		raw := cfg.Rules
+		if cfg.Mode == "fixed" {
+			pool, found := byID[cfg.PoolID]
+			summary.Available = found && pool.Enabled && pool.EndTime > GetDBTimestamp()
+			raw = pool.Rules
+			if cfg.FixedEndTime == 0 {
+				summary.FixedEndTime = pool.EndTime
+			} else if found {
+				summary.FixedEndTime = min(cfg.FixedEndTime, pool.EndTime)
+			}
+		}
+		if summary.FixedEndTime > 0 && summary.FixedEndTime <= GetDBTimestamp() {
+			summary.Available = false
+		}
+		var rules []SubscriptionCycleRule
+		if raw != "" {
+			if err := common.UnmarshalJsonStr(raw, &rules); err != nil {
+				return nil, err
+			}
+		}
+		for _, rule := range rules {
+			if cfg.Mode == "fixed" {
+				if state, found := byOwner[allocationOwner(0, cfg.PoolID)][rule.Key]; found {
+					// Catalog reads do not advance windows or create counters. Until
+					// the boundary, new members also receive the active pool rule.
+					active := state.Rule
+					if state.EndTime <= GetDBTimestamp() && state.PendingRule != "" {
+						active = state.PendingRule
+					}
+					if err := common.UnmarshalJsonStr(active, &rule); err != nil {
+						return nil, err
+					}
+				}
+			}
+			if rule.Enabled {
+				summary.Cycles = append(summary.Cycles, SubscriptionPlanCycleSummary{Name: rule.Name, Seconds: rule.Seconds, Limit: rule.Limit, Unlimited: rule.Unlimited, Shared: rule.Shared})
+			}
+		}
+		result[cfg.PlanID] = summary
+	}
+	return result, nil
 }
 
 func subscriptionCycleViewsTx(tx *gorm.DB, owner string, raw string, userID int, aggregateOnly bool, now int64) ([]SubscriptionCycleView, error) {
@@ -197,11 +305,11 @@ func GetSubscriptionPoolOverview(userID int) ([]SubscriptionPoolOverview, error)
 				return err
 			}
 			// Recheck membership under the assignment's resource lock.
-			var count int64
-			if err := tx.Table("subscription_allocations AS a").Joins("JOIN user_subscriptions AS s ON s.id = a.subscription_id").Where("a.user_id = ? AND a.pool_id = ? AND a.pending = ? AND s.status = ? AND s.end_time > ?", userID, id, false, "active", GetDBTimestamp()).Count(&count).Error; err != nil {
+			var subscriptionIDs []int
+			if err := tx.Table("subscription_allocations AS a").Joins("JOIN user_subscriptions AS s ON s.id = a.subscription_id").Where("a.user_id = ? AND a.pool_id = ? AND a.pending = ? AND s.status = ? AND s.end_time > ?", userID, id, false, "active", GetDBTimestamp()).Order("a.subscription_id").Pluck("a.subscription_id", &subscriptionIDs).Error; err != nil {
 				return err
 			}
-			if count == 0 || !pool.Enabled || pool.EndTime <= GetDBTimestamp() {
+			if len(subscriptionIDs) == 0 || !pool.Enabled || pool.EndTime <= GetDBTimestamp() {
 				return nil
 			}
 			cycles, err := subscriptionCycleViewsTx(tx, allocationOwner(0, id), pool.Rules, 0, true, GetDBTimestamp())
@@ -228,7 +336,7 @@ func GetSubscriptionPoolOverview(userID int) ([]SubscriptionPoolOverview, error)
 			for i := range syncViews {
 				syncViews[i].Digest = ""
 			}
-			result = append(result, SubscriptionPoolOverview{SyncObservations: syncViews, ID: id, Name: pool.Name, EndTime: pool.EndTime, UpdatedAt: pool.UpdatedAt, Cycles: cycles, Observations: observations})
+			result = append(result, SubscriptionPoolOverview{SubscriptionIDs: subscriptionIDs, SyncObservations: syncViews, ID: id, Name: pool.Name, EndTime: pool.EndTime, UpdatedAt: pool.UpdatedAt, Cycles: cycles, Observations: observations})
 			return nil
 		})
 		if err != nil {

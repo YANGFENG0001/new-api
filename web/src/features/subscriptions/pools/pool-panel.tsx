@@ -23,15 +23,15 @@ import { useTranslation } from 'react-i18next'
 import { StaticDataTable } from '@/components/data-table'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { toIntlLocale } from '@/i18n/languages'
 
 import { poolAPI, type Pool, type Capabilities } from './api'
 import { PoolDetail } from './pool-detail'
 import { PoolEditor } from './pool-editor'
+import { PoolSyncBinding } from './sync-binding'
+import { SyncTimestamp } from './sync-usage'
 
 export function PoolPanel(props: { caps: Capabilities }) {
-  const { t, i18n } = useTranslation()
-  const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
+  const { t } = useTranslation()
   const query = useQuery({
     queryKey: ['subscription-pools', 'list'],
     queryFn: poolAPI.list,
@@ -41,7 +41,7 @@ export function PoolPanel(props: { caps: Capabilities }) {
   const [search, setSearch] = useState('')
   function saved(pool: Pool) {
     setSelected(pool)
-    if (props.caps.sync_read) setTab('sync')
+    setTab('overview')
   }
   if (selected) {
     if (selected === 'new') {
@@ -51,6 +51,12 @@ export function PoolPanel(props: { caps: Capabilities }) {
             canManage={props.caps.manage}
             onClose={() => setSelected(null)}
             onSaved={props.caps.sync_read ? saved : undefined}
+            canCreateFromSync={
+              !!props.caps.sync_read &&
+              !!props.caps.sync_binding &&
+              !!props.caps.sync_apply
+            }
+            canRunSync={!!props.caps.sync_run}
           />
         </div>
       )
@@ -58,6 +64,22 @@ export function PoolPanel(props: { caps: Capabilities }) {
     const cached = query.data?.find((p) => p.id === selected.id)
     const pool =
       cached && cached.version >= selected.version ? cached : selected
+    let settings
+    if (props.caps.manage) {
+      settings = (
+        <PoolEditor
+          key={pool.id}
+          pool={pool}
+          embedded
+          canManage={props.caps.manage}
+          caps={props.caps}
+          onClose={() => setSelected(null)}
+          onSaved={(result) => setSelected(result)}
+        />
+      )
+    } else if (props.caps.sync_read) {
+      settings = <PoolSyncBinding pool={pool} caps={props.caps} />
+    }
     return (
       <div className='h-full space-y-5 overflow-y-auto px-1'>
         <div className='flex flex-wrap items-center justify-between gap-3'>
@@ -72,16 +94,7 @@ export function PoolPanel(props: { caps: Capabilities }) {
           caps={props.caps}
           tab={tab}
           onTabChange={setTab}
-          settings={
-            <PoolEditor
-              key={`${pool.id}-${pool.version}`}
-              pool={pool}
-              embedded
-              canManage={props.caps.manage}
-              onClose={() => setSelected(null)}
-              onSaved={(result) => setSelected(result)}
-            />
-          }
+          settings={settings}
         />
       </div>
     )
@@ -151,7 +164,7 @@ export function PoolPanel(props: { caps: Capabilities }) {
                     variant='outline'
                     onClick={() => {
                       setSelected(p)
-                      setTab('sync')
+                      setTab('settings')
                     }}
                   >
                     {t('Automatic synchronization')}
@@ -163,7 +176,12 @@ export function PoolPanel(props: { caps: Capabilities }) {
             {
               id: 'end',
               header: t('Unified expiry'),
-              cell: (p) => new Date(p.end_time * 1000).toLocaleString(locale),
+              cell: (p) => (
+                <SyncTimestamp
+                  value={p.end_time === 253402300799 ? 0 : p.end_time}
+                  fallback='Never'
+                />
+              ),
             },
             {
               id: 'status',

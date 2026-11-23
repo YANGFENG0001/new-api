@@ -18,6 +18,8 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { z } from 'zod'
 
+import type { AllocationConfig } from './pools/api'
+
 // ============================================================================
 // Subscription Plan Schema & Types
 // ============================================================================
@@ -50,6 +52,18 @@ export type SubscriptionPlan = z.infer<typeof subscriptionPlanSchema>
 
 export interface PlanRecord {
   plan: SubscriptionPlan
+  allocation?: {
+    mode: string
+    available: boolean
+    fixed_end_time: number
+    cycles: {
+      name: string
+      seconds: number
+      limit: number
+      unlimited: boolean
+      shared: boolean
+    }[]
+  }
 }
 
 // ============================================================================
@@ -87,6 +101,7 @@ export interface ApiResponse<T = unknown> {
 
 export interface PlanPayload {
   plan: Partial<SubscriptionPlan>
+  allocation?: AllocationConfig
 }
 
 export interface SubscriptionPayRequest {

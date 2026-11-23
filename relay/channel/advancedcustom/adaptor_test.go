@@ -64,13 +64,16 @@ func TestAdaptorMasksDialedHostsInDialFailure(t *testing.T) {
 	defer upstream.Close()
 	upstreamURL, err := url.Parse(upstream.URL)
 	require.NoError(t, err)
+	// A closed local proxy fails without relying on DNS or an external network.
+	proxy := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	proxy.Close()
 	for _, tc := range []struct {
 		name   string
 		proxy  string
 		hidden string
 	}{
 		{name: "absolute route host", hidden: "localhost"},
-		{name: "channel proxy host", proxy: "http://egress.private.invalid:8080", hidden: "egress.private.invalid"},
+		{name: "channel proxy host", proxy: proxy.URL, hidden: "127.0.0.1"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			info := advancedCustomRelayInfo(&dto.AdvancedCustomConfig{

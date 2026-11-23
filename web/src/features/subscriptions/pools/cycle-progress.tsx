@@ -24,8 +24,13 @@ import { toIntlLocale } from '@/i18n/languages'
 import { formatNumber } from '@/lib/format'
 
 import type { CycleView } from './api'
+import type { SyncObservation } from './sync-api'
+import { SyncObservations } from './sync-observations'
 
-export function CycleProgress(props: { cycles: CycleView[] }) {
+export function CycleProgress(props: {
+  cycles: CycleView[]
+  observations?: SyncObservation[]
+}) {
   const { t, i18n } = useTranslation()
   const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
   return (
@@ -35,7 +40,11 @@ export function CycleProgress(props: { cycles: CycleView[] }) {
         if (c.limit_unknown) capacity = t('Unknown')
         else if (c.unlimited) capacity = t('Unlimited')
         return (
-          <div key={c.key} className='space-y-2 rounded-md border p-3 text-sm'>
+          <section
+            key={c.key}
+            aria-label={c.name}
+            className='space-y-2 rounded-md border p-3 text-sm'
+          >
             <div className='flex flex-wrap items-center gap-2'>
               <strong className='break-all'>
                 {c.name === 'Subscription quota'
@@ -78,7 +87,16 @@ export function CycleProgress(props: { cycles: CycleView[] }) {
                 ? t('Manual calibration plus local usage')
                 : t('Local usage statistics')}
             </p>
-          </div>
+            {props.observations?.some(
+              (observation) => observation.key === c.key
+            ) && (
+              <SyncObservations
+                observations={props.observations.filter(
+                  (observation) => observation.key === c.key
+                )}
+              />
+            )}
+          </section>
         )
       })}
     </div>

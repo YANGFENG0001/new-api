@@ -39,7 +39,11 @@ import {
   paySubscriptionWaffoPancake,
   paySubscriptionBalance,
 } from '../../api'
-import { formatDuration, formatResetPeriod } from '../../lib'
+import {
+  formatPlanValidity,
+  formatPlanQuota,
+  formatResetPeriod,
+} from '../../lib'
 import type { PlanRecord } from '../../types'
 
 interface PaymentMethod {
@@ -76,8 +80,9 @@ export function SubscriptionPurchaseDialog(props: Props) {
     }
   }, [props.open, props.epayMethods])
 
-  const plan = props.plan?.plan
-  if (!plan) return null
+  const record = props.plan
+  const plan = record?.plan
+  if (!record || !plan) return null
 
   const hasStripe = props.enableStripe && !!plan.stripe_price_id
   const hasCreem = props.enableCreem && !!plan.creem_product_id
@@ -86,7 +91,6 @@ export function SubscriptionPurchaseDialog(props: Props) {
   const hasEpay =
     props.enableOnlineTopUp && (props.epayMethods || []).length > 0
   const hasAnyPayment = hasStripe || hasCreem || hasWaffoPancake || hasEpay
-  const totalAmount = Number(plan.total_amount || 0)
   const price = Number(plan.price_amount || 0).toFixed(2)
   const quotaPerUnit =
     currency?.quotaPerUnit && currency.quotaPerUnit > 0
@@ -255,24 +259,26 @@ export function SubscriptionPurchaseDialog(props: Props) {
             </span>
             <span className='flex items-center gap-1 text-sm'>
               <CalendarClock className='h-3.5 w-3.5' />
-              {formatDuration(plan, t)}
+              {formatPlanValidity(record, t)}
             </span>
           </div>
-          {formatResetPeriod(plan, t) !== t('No Reset') && (
-            <div className='flex justify-between'>
-              <span className='text-muted-foreground text-sm'>
-                {t('Reset Period')}
-              </span>
-              <span className='text-sm'>{formatResetPeriod(plan, t)}</span>
-            </div>
-          )}
+          {(!props.plan?.allocation ||
+            props.plan.allocation.mode === 'legacy') &&
+            formatResetPeriod(plan, t) !== t('No Reset') && (
+              <div className='flex justify-between'>
+                <span className='text-muted-foreground text-sm'>
+                  {t('Reset Period')}
+                </span>
+                <span className='text-sm'>{formatResetPeriod(plan, t)}</span>
+              </div>
+            )}
           <div className='flex items-center justify-between'>
             <span className='text-muted-foreground text-sm'>
               {t('Plan Quota')}
             </span>
-            <span className='flex items-center gap-1 text-sm'>
+            <span className='flex items-center gap-1 text-sm whitespace-pre-line'>
               <Package className='h-3.5 w-3.5' />
-              {totalAmount > 0 ? formatQuota(totalAmount) : t('Unlimited')}
+              {formatPlanQuota(record, t)}
             </span>
           </div>
           {plan.upgrade_group && (

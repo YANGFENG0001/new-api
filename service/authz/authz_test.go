@@ -157,6 +157,11 @@ func TestSetUserPermissionsStoresOnlyOverrides(t *testing.T) {
 		ResourceTaskPlugin: {
 			ActionBind: false,
 		},
+		ResourceSubscriptionPool: {
+			"read": false, "manage": false, "assign": false, "calibrate": false,
+			"shared_reset": false, "personal_reset": false, "batch_migrate": false, "audit_read": false,
+			"sync_read": false, "sync_run": false, "sync_credentials": false, "sync_binding": false, "sync_apply": false,
+		},
 		ResourceAudit: {ActionRead: false},
 		ResourceUserBatch: {
 			ActionRead:         false,
@@ -206,6 +211,11 @@ func TestSetUserPermissionsStoresOnlyOverrides(t *testing.T) {
 		},
 		ResourceTaskPlugin: {
 			ActionBind: false,
+		},
+		ResourceSubscriptionPool: {
+			"read": false, "manage": false, "assign": false, "calibrate": false,
+			"shared_reset": false, "personal_reset": false, "batch_migrate": false, "audit_read": false,
+			"sync_read": false, "sync_run": false, "sync_credentials": false, "sync_binding": false, "sync_apply": false,
 		},
 		ResourceAudit: {ActionRead: false},
 		ResourceUserBatch: {

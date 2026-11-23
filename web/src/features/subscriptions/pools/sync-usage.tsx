@@ -33,7 +33,60 @@ import { Progress } from '@/components/ui/progress'
 import { toIntlLocale } from '@/i18n/languages'
 import { formatNumber, formatTimestampRelative } from '@/lib/format'
 
-import type { SyncAccount } from './sync-api'
+import { syncStaleSeconds, type SyncAccount, type SyncSource } from './sync-api'
+
+export function SyncSourceStatus(props: { source: SyncSource }) {
+  const { t } = useTranslation()
+  let fetchStatus = props.source.fetch_status ?? 'Awaiting observation'
+  if (!props.source.fetch_status && props.source.last_fetch) {
+    fetchStatus =
+      Date.now() / 1000 - props.source.last_fetch >
+      syncStaleSeconds(props.source)
+        ? 'Synchronization is delayed'
+        : 'Synchronization is on schedule'
+  }
+  return (
+    <div className='space-y-2'>
+      <div className='flex flex-wrap items-center gap-2'>
+        <SyncHealth
+          healthy={
+            !props.source.last_error &&
+            fetchStatus === 'Synchronization is on schedule'
+          }
+          label={props.source.last_error ? undefined : fetchStatus}
+          message={
+            props.source.last_error ||
+            (fetchStatus === 'Synchronization is delayed'
+              ? fetchStatus
+              : undefined)
+          }
+        />
+        <SyncHealth
+          healthy={
+            props.source.observation_status ===
+            'Upstream observations are current'
+          }
+          label={
+            props.source.observation_status ===
+            'Upstream observations are current'
+              ? 'Snapshot within freshness window'
+              : undefined
+          }
+          message={props.source.observation_status}
+        />
+      </div>
+      <p className='text-muted-foreground text-xs'>
+        {t(
+          'Poll every {{interval}}s; observations expire after {{threshold}}s.',
+          {
+            interval: props.source.interval_seconds,
+            threshold: syncStaleSeconds(props.source),
+          }
+        )}
+      </p>
+    </div>
+  )
+}
 
 export function SyncTimestamp(props: {
   value?: number
@@ -129,6 +182,8 @@ export function SyncUsageCard(props: {
   fetchedAt?: number
   stale: boolean
   issue?: string
+  estimatedUtilization?: number | null
+  localDelta?: number
 }) {
   const { t, i18n } = useTranslation()
   const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
@@ -136,8 +191,15 @@ export function SyncUsageCard(props: {
     props.utilization != null &&
     Number.isFinite(props.utilization) &&
     props.utilization >= 0
-  const utilization =
+  const estimated =
+    props.estimatedUtilization != null &&
+    Number.isFinite(props.estimatedUtilization) &&
+    props.estimatedUtilization >= 0
+  let utilization =
     reported && props.utilization != null ? props.utilization * 100 : null
+  if (estimated && props.estimatedUtilization != null) {
+    utilization = props.estimatedUtilization * 100
+  }
   const resetPassed =
     props.windowEnd > 0 && props.windowEnd <= Date.now() / 1000
   const stale = props.stale || resetPassed
@@ -161,9 +223,22 @@ export function SyncUsageCard(props: {
           {utilization == null ? '—' : `${formatNumber(utilization, locale)}%`}
         </strong>
         <span className='text-muted-foreground text-xs'>
-          {t('Upstream utilization')}
+          {estimated
+            ? t('Estimated usage after calibration')
+            : t('Upstream utilization')}
         </span>
       </div>
+      {estimated && (
+        <p className='text-muted-foreground text-xs'>
+          {t(
+            'Upstream snapshot: {{percent}}%; local usage since calibration: {{quota}} quota units.',
+            {
+              percent: formatNumber((props.utilization ?? 0) * 100, locale),
+              quota: formatNumber(props.localDelta ?? 0, locale),
+            }
+          )}
+        </p>
+      )}
       {utilization == null ? (
         <div aria-hidden='true' className='bg-muted h-1 rounded-full' />
       ) : (

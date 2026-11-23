@@ -27,31 +27,33 @@ type SubscriptionSyncSource struct {
 	AuthLeaseToken     string `json:"-" gorm:"type:varchar(64)"`
 	RefreshBlocked     bool   `json:"refresh_blocked"`
 
-	ObservationStatus string `json:"observation_status" gorm:"-"`
-	ObservedAt        int64  `json:"observed_at" gorm:"-"`
-	Id                int    `json:"id"`
-	Name              string `json:"name" gorm:"type:varchar(128)"`
-	URL               string `json:"url" gorm:"type:text"`
-	Method            string `json:"method" gorm:"type:varchar(8)"`
-	Enabled           bool   `json:"enabled"`
-	IntervalSeconds   int64  `json:"interval_seconds"`
-	StaleSeconds      int64  `json:"stale_seconds"`
-	TimeoutSeconds    int64  `json:"timeout_seconds"`
-	AllowHTTP         bool   `json:"allow_http"`
-	PrivateIPs        string `json:"private_ips" gorm:"type:text"`
-	Version           int64  `json:"version"`
-	MappingJSON       string `json:"-" gorm:"type:text"`
-	SecretPayload     string `json:"-" gorm:"type:text"`
-	CatalogJSON       string `json:"-" gorm:"type:text"`
-	HasCredentials    bool   `json:"has_credentials" gorm:"-"`
-	LastAttempt       int64  `json:"last_attempt"`
-	LastFetch         int64  `json:"last_fetch"`
-	LastApplied       int64  `json:"last_applied"`
-	LastError         string `json:"last_error" gorm:"type:varchar(128)"`
-	Failures          int    `json:"failures"`
-	NextRun           int64  `json:"next_run" gorm:"index"`
-	LeaseUntil        int64  `json:"-"`
-	LeaseToken        string `json:"-" gorm:"type:varchar(64)"`
+	ObservationStatus     string `json:"observation_status" gorm:"-"`
+	ObservedAt            int64  `json:"observed_at" gorm:"-"`
+	EffectiveStaleSeconds int64  `json:"effective_stale_seconds" gorm:"-"`
+	FetchStatus           string `json:"fetch_status" gorm:"-"`
+	Id                    int    `json:"id"`
+	Name                  string `json:"name" gorm:"type:varchar(128)"`
+	URL                   string `json:"url" gorm:"type:text"`
+	Method                string `json:"method" gorm:"type:varchar(8)"`
+	Enabled               bool   `json:"enabled"`
+	IntervalSeconds       int64  `json:"interval_seconds"`
+	StaleSeconds          int64  `json:"stale_seconds"`
+	TimeoutSeconds        int64  `json:"timeout_seconds"`
+	AllowHTTP             bool   `json:"allow_http"`
+	PrivateIPs            string `json:"private_ips" gorm:"type:text"`
+	Version               int64  `json:"version"`
+	MappingJSON           string `json:"-" gorm:"type:text"`
+	SecretPayload         string `json:"-" gorm:"type:text"`
+	CatalogJSON           string `json:"-" gorm:"type:text"`
+	HasCredentials        bool   `json:"has_credentials" gorm:"-"`
+	LastAttempt           int64  `json:"last_attempt"`
+	LastFetch             int64  `json:"last_fetch"`
+	LastApplied           int64  `json:"last_applied"`
+	LastError             string `json:"last_error" gorm:"type:varchar(128)"`
+	Failures              int    `json:"failures"`
+	NextRun               int64  `json:"next_run" gorm:"index"`
+	LeaseUntil            int64  `json:"-"`
+	LeaseToken            string `json:"-" gorm:"type:varchar(64)"`
 }
 
 type SubscriptionSyncRequest struct {
@@ -129,12 +131,14 @@ type SubscriptionSyncAccount struct {
 }
 
 type SubscriptionSyncCycleBinding struct {
-	LocalKey        string  `json:"local_key"`
-	UpstreamKey     string  `json:"upstream_key"`
-	AlignReset      bool    `json:"align_reset"`
-	Enforce         bool    `json:"enforce"`
-	Threshold       float64 `json:"threshold"`
-	MaxShiftSeconds int64   `json:"max_shift_seconds"`
+	// Explicit administrator conversion, never inferred from an upstream percentage.
+	QuotaPerFullWindow int64   `json:"quota_per_full_window,omitempty"`
+	LocalKey           string  `json:"local_key"`
+	UpstreamKey        string  `json:"upstream_key"`
+	AlignReset         bool    `json:"align_reset"`
+	Enforce            bool    `json:"enforce"`
+	Threshold          float64 `json:"threshold"`
+	MaxShiftSeconds    int64   `json:"max_shift_seconds"`
 }
 
 type SubscriptionSyncBinding struct {
@@ -197,11 +201,21 @@ func GetSubscriptionSyncBinding(poolID int) (SubscriptionSyncBindingInput, error
 	return view, err
 }
 
+// Allow two complete polling intervals plus transport and scheduler jitter.
+// A cached upstream response does not refresh its actual observation timestamp.
+func SubscriptionSyncStaleSeconds(source SubscriptionSyncSource) int64 {
+	return max(source.StaleSeconds, 2*source.IntervalSeconds+source.TimeoutSeconds+10)
+}
+
 func SaveSubscriptionSyncBinding(input SubscriptionSyncBindingInput, actorID int) error {
+	return saveSubscriptionSyncBinding(DB, input, actorID)
+}
+
+func saveSubscriptionSyncBinding(db *gorm.DB, input SubscriptionSyncBindingInput, actorID int) error {
 	if input.PoolID <= 0 || input.SourceID <= 0 || strings.TrimSpace(input.AccountID) == "" || len(input.AccountID) > 128 || len(input.Cycles) > 32 || (input.StalePolicy != "stop" && input.StalePolicy != "local") || input.GraceSeconds < 0 || input.GraceSeconds > 86400 {
 		return errors.New("Invalid synchronization binding")
 	}
-	return DB.Transaction(func(tx *gorm.DB) error {
+	return db.Transaction(func(tx *gorm.DB) error {
 		var source SubscriptionSyncSource
 		if err := lockForUpdate(tx).First(&source, input.SourceID).Error; err != nil {
 			return err
@@ -241,7 +255,7 @@ func SaveSubscriptionSyncBinding(input SubscriptionSyncBindingInput, actorID int
 					break
 				}
 			}
-			if seen[c.LocalKey] || local == nil || remote == nil || c.Threshold <= 0 || c.Threshold > 1 || math.IsNaN(c.Threshold) || math.IsInf(c.Threshold, 0) || c.MaxShiftSeconds < 0 || c.MaxShiftSeconds > remote.Seconds || (c.AlignReset && local.Seconds != remote.Seconds) {
+			if c.QuotaPerFullWindow < 0 || c.QuotaPerFullWindow > common.MaxWalletQuota || seen[c.LocalKey] || local == nil || remote == nil || c.Threshold <= 0 || c.Threshold > 1 || math.IsNaN(c.Threshold) || math.IsInf(c.Threshold, 0) || c.MaxShiftSeconds < 0 || c.MaxShiftSeconds > remote.Seconds || (c.AlignReset && local.Seconds != remote.Seconds) {
 				return errors.New("Invalid synchronization cycle mapping")
 			}
 			seen[c.LocalKey] = true
@@ -250,13 +264,24 @@ func SaveSubscriptionSyncBinding(input SubscriptionSyncBindingInput, actorID int
 		if err != nil {
 			return err
 		}
+		if prior.PoolID != 0 && prior.SourceID == input.SourceID && prior.AccountID == input.AccountID && prior.Enabled == input.Enabled && prior.SyncExpiry == input.SyncExpiry && prior.StalePolicy == input.StalePolicy && prior.GraceSeconds == input.GraceSeconds && prior.CyclesJSON == raw {
+			return nil // Saving unrelated pool settings must not invalidate observations.
+		}
 		b := input.SubscriptionSyncBinding
 		b.LastError = ""
 		b.Version = prior.Version + 1
 		b.CyclesJSON = raw
 		resourceKey := common.GenerateHMACWithKey([]byte("subscription-resource-binding-v1"), source.URL+"\x00"+input.AccountID)
 		b.ResourceKey = &resourceKey
-		if err := tx.Save(&b).Error; err != nil {
+		// Save may fall back to an upsert. MySQL then updates a different pool on
+		// a unique resource-key collision instead of rejecting duplicate ownership.
+		var saved *gorm.DB
+		if prior.PoolID == 0 {
+			saved = tx.Create(&b)
+		} else {
+			saved = tx.Model(&prior).Select("*").Updates(&b)
+		}
+		if saved.Error != nil {
 			return errors.New("Upstream resource is already bound or unavailable")
 		}
 		return tx.Create(&SubscriptionSyncEvent{SourceID: source.Id, PoolID: pool.Id, ActorID: actorID, Action: "binding_save", CreatedAt: GetDBTimestamp()}).Error
@@ -545,8 +570,8 @@ func ApplySubscriptionSyncAccount(source SubscriptionSyncSource, token string, h
 				change.PreviousUtilization = priorCycle.Utilization
 			}
 			if compatible && previous.SampledAt >= cycle.SampledAt {
-				if !preview && previous.SampledAt == cycle.SampledAt && previous.Digest == digest && previous.LastError != "" {
-					if err := tx.Model(&previous).Update("last_error", "").Error; err != nil {
+				if !preview && previous.SampledAt == cycle.SampledAt && previous.Digest == digest {
+					if err := tx.Model(&previous).Updates(map[string]any{"last_error": "", "fetched_at": now}).Error; err != nil {
 						return err
 					}
 				}
@@ -558,7 +583,7 @@ func ApplySubscriptionSyncAccount(source SubscriptionSyncSource, token string, h
 				continue
 			}
 			pending := ""
-			stale := now-cycle.SampledAt > source.StaleSeconds || cycle.WindowEnd <= now
+			stale := now-cycle.SampledAt > SubscriptionSyncStaleSeconds(source) || cycle.WindowEnd <= now
 			if stale {
 				pending = "Upstream observation is stale"
 			}
@@ -632,13 +657,17 @@ func ApplySubscriptionSyncAccount(source SubscriptionSyncSource, token string, h
 			if preview {
 				continue
 			}
-			observation := SubscriptionSyncObservation{Id: previous.Id, PoolID: pool.Id, LocalKey: m.LocalKey, SourceVersion: source.Version, BindingVersion: b.Version, Digest: digest, Payload: raw, SampledAt: cycle.SampledAt, FetchedAt: now, Pending: pending}
+			payload, err := subscriptionSyncPayloadTx(tx, pool.Id, m, *cycle)
+			if err != nil {
+				return err
+			}
+			observation := SubscriptionSyncObservation{Id: previous.Id, PoolID: pool.Id, LocalKey: m.LocalKey, SourceVersion: source.Version, BindingVersion: b.Version, Digest: digest, Payload: payload, SampledAt: cycle.SampledAt, FetchedAt: now, Pending: pending}
 			if err := tx.Save(&observation).Error; err != nil {
 				return err
 			}
 		}
 		// Expiry requires a real, fresh account observation; request time is not evidence.
-		if b.SyncExpiry && account.Expiry > 0 && account.SampledAt > 0 && account.SampledAt <= now+60 && now-account.SampledAt <= source.StaleSeconds && account.Expiry != pool.EndTime {
+		if b.SyncExpiry && account.Expiry > 0 && account.SampledAt > 0 && account.SampledAt <= now+60 && now-account.SampledAt <= SubscriptionSyncStaleSeconds(source) && account.Expiry != pool.EndTime {
 			changes = append(changes, SubscriptionSyncChange{PoolID: pool.Id, Key: "expiry", Before: pool.EndTime, After: account.Expiry, Message: "Upstream expiry aligned"})
 			if !preview {
 				if err := tx.Model(&UserSubscription{}).Where("id IN (?)", tx.Model(&SubscriptionAllocation{}).Select("subscription_id").Where("pool_id = ? AND follow_pool_end = ?", pool.Id, true)).Where("status = ? AND end_time > ?", "active", now).Update("end_time", account.Expiry).Error; err != nil {
@@ -675,15 +704,17 @@ func ApplySubscriptionSyncAccount(source SubscriptionSyncSource, token string, h
 }
 
 type SubscriptionSyncObservationView struct {
-	Key         string   `json:"key"`
-	Name        string   `json:"name"`
-	Utilization *float64 `json:"utilization"`
-	SampledAt   int64    `json:"sampled_at"`
-	FetchedAt   int64    `json:"fetched_at"`
-	WindowEnd   int64    `json:"window_end"`
-	Stale       bool     `json:"stale"`
-	Pending     string   `json:"pending"`
-	Digest      string   `json:"digest,omitempty"`
+	EstimatedUtilization *float64 `json:"estimated_utilization"`
+	LocalDelta           int64    `json:"local_delta"`
+	Key                  string   `json:"key"`
+	Name                 string   `json:"name"`
+	Utilization          *float64 `json:"utilization"`
+	SampledAt            int64    `json:"sampled_at"`
+	FetchedAt            int64    `json:"fetched_at"`
+	WindowEnd            int64    `json:"window_end"`
+	Stale                bool     `json:"stale"`
+	Pending              string   `json:"pending"`
+	Digest               string   `json:"digest,omitempty"`
 }
 
 func subscriptionSyncViewsTx(tx *gorm.DB, poolID int, now int64) ([]SubscriptionSyncObservationView, error) {
@@ -711,13 +742,22 @@ func subscriptionSyncViewsTx(tx *gorm.DB, poolID int, now int64) ([]Subscription
 		if err := common.UnmarshalJsonStr(r.Payload, &c); err != nil {
 			return nil, err
 		}
+		// Age is derived below from the current effective threshold. A persisted
+		// pre-upgrade age warning must not keep a valid observation stale forever.
+		if r.Pending == "Upstream observation is stale" {
+			r.Pending = ""
+		}
 		if r.Pending == "" {
 			r.Pending = r.LastError
 		}
 		if b.LastError != "" {
 			r.Pending = b.LastError
 		}
-		views = append(views, SubscriptionSyncObservationView{Key: r.LocalKey, Name: c.Name, Utilization: c.Utilization, SampledAt: r.SampledAt, FetchedAt: r.FetchedAt, WindowEnd: c.WindowEnd, Stale: b.LastError != "" || r.LastError != "" || now-r.SampledAt > source.StaleSeconds || c.WindowEnd <= now, Pending: r.Pending, Digest: r.Digest})
+		estimate, delta, _, err := subscriptionSyncEstimateTx(tx, poolID, r, now)
+		if err != nil {
+			return nil, err
+		}
+		views = append(views, SubscriptionSyncObservationView{EstimatedUtilization: estimate, LocalDelta: delta, Key: r.LocalKey, Name: c.Name, Utilization: c.Utilization, SampledAt: r.SampledAt, FetchedAt: r.FetchedAt, WindowEnd: c.WindowEnd, Stale: b.LastError != "" || r.LastError != "" || now-r.SampledAt > SubscriptionSyncStaleSeconds(source) || c.WindowEnd <= now, Pending: r.Pending, Digest: r.Digest})
 	}
 	return views, nil
 }
@@ -726,7 +766,7 @@ func GetSubscriptionSyncViews(poolID int) ([]SubscriptionSyncObservationView, er
 	return subscriptionSyncViewsTx(DB, poolID, GetDBTimestamp())
 }
 
-func enforceSubscriptionSyncTx(tx *gorm.DB, poolID int, now int64) error {
+func enforceSubscriptionSyncTx(tx *gorm.DB, poolID int, now int64, amount int64) error {
 	var b SubscriptionSyncBinding
 	if err := tx.Where("pool_id = ?", poolID).Find(&b).Error; err != nil {
 		return err
@@ -770,19 +810,37 @@ func enforceSubscriptionSyncTx(tx *gorm.DB, poolID int, now int64) error {
 		}
 		var c SubscriptionSyncCycle
 		valid := r.Id > 0 && r.SourceVersion == source.Version && r.BindingVersion == b.Version && common.UnmarshalJsonStr(r.Payload, &c) == nil && c.Error == "" && c.Utilization != nil && !math.IsNaN(*c.Utilization) && !math.IsInf(*c.Utilization, 0)
-		stale := b.LastError != "" || r.LastError != "" || !valid || now-r.SampledAt > source.StaleSeconds || c.WindowEnd <= now || r.Pending != ""
+		// Recompute age with the current threshold; reset confirmations remain
+		// blocking and are never cleared by a freshness-policy upgrade.
+		if r.Pending == "Upstream observation is stale" {
+			r.Pending = ""
+		}
+		effectiveRatio := c.Utilization
+		if valid && m.QuotaPerFullWindow > 0 {
+			estimate, _, reservedRatio, err := subscriptionSyncEstimateTx(tx, poolID, r, now)
+			if err != nil {
+				return err
+			}
+			if estimate != nil {
+				effectiveRatio = estimate
+				if *estimate+reservedRatio+float64(amount)/float64(m.QuotaPerFullWindow) > m.Threshold {
+					return errors.New("subscription quota insufficient: upstream utilization limit reached")
+				}
+			}
+		}
+		stale := b.LastError != "" || r.LastError != "" || !valid || now-r.SampledAt > SubscriptionSyncStaleSeconds(source) || c.WindowEnd <= now || r.Pending != ""
 		if stale {
 			// Grace never turns missing data into a zero balance or overrides a known
 			// exhausted observation. It only allows local admission for a bounded age.
-			if valid && *c.Utilization >= m.Threshold {
+			if valid && *effectiveRatio >= m.Threshold {
 				return errors.New("subscription quota insufficient: upstream utilization limit reached")
 			}
-			if b.LastError != "" || r.LastError != "" || !valid || b.StalePolicy != "local" || b.GraceSeconds == 0 || now-r.SampledAt > source.StaleSeconds+b.GraceSeconds || r.Pending == "Upstream reset shift requires confirmation" {
+			if b.LastError != "" || r.LastError != "" || !valid || b.StalePolicy != "local" || b.GraceSeconds == 0 || now-r.SampledAt > SubscriptionSyncStaleSeconds(source)+b.GraceSeconds || r.Pending == "Upstream reset shift requires confirmation" {
 				return errors.New("subscription quota insufficient: upstream observation is unavailable or stale")
 			}
 			continue
 		}
-		if *c.Utilization >= m.Threshold {
+		if *effectiveRatio >= m.Threshold {
 			return errors.New("subscription quota insufficient: upstream utilization limit reached")
 		}
 	}
@@ -818,9 +876,11 @@ func ConfirmSubscriptionSyncReset(poolID int, key, digest string, poolVersion in
 			return err
 		}
 		allowed := false
+		var selectedMapping SubscriptionSyncCycleBinding
 		for _, m := range mappings {
 			if m.LocalKey == key && m.AlignReset {
 				allowed = true
+				selectedMapping = m
 			}
 		}
 		if !allowed {
@@ -838,7 +898,7 @@ func ConfirmSubscriptionSyncReset(poolID int, key, digest string, poolVersion in
 			return err
 		}
 		now := GetDBTimestamp()
-		if cycle.Error != "" || now-observation.SampledAt > source.StaleSeconds || cycle.WindowEnd <= now || cycle.WindowStart > now {
+		if cycle.Error != "" || now-observation.SampledAt > SubscriptionSyncStaleSeconds(source) || cycle.WindowEnd <= now || cycle.WindowStart > now {
 			return errors.New("Upstream observation is stale")
 		}
 		var rules []SubscriptionCycleRule
@@ -890,7 +950,11 @@ func ConfirmSubscriptionSyncReset(poolID int, key, digest string, poolVersion in
 				if err := tx.Model(&pool).Updates(map[string]any{"rules": raw, "version": pool.Version + 1, "updated_at": now}).Error; err != nil {
 					return err
 				}
-				if err := tx.Model(&observation).Update("pending", "").Error; err != nil {
+				payload, err := subscriptionSyncPayloadTx(tx, poolID, selectedMapping, cycle)
+				if err != nil {
+					return err
+				}
+				if err := tx.Model(&observation).Updates(map[string]any{"pending": "", "payload": payload}).Error; err != nil {
 					return err
 				}
 				return tx.Create(&SubscriptionSyncEvent{SourceID: source.Id, PoolID: poolID, ActorID: actorID, Action: "reset_confirm", Message: "Upstream reset alignment confirmed", CreatedAt: now}).Error
@@ -942,4 +1006,172 @@ func UnbindSubscriptionSyncPool(poolID int, version int64, actorID int) error {
 		}
 		return tx.Create(&SubscriptionSyncEvent{SourceID: sourceID, PoolID: poolID, ActorID: actorID, Action: "unbind", Message: "Synchronization binding removed", CreatedAt: GetDBTimestamp()}).Error
 	})
+}
+
+// Only available when creating a resource. Existing pools retain their immutable
+// cycle keys and are edited through the separately versioned binding endpoint.
+type SubscriptionSyncPoolInput struct {
+	SourceID      int    `json:"source_id"`
+	SourceVersion int64  `json:"source_version"`
+	AccountID     string `json:"account_id"`
+	SyncExpiry    bool   `json:"sync_expiry"`
+}
+
+func createSubscriptionSyncPool(input SubscriptionPoolInput, actorID int) (*SubscriptionPool, error) {
+	if input.Id != 0 || input.Sync.SourceID <= 0 || input.Sync.AccountID == "" {
+		return nil, errors.New("Invalid synchronization binding")
+	}
+	var pool *SubscriptionPool
+	err := DB.Transaction(func(tx *gorm.DB) error {
+		var source SubscriptionSyncSource
+		if err := lockForUpdate(tx).First(&source, input.Sync.SourceID).Error; err != nil {
+			return err
+		}
+		if source.Version != input.Sync.SourceVersion {
+			return errors.New("Synchronization configuration changed; reload before saving")
+		}
+		var accounts []SubscriptionSyncAccount
+		if source.CatalogJSON == "" || common.UnmarshalJsonStr(source.CatalogJSON, &accounts) != nil {
+			return errors.New("No upstream observation")
+		}
+		var account *SubscriptionSyncAccount
+		for i := range accounts {
+			if accounts[i].ID == input.Sync.AccountID {
+				account = &accounts[i]
+				break
+			}
+		}
+		if account == nil {
+			return errors.New("Bound upstream account was not found")
+		}
+		now := GetDBTimestamp()
+		usable := map[string]SubscriptionSyncCycle{}
+		for _, cycle := range account.Cycles {
+			if cycle.Error == "" && cycle.Utilization != nil && cycle.SampledAt > 0 && cycle.SampledAt <= now+60 && cycle.WindowStart > 0 && cycle.WindowEnd > now && cycle.Seconds > 0 {
+				usable[cycle.Key] = cycle
+			}
+		}
+		if len(input.Cycles) == 0 {
+			for _, cycle := range account.Cycles {
+				if _, ok := usable[cycle.Key]; !ok {
+					continue
+				}
+				name := cycle.Name
+				if name == "" {
+					name = cycle.Key
+				}
+				input.Cycles = append(input.Cycles, SubscriptionCycleRule{Key: cycle.Key, Name: name, Seconds: cycle.Seconds, NextReset: cycle.WindowEnd, Unlimited: true, Enabled: true})
+			}
+		}
+		if len(input.Cycles) == 0 {
+			return errors.New("Missing or inconsistent upstream cycle data")
+		}
+		mappings := []SubscriptionSyncCycleBinding{}
+		for _, rule := range input.Cycles {
+			cycle, ok := usable[rule.Key]
+			if !ok {
+				continue
+			} // extra manually configured local cycles are not bound implicitly
+			mappings = append(mappings, SubscriptionSyncCycleBinding{LocalKey: rule.Key, UpstreamKey: cycle.Key, AlignReset: rule.Seconds == cycle.Seconds && rule.NextReset == cycle.WindowEnd, Enforce: true, Threshold: 1, MaxShiftSeconds: min(300, cycle.Seconds)})
+		}
+		if len(mappings) == 0 {
+			return errors.New("Invalid synchronization cycle mapping")
+		}
+		if input.EndTime == 0 {
+			input.EndTime = 253402300799 // no upstream expiry reported; never invent a 30-day subscription
+			if account.Expiry > 0 {
+				input.EndTime = account.Expiry
+			}
+		}
+		var err error
+		pool, err = saveSubscriptionPool(tx, input, actorID)
+		if err != nil {
+			return err
+		}
+		binding := SubscriptionSyncBindingInput{SubscriptionSyncBinding: SubscriptionSyncBinding{PoolID: pool.Id, SourceID: source.Id, AccountID: account.ID, Enabled: true, SyncExpiry: input.Sync.SyncExpiry, StalePolicy: "stop"}, Cycles: mappings}
+		if err := saveSubscriptionSyncBinding(tx, binding, actorID); err != nil {
+			return err
+		}
+		for _, m := range mappings {
+			cycle := usable[m.UpstreamKey]
+			raw, err := cycleJSON(cycle)
+			if err != nil {
+				return err
+			}
+			hash := sha256.Sum256([]byte(raw))
+			pending := ""
+			if now-cycle.SampledAt > SubscriptionSyncStaleSeconds(source) {
+				pending = "Upstream observation is stale"
+			}
+			observation := SubscriptionSyncObservation{PoolID: pool.Id, LocalKey: m.LocalKey, SourceVersion: source.Version, BindingVersion: 1, Digest: hex.EncodeToString(hash[:]), Payload: raw, SampledAt: cycle.SampledAt, FetchedAt: source.LastFetch, Pending: pending}
+			if err := tx.Create(&observation).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	return pool, err
+}
+
+// This server-only baseline is stored inside the existing observation payload.
+// It is not an upstream usage fact and never modifies billing Used/Reserved.
+type subscriptionSyncBaseline struct {
+	UsageID  int   `json:"usage_id"`
+	Used     int64 `json:"used"`
+	Capacity int64 `json:"capacity"`
+}
+type subscriptionSyncPayload struct {
+	SubscriptionSyncCycle
+	Baseline *subscriptionSyncBaseline `json:"local_baseline,omitempty"`
+}
+
+func subscriptionSyncPayloadTx(tx *gorm.DB, poolID int, mapping SubscriptionSyncCycleBinding, cycle SubscriptionSyncCycle) (string, error) {
+	payload := subscriptionSyncPayload{SubscriptionSyncCycle: cycle}
+	if mapping.QuotaPerFullWindow > 0 {
+		var state SubscriptionCycleState
+		if err := tx.Where("owner = ? AND cycle_key = ?", allocationOwner(0, poolID), mapping.LocalKey).First(&state).Error; err != nil {
+			return "", err
+		}
+		// A changed reset boundary must be aligned/confirmed before using local deltas.
+		if state.EndTime == cycle.WindowEnd && state.StartTime < cycle.WindowEnd {
+			usage, err := cycleUsageTx(tx, &state, 0)
+			if err != nil {
+				return "", err
+			}
+			payload.Baseline = &subscriptionSyncBaseline{UsageID: usage.Id, Used: usage.Used, Capacity: mapping.QuotaPerFullWindow}
+		}
+	}
+	return cycleJSON(payload)
+}
+
+func subscriptionSyncEstimateTx(tx *gorm.DB, poolID int, observation SubscriptionSyncObservation, now int64) (*float64, int64, float64, error) {
+	var payload subscriptionSyncPayload
+	if observation.Payload == "" {
+		return nil, 0, 0, nil
+	}
+	if err := common.UnmarshalJsonStr(observation.Payload, &payload); err != nil {
+		return nil, 0, 0, err
+	}
+	b := payload.Baseline
+	if b == nil || b.Capacity <= 0 || b.Capacity > common.MaxWalletQuota || payload.Utilization == nil || payload.WindowEnd <= now {
+		return nil, 0, 0, nil
+	}
+	var state SubscriptionCycleState
+	if err := tx.Where("owner = ? AND cycle_key = ?", allocationOwner(0, poolID), observation.LocalKey).First(&state).Error; err != nil {
+		return nil, 0, 0, err
+	}
+	if state.EndTime != payload.WindowEnd {
+		return nil, 0, 0, nil
+	}
+	var usage SubscriptionCycleUsage
+	result := tx.Where("state_id = ? AND epoch = ? AND user_id = ?", state.Id, state.Epoch, 0).Order("generation desc").Limit(1).Find(&usage)
+	if result.Error != nil {
+		return nil, 0, 0, result.Error
+	}
+	if usage.Id != b.UsageID {
+		return nil, 0, 0, nil
+	} // reset/generation invalidates the baseline
+	delta := max(int64(0), usage.Used-b.Used)
+	ratio := *payload.Utilization + float64(delta)/float64(b.Capacity)
+	return &ratio, delta, float64(usage.Reserved) / float64(b.Capacity), nil
 }

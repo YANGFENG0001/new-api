@@ -13,11 +13,44 @@ import (
 // another's alignment, assignment, or manual calibration.
 type SubscriptionPoolInput struct {
 	SubscriptionPool
-	Cycles   []SubscriptionCycleRule `json:"cycles"`
-	Channels []int                   `json:"channels"`
+	Cycles      []SubscriptionCycleRule       `json:"cycles"`
+	Channels    []int                         `json:"channels"`
+	Sync        *SubscriptionSyncPoolInput    `json:"sync,omitempty"`
+	SyncBinding *SubscriptionSyncBindingInput `json:"sync_binding,omitempty"`
 }
 
 func SaveSubscriptionPool(input SubscriptionPoolInput, actorID int) (*SubscriptionPool, error) {
+	if input.Sync != nil {
+		if input.SyncBinding != nil {
+			return nil, errors.New("Invalid synchronization binding")
+		}
+		return createSubscriptionSyncPool(input, actorID)
+	}
+	if input.SyncBinding != nil {
+		var saved *SubscriptionPool
+		err := DB.Transaction(func(tx *gorm.DB) error {
+			// Synchronization workers lock source before pool. Keep the same order.
+			var source SubscriptionSyncSource
+			if err := lockForUpdate(tx).First(&source, input.SyncBinding.SourceID).Error; err != nil {
+				return err
+			}
+			var err error
+			saved, err = saveSubscriptionPool(tx, input, actorID)
+			if err != nil {
+				return err
+			}
+			binding := *input.SyncBinding
+			binding.PoolID = saved.Id
+			return saveSubscriptionSyncBinding(tx, binding, actorID)
+		})
+		return saved, err
+	}
+	return saveSubscriptionPool(DB, input, actorID)
+}
+
+// Accept a transaction so creating a pool and its synchronization binding is atomic.
+func saveSubscriptionPool(db *gorm.DB, input SubscriptionPoolInput, actorID int) (*SubscriptionPool, error) {
+	input.Cycles = slices.Clone(input.Cycles)
 	if input.Id < 0 || strings.TrimSpace(input.Name) == "" || len(input.Name) > 128 || len(input.Note) > 4096 || input.EndTime <= GetDBTimestamp() || input.EndTime > 253402300799 || len(input.Channels) > 1000 || len(input.ExternalSource) > 64 || len(input.ExternalID) > 128 {
 		return nil, errors.New("Invalid upstream pool")
 	}
@@ -27,12 +60,8 @@ func SaveSubscriptionPool(input SubscriptionPoolInput, actorID int) (*Subscripti
 	if len(input.Cycles) == 0 {
 		return nil, errors.New("At least one subscription cycle is required")
 	}
-	raw, err := cycleJSON(input.Cycles)
-	if err != nil {
-		return nil, err
-	}
 	pool := input.SubscriptionPool
-	err = DB.Transaction(func(tx *gorm.DB) error {
+	err := db.Transaction(func(tx *gorm.DB) error {
 		if pool.Id > 0 {
 			var previous SubscriptionPool
 			if err := lockForUpdate(tx).First(&previous, pool.Id).Error; err != nil {
@@ -41,9 +70,66 @@ func SaveSubscriptionPool(input SubscriptionPoolInput, actorID int) (*Subscripti
 			if pool.Version != previous.Version {
 				return errors.New("Upstream pool changed; reload before saving")
 			}
+			var binding SubscriptionSyncBindingInput
+			if input.SyncBinding != nil {
+				binding = *input.SyncBinding
+			} else {
+				if err := tx.Where("pool_id = ?", pool.Id).Find(&binding.SubscriptionSyncBinding).Error; err != nil {
+					return err
+				}
+				if binding.CyclesJSON != "" {
+					if err := common.UnmarshalJsonStr(binding.CyclesJSON, &binding.Cycles); err != nil {
+						return err
+					}
+				}
+			}
+			if binding.Enabled {
+				if binding.SyncExpiry && pool.EndTime != previous.EndTime {
+					return errors.New("Turn off upstream following before changing synchronized times")
+				}
+				var previousRules []SubscriptionCycleRule
+				if err := common.UnmarshalJsonStr(previous.Rules, &previousRules); err != nil {
+					return err
+				}
+				for _, mapping := range binding.Cycles {
+					if !mapping.AlignReset {
+						continue
+					}
+					for index, rule := range input.Cycles {
+						if rule.Key != mapping.LocalKey {
+							continue
+						}
+						for _, old := range previousRules {
+							if old.Key != rule.Key {
+								continue
+							}
+							state, err := subscriptionCycleStateTx(tx, allocationOwner(0, pool.Id), old, GetDBTimestamp())
+							if err != nil {
+								return err
+							}
+							if rule.Seconds != old.Seconds {
+								return errors.New("Turn off upstream following before changing synchronized times")
+							}
+							if rule.NextReset != state.EndTime {
+								// An editor may remain open across a natural boundary.
+								// Accept only elapsed anchors on this exact cadence;
+								// never mistake a new future boundary for a cache refresh.
+								if rule.NextReset > GetDBTimestamp() || (state.EndTime-rule.NextReset)%old.Seconds != 0 {
+									return errors.New("Turn off upstream following before changing synchronized times")
+								}
+								input.Cycles[index].NextReset = state.EndTime
+							}
+						}
+					}
+				}
+			}
 			pool.Version++
 		} else {
 			pool.Version = 1
+		}
+		raw, err := cycleJSON(input.Cycles)
+		if err != nil {
+			return err
 		}
 		pool.Rules = raw
 		pool.UpdatedAt = GetDBTimestamp()
@@ -82,10 +168,23 @@ func SaveSubscriptionPool(input SubscriptionPoolInput, actorID int) (*Subscripti
 }
 
 func SaveSubscriptionPlanAllocation(cfg SubscriptionPlanAllocation, rules []SubscriptionCycleRule) error {
+	return DB.Transaction(func(tx *gorm.DB) error {
+		return SaveSubscriptionPlanAllocationTx(tx, cfg, rules)
+	})
+}
+
+// LockSubscriptionPlanTx serializes plan edits with new-member default changes.
+func LockSubscriptionPlanTx(tx *gorm.DB, planID int) error {
+	return lockForUpdate(tx).Select("id").First(&SubscriptionPlan{}, planID).Error
+}
+
+// The plan and its new-member defaults can be saved in the same transaction.
+// A legacy row retains its version so switching modes never deletes history.
+func SaveSubscriptionPlanAllocationTx(tx *gorm.DB, cfg SubscriptionPlanAllocation, rules []SubscriptionCycleRule) error {
 	if cfg.PlanID <= 0 {
 		return errors.New("Invalid parameters")
 	}
-	if cfg.Mode != "independent" && cfg.Mode != "fixed" && cfg.Mode != "assign" {
+	if cfg.Mode != "legacy" && cfg.Mode != "independent" && cfg.Mode != "fixed" && cfg.Mode != "assign" {
 		return errors.New("Invalid subscription allocation mode")
 	}
 	if cfg.FixedEndTime < 0 || cfg.FixedEndTime > 253402300799 {
@@ -105,9 +204,8 @@ func SaveSubscriptionPlanAllocation(cfg SubscriptionPlanAllocation, rules []Subs
 		return err
 	}
 	cfg.Rules = raw
-	return DB.Transaction(func(tx *gorm.DB) error {
-		var plan SubscriptionPlan
-		if err := lockForUpdate(tx).First(&plan, cfg.PlanID).Error; err != nil {
+	return tx.Transaction(func(tx *gorm.DB) error {
+		if err := LockSubscriptionPlanTx(tx, cfg.PlanID); err != nil {
 			return err
 		}
 		var old SubscriptionPlanAllocation

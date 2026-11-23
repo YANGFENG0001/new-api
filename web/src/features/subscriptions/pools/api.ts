@@ -19,7 +19,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import type { SyncObservation } from './sync-api'
+import type { SyncObservation, SyncBinding, SyncState } from './sync-api'
 
 export type CycleRule = {
   key: string
@@ -45,6 +45,12 @@ export type Pool = {
   updated_at: number
   cycles: CycleRule[]
   channels: number[]
+}
+export type PoolSyncCreation = {
+  source_id: number
+  source_version: number
+  account_id: string
+  sync_expiry: boolean
 }
 export type AllocationConfig = {
   plan_id: number
@@ -89,6 +95,7 @@ export type Observation = {
   window_end: number
 }
 export type Overview = {
+  subscription_ids?: number[]
   id: number
   name: string
   end_time: number
@@ -128,6 +135,7 @@ export type AssignmentResult = {
   preview?: AssignmentPreview | null
 }
 export type PoolDetail = {
+  sync_events?: SyncState['events']
   cycles: CycleView[]
   members: {
     subscription_id: number
@@ -196,9 +204,28 @@ export const poolAPI = {
   catalog: () =>
     poolRequest<{ id: number; name: string }[]>('get', `${base}/pool-catalog`),
   detail: (id: number) => poolRequest<PoolDetail>('get', `${base}/pools/${id}`),
-  save: (pool: Pool) =>
-    poolRequest<Pool>('put', `${base}/pools/${pool.id}`, pool),
-  create: (pool: Pool) => poolRequest<Pool>('post', `${base}/pools`, pool),
+  save: async (pool: Pool & { sync_binding?: SyncBinding }) => {
+    const saved = await poolRequest<Pool>(
+      'put',
+      `${base}/pools/${pool.id}`,
+      pool
+    )
+    return {
+      ...pool,
+      ...saved,
+      cycles: saved.cycles ?? pool.cycles,
+      channels: saved.channels ?? pool.channels,
+    }
+  },
+  create: async (pool: Pool & { sync?: PoolSyncCreation }) => {
+    const saved = await poolRequest<Pool>('post', `${base}/pools`, pool)
+    return {
+      ...pool,
+      ...saved,
+      cycles: saved.cycles ?? pool.cycles,
+      channels: saved.channels ?? pool.channels,
+    }
+  },
   config: (id: number) =>
     poolRequest<AllocationConfig>('get', `${base}/plans/${id}/allocation`),
   saveConfig: (id: number, data: AllocationConfig) =>

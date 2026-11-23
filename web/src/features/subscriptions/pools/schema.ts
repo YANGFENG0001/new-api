@@ -65,7 +65,7 @@ export const poolSchema = z
 export const allocationSchema = z
   .object({
     plan_id: z.number(),
-    mode: z.enum(['independent', 'fixed', 'assign']),
+    mode: z.enum(['legacy', 'independent', 'fixed', 'assign']),
     pool_id: z.number(),
     fixed_end_time: z.number().int().min(0),
     version: z.number(),

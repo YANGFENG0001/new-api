@@ -1,4 +1,5 @@
 import { zodResolver } from '@hookform/resolvers/zod'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { CalendarClock, CreditCard, RefreshCw, Settings2 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useForm, type Resolver } from 'react-hook-form'
@@ -13,6 +14,8 @@ import {
   sideDrawerHeaderClassName,
   sideDrawerSwitchItemClassName,
 } from '@/components/drawer-layout'
+import { ErrorState } from '@/components/error-state'
+import { LoadingState } from '@/components/loading-state'
 import { Button } from '@/components/ui/button'
 import { Combobox } from '@/components/ui/combobox'
 import {
@@ -81,7 +84,9 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { PlanAllocationSettings } from '../pools/plan-allocation'
+import { poolAPI, type AllocationConfig } from '../pools/api'
+import { PlanAllocationFields } from '../pools/plan-allocation'
+import { allocationSchema } from '../pools/schema'
 import type { PlanRecord } from '../types'
 import { useSubscriptions } from './subscriptions-provider'
 
@@ -103,6 +108,55 @@ export function SubscriptionsMutateDrawer({
   const tokensOnly = currencyMeta.kind === 'tokens'
   const currencyLabel = getCurrencyLabel()
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const client = useQueryClient()
+  const [allocation, setAllocation] = useState<AllocationConfig | null>(null)
+  const caps = useQuery({
+    queryKey: ['subscription-pools', 'capabilities'],
+    queryFn: poolAPI.capabilities,
+    enabled: open,
+    staleTime: 10000,
+  })
+  const allocationQuery = useQuery({
+    queryKey: ['subscription-pools', 'plan', currentRow?.plan?.id],
+    queryFn: () => poolAPI.config(currentRow?.plan.id ?? 0),
+    enabled: open && !!currentRow?.plan?.id && !!caps.data?.read,
+  })
+  useEffect(() => {
+    setAllocation(null)
+  }, [open, currentRow?.plan?.id])
+  useEffect(() => {
+    if (!open || !caps.data?.read || allocation) return
+    if (!currentRow?.plan?.id) {
+      setAllocation({
+        plan_id: 0,
+        mode: 'legacy',
+        pool_id: 0,
+        fixed_end_time: 0,
+        version: 0,
+        cycles: [],
+      })
+    } else if (allocationQuery.data) {
+      setAllocation({
+        ...allocationQuery.data,
+        mode: allocationQuery.data.mode || 'legacy',
+      })
+    }
+  }, [
+    open,
+    currentRow?.plan?.id,
+    allocationQuery.data,
+    caps.data?.read,
+    allocation,
+  ])
+  const allocationMode =
+    allocation?.mode ?? currentRow?.allocation?.mode ?? 'legacy'
+  const managed = allocationMode !== 'legacy'
+  const fixedEndTime =
+    allocation?.fixed_end_time ?? currentRow?.allocation?.fixed_end_time ?? 0
+  const relativeValidity =
+    !managed || (allocationMode !== 'fixed' && fixedEndTime === 0)
+  const allocationBlocked =
+    caps.isPending || caps.isError || (!!caps.data?.read && !allocation)
   const [groupOptions, setGroupOptions] = useState<string[]>([])
   const [creatingPancakeProduct, setCreatingPancakeProduct] = useState(false)
   const [pancakeProducts, setPancakeProducts] = useState<
@@ -162,9 +216,20 @@ export function SubscriptionsMutateDrawer({
     Number(watchedPrice ?? 0) > 0
 
   const onSubmit = async (values: PlanFormValues) => {
+    if (allocationBlocked) return
+    if (caps.data?.manage && allocation) {
+      const result = allocationSchema.safeParse(allocation)
+      if (!result.success) {
+        toast.error(t(result.error.issues[0]?.message ?? 'Invalid parameters'))
+        return
+      }
+    }
     setIsSubmitting(true)
     try {
       const payload = formValuesToPlanPayload(values)
+      if (caps.data?.manage && allocation) {
+        payload.allocation = allocationSchema.parse(allocation)
+      }
       if (isEdit && currentRow?.plan?.id) {
         const res = await updatePlan(currentRow.plan.id, payload)
         if (res.success) {
@@ -188,6 +253,7 @@ export function SubscriptionsMutateDrawer({
       handleServerError(error, t('Request failed'))
     } finally {
       setIsSubmitting(false)
+      void client.invalidateQueries({ queryKey: ['subscription-pools'] })
     }
   }
 
@@ -362,43 +428,47 @@ export function SubscriptionsMutateDrawer({
                   )}
                 />
 
-                <FormField
-                  control={form.control}
-                  name='total_amount'
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>
-                        {t('Quota ({{currency}})', { currency: currencyLabel })}
-                      </FormLabel>
-                      <FormControl>
-                        <Input
-                          {...field}
-                          type='number'
-                          min={0}
-                          step={tokensOnly ? 1 : 0.01}
-                          placeholder={
-                            tokensOnly
-                              ? t('Enter quota in tokens')
-                              : t('Enter quota in {{currency}}', {
-                                  currency: currencyLabel,
-                                })
-                          }
-                          onChange={(e) =>
-                            field.onChange(
-                              Number.parseFloat(e.target.value) || 0
-                            )
-                          }
-                        />
-                      </FormControl>
-                      <FormDescription>
-                        {t(
-                          'Total quota included in the plan, usable per billing period. 0 means unlimited.'
-                        )}
-                      </FormDescription>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
+                {!managed && (
+                  <FormField
+                    control={form.control}
+                    name='total_amount'
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>
+                          {t('Quota ({{currency}})', {
+                            currency: currencyLabel,
+                          })}
+                        </FormLabel>
+                        <FormControl>
+                          <Input
+                            {...field}
+                            type='number'
+                            min={0}
+                            step={tokensOnly ? 1 : 0.01}
+                            placeholder={
+                              tokensOnly
+                                ? t('Enter quota in tokens')
+                                : t('Enter quota in {{currency}}', {
+                                    currency: currencyLabel,
+                                  })
+                            }
+                            onChange={(e) =>
+                              field.onChange(
+                                Number.parseFloat(e.target.value) || 0
+                              )
+                            }
+                          />
+                        </FormControl>
+                        <FormDescription>
+                          {t(
+                            'Total quota included in the plan, usable per billing period. 0 means unlimited.'
+                          )}
+                        </FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                )}
               </div>
 
               <div className='grid grid-cols-1 gap-3 sm:grid-cols-2'>
@@ -572,55 +642,162 @@ export function SubscriptionsMutateDrawer({
               </div>
             </SideDrawerSection>
 
-            <PlanAllocationSettings planId={currentRow?.plan?.id} />
+            {caps.isPending && <LoadingState />}
+            {caps.isError && <ErrorState onRetry={() => void caps.refetch()} />}
+            {allocationQuery.isError && (
+              <ErrorState onRetry={() => void allocationQuery.refetch()} />
+            )}
+            {allocation && (
+              <PlanAllocationFields
+                value={allocation}
+                onChange={setAllocation}
+                disabled={!caps.data?.manage || isSubmitting}
+              />
+            )}
             {/* Duration Settings */}
-            <SideDrawerSection>
-              <h3 className='flex items-center gap-2 text-sm font-medium'>
-                <IconBadge tone='chart-4' size='xs'>
-                  <CalendarClock />
-                </IconBadge>
-                {t('Duration Settings')}
-              </h3>
+            {relativeValidity && (
+              <SideDrawerSection>
+                <h3 className='flex items-center gap-2 text-sm font-medium'>
+                  <IconBadge tone='chart-4' size='xs'>
+                    <CalendarClock />
+                  </IconBadge>
+                  {t('Duration Settings')}
+                </h3>
 
-              <div className='grid grid-cols-1 gap-3 sm:grid-cols-2'>
-                <FormField
-                  control={form.control}
-                  name='duration_unit'
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>{t('Duration Unit')}</FormLabel>
-                      <Select
-                        items={durationUnitOpts.map((o) => ({
-                          value: o.value,
-                          label: o.label,
-                        }))}
-                        onValueChange={field.onChange}
-                        value={field.value}
-                      >
-                        <FormControl>
-                          <SelectTrigger>
-                            <SelectValue />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent alignItemWithTrigger={false}>
-                          <SelectGroup>
-                            {durationUnitOpts.map((o) => (
-                              <SelectItem key={o.value} value={o.value}>
-                                {o.label}
-                              </SelectItem>
-                            ))}
-                          </SelectGroup>
-                        </SelectContent>
-                      </Select>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-
-                {durationUnit === 'custom' ? (
+                <div className='grid grid-cols-1 gap-3 sm:grid-cols-2'>
                   <FormField
                     control={form.control}
-                    name='custom_seconds'
+                    name='duration_unit'
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>{t('Duration Unit')}</FormLabel>
+                        <Select
+                          items={durationUnitOpts.map((o) => ({
+                            value: o.value,
+                            label: o.label,
+                          }))}
+                          onValueChange={field.onChange}
+                          value={field.value}
+                        >
+                          <FormControl>
+                            <SelectTrigger>
+                              <SelectValue />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent alignItemWithTrigger={false}>
+                            <SelectGroup>
+                              {durationUnitOpts.map((o) => (
+                                <SelectItem key={o.value} value={o.value}>
+                                  {o.label}
+                                </SelectItem>
+                              ))}
+                            </SelectGroup>
+                          </SelectContent>
+                        </Select>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+
+                  {durationUnit === 'custom' ? (
+                    <FormField
+                      control={form.control}
+                      name='custom_seconds'
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>{t('Custom Seconds')}</FormLabel>
+                          <FormControl>
+                            <Input
+                              {...field}
+                              type='number'
+                              min={1}
+                              onChange={(e) =>
+                                field.onChange(
+                                  Number.parseInt(e.target.value, 10) || 0
+                                )
+                              }
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  ) : (
+                    <FormField
+                      control={form.control}
+                      name='duration_value'
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>{t('Duration Value')}</FormLabel>
+                          <FormControl>
+                            <Input
+                              {...field}
+                              type='number'
+                              min={1}
+                              onChange={(e) =>
+                                field.onChange(
+                                  Number.parseInt(e.target.value, 10) || 0
+                                )
+                              }
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  )}
+                </div>
+              </SideDrawerSection>
+            )}
+
+            {/* Quota Reset */}
+            {!managed && (
+              <SideDrawerSection>
+                <h3 className='flex items-center gap-2 text-sm font-medium'>
+                  <IconBadge tone='success' size='xs'>
+                    <RefreshCw />
+                  </IconBadge>
+                  {t('Quota Reset')}
+                </h3>
+
+                <div className='grid grid-cols-1 gap-3 sm:grid-cols-2'>
+                  <FormField
+                    control={form.control}
+                    name='quota_reset_period'
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>{t('Reset Cycle')}</FormLabel>
+                        <Select
+                          items={resetPeriodOpts.map((o) => ({
+                            value: o.value,
+                            label: o.label,
+                          }))}
+                          onValueChange={field.onChange}
+                          value={field.value}
+                        >
+                          <FormControl>
+                            <SelectTrigger>
+                              <SelectValue />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent alignItemWithTrigger={false}>
+                            <SelectGroup>
+                              {resetPeriodOpts.map((o) => (
+                                <SelectItem key={o.value} value={o.value}>
+                                  {o.label}
+                                </SelectItem>
+                              ))}
+                            </SelectGroup>
+                          </SelectContent>
+                        </Select>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+
+                  <FormField
+                    control={form.control}
+                    name='quota_reset_custom_seconds'
                     render={({ field }) => (
                       <FormItem>
                         <FormLabel>{t('Custom Seconds')}</FormLabel>
@@ -628,7 +805,8 @@ export function SubscriptionsMutateDrawer({
                           <Input
                             {...field}
                             type='number'
-                            min={1}
+                            min={0}
+                            disabled={resetPeriod !== 'custom'}
                             onChange={(e) =>
                               field.onChange(
                                 Number.parseInt(e.target.value, 10) || 0
@@ -640,102 +818,9 @@ export function SubscriptionsMutateDrawer({
                       </FormItem>
                     )}
                   />
-                ) : (
-                  <FormField
-                    control={form.control}
-                    name='duration_value'
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>{t('Duration Value')}</FormLabel>
-                        <FormControl>
-                          <Input
-                            {...field}
-                            type='number'
-                            min={1}
-                            onChange={(e) =>
-                              field.onChange(
-                                Number.parseInt(e.target.value, 10) || 0
-                              )
-                            }
-                          />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                )}
-              </div>
-            </SideDrawerSection>
-
-            {/* Quota Reset */}
-            <SideDrawerSection>
-              <h3 className='flex items-center gap-2 text-sm font-medium'>
-                <IconBadge tone='success' size='xs'>
-                  <RefreshCw />
-                </IconBadge>
-                {t('Quota Reset')}
-              </h3>
-
-              <div className='grid grid-cols-1 gap-3 sm:grid-cols-2'>
-                <FormField
-                  control={form.control}
-                  name='quota_reset_period'
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>{t('Reset Cycle')}</FormLabel>
-                      <Select
-                        items={resetPeriodOpts.map((o) => ({
-                          value: o.value,
-                          label: o.label,
-                        }))}
-                        onValueChange={field.onChange}
-                        value={field.value}
-                      >
-                        <FormControl>
-                          <SelectTrigger>
-                            <SelectValue />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent alignItemWithTrigger={false}>
-                          <SelectGroup>
-                            {resetPeriodOpts.map((o) => (
-                              <SelectItem key={o.value} value={o.value}>
-                                {o.label}
-                              </SelectItem>
-                            ))}
-                          </SelectGroup>
-                        </SelectContent>
-                      </Select>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-
-                <FormField
-                  control={form.control}
-                  name='quota_reset_custom_seconds'
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>{t('Custom Seconds')}</FormLabel>
-                      <FormControl>
-                        <Input
-                          {...field}
-                          type='number'
-                          min={0}
-                          disabled={resetPeriod !== 'custom'}
-                          onChange={(e) =>
-                            field.onChange(
-                              Number.parseInt(e.target.value, 10) || 0
-                            )
-                          }
-                        />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              </div>
-            </SideDrawerSection>
+                </div>
+              </SideDrawerSection>
+            )}
 
             {/* Payment Config */}
             <SideDrawerSection>
@@ -835,7 +920,7 @@ export function SubscriptionsMutateDrawer({
           <Button
             form='subscription-form'
             type='submit'
-            disabled={isSubmitting}
+            disabled={isSubmitting || allocationBlocked}
           >
             {isSubmitting ? t('Saving...') : t('Save changes')}
           </Button>

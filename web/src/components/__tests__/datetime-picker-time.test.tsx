@@ -72,3 +72,20 @@ test('keeps the current time when the time field is emptied', () => {
   expect(onChange).not.toHaveBeenCalled()
   expect(field).toHaveValue('20:30:45')
 })
+
+test('a followed upstream time cannot be edited or cleared while disabled', () => {
+  const onChange = vi.fn()
+  render(
+    <DateTimePicker
+      disabled
+      value={new Date(2026, 9, 11, 8, 0, 0)}
+      onChange={onChange}
+    />
+  )
+  expect(screen.getByLabelText('Time')).toBeDisabled()
+  expect(screen.getByRole('button', { name: 'Clear' })).toBeDisabled()
+  fireEvent.change(screen.getByLabelText('Time'), {
+    target: { value: '09:15' },
+  })
+  expect(onChange).not.toHaveBeenCalled()
+})

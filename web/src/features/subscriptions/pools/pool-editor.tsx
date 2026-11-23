@@ -18,6 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
@@ -31,9 +32,17 @@ import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 
-import { poolAPI, type Pool } from './api'
+import {
+  poolAPI,
+  type Pool,
+  type PoolSyncCreation,
+  type Capabilities,
+} from './api'
 import { CycleEditor } from './cycle-editor'
-import { poolSchema, emptyPool } from './schema'
+import { PoolSyncImport } from './pool-sync-import'
+import { poolSchema, emptyPool, newCycle } from './schema'
+import { syncBindingSchema, type SyncBinding } from './sync-api'
+import { PoolSyncBinding } from './sync-binding'
 
 export function PoolEditor(props: {
   pool?: Pool
@@ -41,9 +50,16 @@ export function PoolEditor(props: {
   canManage: boolean
   onSaved?: (pool: Pool) => void
   embedded?: boolean
+  canCreateFromSync?: boolean
+  canRunSync?: boolean
+  caps?: Capabilities
 }) {
   const { t } = useTranslation()
   const client = useQueryClient()
+  const [fromSync, setFromSync] = useState(false)
+  const [sync, setSync] = useState<PoolSyncCreation | null>(null)
+  const [bindingDraft, setBindingDraft] = useState<SyncBinding | undefined>()
+  const [savedRevision, setSavedRevision] = useState(0)
   const form = useForm<Pool>({
     resolver: zodResolver(poolSchema),
     defaultValues: props.pool ?? emptyPool(),
@@ -53,10 +69,35 @@ export function PoolEditor(props: {
     queryFn: poolAPI.catalog,
   })
   const save = useMutation({
-    mutationFn: (data: Pool) =>
-      data.id ? poolAPI.save(data) : poolAPI.create(data),
-    onSuccess: (pool) => {
-      void client.invalidateQueries({ queryKey: ['subscription-pools'] })
+    mutationFn: (data: Pool) => {
+      if (data.id) {
+        let sync_binding: SyncBinding | undefined
+        if (
+          bindingDraft?.source_id &&
+          props.caps?.sync_binding &&
+          props.caps.sync_apply
+        ) {
+          sync_binding = syncBindingSchema.parse({
+            ...bindingDraft,
+            cycles: bindingDraft.cycles.filter((mapping) =>
+              data.cycles.some((cycle) => cycle.key === mapping.local_key)
+            ),
+          })
+        }
+        return poolAPI.save({
+          ...data,
+          ...(sync_binding ? { sync_binding } : {}),
+        })
+      }
+      return poolAPI.create({ ...data, ...(fromSync && sync ? { sync } : {}) })
+    },
+    onSuccess: async (pool) => {
+      await Promise.all([
+        client.invalidateQueries({ queryKey: ['subscription-pools'] }),
+        client.invalidateQueries({ queryKey: ['subscription-sync'] }),
+      ])
+      form.reset(pool)
+      setSavedRevision((revision) => revision + 1)
       toast.success(t('Saved successfully'))
       if (props.onSaved) props.onSaved(pool)
       else props.onClose()
@@ -79,12 +120,12 @@ export function PoolEditor(props: {
           </Button>
         </div>
       )}
-      {!props.pool && props.onSaved && (
+      {!props.pool && props.onSaved && !fromSync && (
         <Alert>
           <AlertTitle>{t('Automatic synchronization')}</AlertTitle>
           <AlertDescription>
             {t(
-              'Save this pool to select a synchronization source and upstream account. The synchronization tab opens next.'
+              'Create from upstream to fill settings automatically, or configure local cycles manually.'
             )}
           </AlertDescription>
         </Alert>
@@ -98,6 +139,45 @@ export function PoolEditor(props: {
         disabled={!props.canManage || save.isPending}
         className='space-y-5'
       >
+        {!props.pool && props.canCreateFromSync && (
+          <>
+            <Label>
+              <Switch
+                checked={fromSync}
+                onCheckedChange={(checked) => {
+                  setFromSync(checked)
+                  setSync(null)
+                  form.setValue('cycles', [])
+                }}
+              />
+              {t('Create from upstream')}
+            </Label>
+            {fromSync && (
+              <PoolSyncImport
+                canRun={!!props.canRunSync}
+                onClear={() => {
+                  setSync(null)
+                  form.setValue('cycles', [])
+                }}
+                onImport={(draft) => {
+                  setSync(draft.sync)
+                  if (
+                    !form.formState.dirtyFields.name ||
+                    !form.getValues('name')
+                  ) {
+                    form.setValue('name', draft.name)
+                  }
+                  form.setValue('end_time', draft.end_time, {
+                    shouldValidate: true,
+                  })
+                  form.setValue('cycles', draft.cycles, {
+                    shouldValidate: true,
+                  })
+                }}
+              />
+            )}
+          </>
+        )}
         <div className='grid gap-4 sm:grid-cols-2'>
           <div>
             <Label htmlFor='pool-name'>{t('Name')}</Label>
@@ -110,14 +190,21 @@ export function PoolEditor(props: {
           <div>
             <Label>{t('Unified expiry')}</Label>
             <DateTimePicker
-              value={new Date(values.end_time * 1000)}
-              onChange={(d) =>
+              value={
+                values.end_time === 253402300799
+                  ? undefined
+                  : new Date(values.end_time * 1000)
+              }
+              placeholder={t('No upstream expiry reported')}
+              disabled={!!bindingDraft?.enabled && bindingDraft.sync_expiry}
+              onChange={(d) => {
+                if (sync) setSync({ ...sync, sync_expiry: false })
                 form.setValue(
                   'end_time',
-                  d ? Math.floor(d.getTime() / 1000) : 0,
+                  d ? Math.floor(d.getTime() / 1000) : 253402300799,
                   { shouldValidate: true }
                 )
-              }
+              }}
             />
           </div>
         </div>
@@ -150,17 +237,74 @@ export function PoolEditor(props: {
             )}
           </p>
         </div>
-        <CycleEditor
-          value={values.cycles}
-          onChange={(v) => form.setValue('cycles', v, { shouldValidate: true })}
-          pooled
-          lockedKeys={props.pool?.cycles.map((c) => c.key)}
-        />
-        <p className='text-muted-foreground text-xs'>
-          {t(
-            'Configure automatic upstream synchronization in the pool detail tab after saving.'
-          )}
-        </p>
+        {props.pool && props.caps?.sync_read ? (
+          <PoolSyncBinding
+            key={savedRevision}
+            pool={{ ...props.pool, cycles: values.cycles }}
+            caps={props.caps}
+            onDraftChange={setBindingDraft}
+            onPoolAligned={async () => {
+              const latest = await poolAPI.list()
+              const pool = latest.find((item) => item.id === props.pool?.id)
+              if (!pool) return
+              form.setValue('version', pool.version)
+              form.setValue(
+                'cycles',
+                form.getValues('cycles').map((cycle) => {
+                  const saved = pool.cycles.find(
+                    (item) => item.key === cycle.key
+                  )
+                  return saved
+                    ? {
+                        ...cycle,
+                        next_reset: saved.next_reset,
+                        seconds: saved.seconds,
+                      }
+                    : cycle
+                })
+              )
+            }}
+            renderLocalCycle={(key, followsReset) => (
+              <CycleEditor
+                value={values.cycles.filter((cycle) => cycle.key === key)}
+                onChange={(next) =>
+                  form.setValue(
+                    'cycles',
+                    values.cycles.flatMap((cycle) =>
+                      cycle.key === key ? next : [cycle]
+                    ),
+                    { shouldValidate: true }
+                  )
+                }
+                pooled
+                single
+                followReset={followsReset}
+                lockedKeys={props.pool?.cycles.map((cycle) => cycle.key)}
+              />
+            )}
+          />
+        ) : (
+          <CycleEditor
+            value={values.cycles}
+            onChange={(v) =>
+              form.setValue('cycles', v, { shouldValidate: true })
+            }
+            pooled
+            lockedKeys={props.pool?.cycles.map((c) => c.key)}
+          />
+        )}
+        {props.pool && props.caps?.sync_read && (
+          <Button
+            type='button'
+            variant='outline'
+            disabled={values.cycles.length >= 32}
+            onClick={() =>
+              form.setValue('cycles', [...values.cycles, newCycle(t('Cycle'))])
+            }
+          >
+            {t('Add cycle')}
+          </Button>
+        )}
         {issue && (
           <p role='alert' className='text-destructive text-sm'>
             {t('Check pool name, expiry and all cycle settings before saving.')}
@@ -185,14 +329,15 @@ export function PoolEditor(props: {
             'Saving does not move existing subscriptions or clear usage. Shared changes affect all members.'
           )}
         </p>
-        <Button type='submit' disabled={save.isPending}>
-          {save.isPending
-            ? t('Saving...')
-            : t(
-                !props.pool && props.onSaved
-                  ? 'Save and configure synchronization'
-                  : 'Save'
-              )}
+        <Button
+          type='submit'
+          disabled={
+            save.isPending ||
+            (!!props.pool && !!props.caps?.sync_read && !bindingDraft) ||
+            (fromSync && (!sync || !values.cycles.length))
+          }
+        >
+          {save.isPending ? t('Saving...') : t('Save')}
         </Button>
       </fieldset>
     </form>

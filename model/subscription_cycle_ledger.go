@@ -121,6 +121,9 @@ func initializeSubscriptionAllocationTx(tx *gorm.DB, sub *UserSubscription) erro
 	if err != nil {
 		return err
 	}
+	if cfg.Mode == "legacy" {
+		return nil
+	}
 	if cfg.FixedEndTime > 0 {
 		if cfg.FixedEndTime <= sub.StartTime {
 			return errors.New("Subscription expiry is in the past")
@@ -238,7 +241,7 @@ func reserveSubscriptionCyclesTx(tx *gorm.DB, requestID string, sub *UserSubscri
 		return true, nil
 	}
 	if a.PoolID > 0 {
-		if err := enforceSubscriptionSyncTx(tx, a.PoolID, now); err != nil {
+		if err := enforceSubscriptionSyncTx(tx, a.PoolID, now, amount); err != nil {
 			return true, err
 		}
 	}

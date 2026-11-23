@@ -15,7 +15,8 @@ import (
 // ---- Shared types ----
 
 type SubscriptionPlanDTO struct {
-	Plan model.SubscriptionPlan `json:"plan"`
+	Plan       model.SubscriptionPlan                  `json:"plan"`
+	Allocation model.SubscriptionPlanAllocationSummary `json:"allocation"`
 }
 
 type BillingPreferenceRequest struct {
@@ -40,10 +41,20 @@ func GetSubscriptionPlans(c *gin.Context) {
 		return
 	}
 	result := make([]SubscriptionPlanDTO, 0, len(plans))
+	ids := make([]int, len(plans))
+	for i := range plans {
+		ids[i] = plans[i].Id
+	}
+	summaries, err := model.GetSubscriptionPlanAllocationSummaries(ids)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
 	for _, p := range plans {
 		p.NormalizeDefaults()
 		result = append(result, SubscriptionPlanDTO{
-			Plan: p,
+			Plan:       p,
+			Allocation: summaries[p.Id],
 		})
 	}
 	common.ApiSuccess(c, result)
@@ -126,17 +137,28 @@ func AdminListSubscriptionPlans(c *gin.Context) {
 		return
 	}
 	result := make([]SubscriptionPlanDTO, 0, len(plans))
+	ids := make([]int, len(plans))
+	for i := range plans {
+		ids[i] = plans[i].Id
+	}
+	summaries, err := model.GetSubscriptionPlanAllocationSummaries(ids)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
 	for _, p := range plans {
 		p.NormalizeDefaults()
 		result = append(result, SubscriptionPlanDTO{
-			Plan: p,
+			Plan:       p,
+			Allocation: summaries[p.Id],
 		})
 	}
 	common.ApiSuccess(c, result)
 }
 
 type AdminUpsertSubscriptionPlanRequest struct {
-	Plan model.SubscriptionPlan `json:"plan"`
+	Plan       model.SubscriptionPlan           `json:"plan"`
+	Allocation *subscriptionPlanAllocationInput `json:"allocation,omitempty"`
 }
 
 func AdminCreateSubscriptionPlan(c *gin.Context) {
@@ -147,6 +169,9 @@ func AdminCreateSubscriptionPlan(c *gin.Context) {
 	var req AdminUpsertSubscriptionPlanRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		common.ApiErrorT(c, "Invalid parameters")
+		return
+	}
+	if req.Allocation != nil && !requireSubscriptionPoolPermission(c, "manage") {
 		return
 	}
 	req.Plan.Id = 0
@@ -205,7 +230,16 @@ func AdminCreateSubscriptionPlan(c *gin.Context) {
 		common.ApiErrorT(c, "Custom reset cycle must be greater than 0 seconds")
 		return
 	}
-	err := model.DB.Create(&req.Plan).Error
+	err := model.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(&req.Plan).Error; err != nil {
+			return err
+		}
+		if req.Allocation != nil {
+			req.Allocation.PlanID = req.Plan.Id
+			return model.SaveSubscriptionPlanAllocationTx(tx, req.Allocation.SubscriptionPlanAllocation, req.Allocation.Cycles)
+		}
+		return nil
+	})
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -227,6 +261,9 @@ func AdminUpdateSubscriptionPlan(c *gin.Context) {
 	var req AdminUpsertSubscriptionPlanRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		common.ApiErrorT(c, "Invalid parameters")
+		return
+	}
+	if req.Allocation != nil && !requireSubscriptionPoolPermission(c, "manage") {
 		return
 	}
 	if strings.TrimSpace(req.Plan.Title) == "" {
@@ -281,6 +318,9 @@ func AdminUpdateSubscriptionPlan(c *gin.Context) {
 	}
 
 	err := model.DB.Transaction(func(tx *gorm.DB) error {
+		if err := model.LockSubscriptionPlanTx(tx, id); err != nil {
+			return err
+		}
 		// update plan (allow zero values updates with map)
 		updateMap := map[string]any{
 			"title":                      req.Plan.Title,
@@ -311,6 +351,10 @@ func AdminUpdateSubscriptionPlan(c *gin.Context) {
 		}
 		if err := tx.Model(&model.SubscriptionPlan{}).Where("id = ?", id).Updates(updateMap).Error; err != nil {
 			return err
+		}
+		if req.Allocation != nil {
+			req.Allocation.PlanID = id
+			return model.SaveSubscriptionPlanAllocationTx(tx, req.Allocation.SubscriptionPlanAllocation, req.Allocation.Cycles)
 		}
 		return nil
 	})
