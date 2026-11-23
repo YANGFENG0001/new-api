@@ -172,7 +172,7 @@ func saveSubscriptionPool(db *gorm.DB, input SubscriptionPoolInput, actorID int)
 			}
 			seen[id] = true
 			if !slices.ContainsFunc(channels, func(channel Channel) bool { return channel.Id == id }) {
-				return errors.New("Upstream channel is unavailable")
+				return errors.New("Channel does not exist")
 			}
 			if err := tx.Create(&SubscriptionPoolChannel{ChannelID: id, PoolID: pool.Id}).Error; err != nil {
 				return err
